@@ -1,0 +1,19 @@
+# pnpm settings.
+#
+# NOT a monorepo — there is no `packages:` key and there will not be one.
+# pnpm 11 moved several settings out of package.json into this file, which is
+# the only reason it exists.
+
+# Dependencies permitted to run install scripts. pnpm blocks all of them by
+# default as a supply-chain control, and each entry below is a deliberate
+# exception rather than a blanket allow:
+#
+#   esbuild        - downloads its platform-native binary. Vitest and tsx are
+#                    both unusable without it.
+#   unrs-resolver  - native module resolver used by the ESLint import plugin.
+#
+# Adding to this list means granting arbitrary code execution at install time.
+# Do not add an entry without a specific reason recorded here.
+onlyBuiltDependencies:
+  - esbuild
+  - unrs-resolver

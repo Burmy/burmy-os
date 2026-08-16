@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Local development stack.
+#
+#   docker compose -f compose.dev.yml up -d postgres
+#   docker compose -f compose.dev.yml run --rm migrate
+#   pnpm dev            <- the app itself runs on the host for fast HMR
+#
+# Cloudflare and Tailscale are NOT needed locally and are absent by design.
+# The production compose.yml (M10) adds the edge/dbnet split and cloudflared.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: burmy-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: burmy
+      POSTGRES_PASSWORD: burmy
+      POSTGRES_DB: burmy
+      # Deterministic initdb args so a rebuilt volume always matches.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    ports:
+      # Published in DEVELOPMENT ONLY so `pnpm dev` on the host can connect.
+      # Production never publishes this port — Postgres sits on an
+      # `internal: true` network with no route to or from the internet.
+      - '127.0.0.1:5432:5432'
+    volumes:
+      # ── PostgreSQL 18 VOLUME PATH ──────────────────────────────────────────
+      # PG18 moved PGDATA to /var/lib/postgresql/18/docker and the declared
+      # VOLUME to /var/lib/postgresql.
+      #
+      # The pre-18 convention `/var/lib/postgresql/data` FAILS SILENTLY: the
+      # container starts, the healthcheck passes, and the data disappears on
+      # the next recreate. Do not "fix" this back.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U burmy -d burmy']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [burmy_dev]
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment:
+      DATABASE_URL: postgres://burmy:burmy@postgres:5432/burmy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # One-shot: runs, applies migrations, exits.
+    restart: 'no'
+    networks: [burmy_dev]
+
+networks:
+  burmy_dev:
+    driver: bridge
+
+volumes:
+  pgdata:

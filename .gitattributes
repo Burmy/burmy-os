@@ -1,0 +1,24 @@
+# Normalize line endings to LF in the repository and in working copies.
+#
+# Development happens on Windows but the application runs in Alpine containers.
+# Without this, Git rewrites checkouts to CRLF, which fights Prettier's
+# `endOfLine: lf` and produces whole-file diffs that hide the real change.
+* text=auto eol=lf
+
+# Shell scripts MUST be LF — a CRLF shebang fails inside a container with an
+# unhelpful "no such file or directory".
+*.sh text eol=lf
+*.mjs text eol=lf
+Dockerfile text eol=lf
+
+# Generated; keep diffs collapsed in reviews.
+pnpm-lock.yaml linguist-generated=true
+drizzle/**/*.sql linguist-generated=true
+drizzle/meta/** linguist-generated=true
+
+# Binary.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

@@ -1,0 +1,10 @@
+.next/
+node_modules/
+out/
+dist/
+coverage/
+drizzle/
+playwright-report/
+test-results/
+pnpm-lock.yaml
+next-env.d.ts

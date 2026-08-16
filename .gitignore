@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Burmy — .gitignore
+#
+# This file is deliberately the FIRST thing committed to this repository.
+#
+# Burmy handles personal financial data. The rules below are ordered so that the
+# dangerous ones come first, and they are intentionally broad: it is far cheaper
+# to force-add a file that was wrongly ignored than to scrub a real bank
+# statement out of git history.
+#
+# Rule of thumb: if a file could contain a real transaction, a real balance, an
+# account number, or a credential — it does not belong in this repository.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── SECRETS ──────────────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+client_secret*.json
+cloudflared/
+*.tunnel.json
+.restic-password
+secrets/
+
+# ── REAL FINANCIAL DATA ──────────────────────────────────────────────────────
+# Broad by design. Test fixtures are SYNTHETIC and live under tests/fixtures/,
+# which is force-unignored at the bottom of this file.
+*.csv
+*.xls
+*.xlsx
+*.xlsm
+*.ofx
+*.qfx
+*.qbo
+*.pdf
+/statements/
+/exports/
+/imports/
+/archive/
+/private/
+**/real-data/
+
+# ── DATABASE DUMPS & BACKUPS ─────────────────────────────────────────────────
+*.dump
+*.sql.gz
+*.sql.bz2
+*.backup
+/backups/
+/pgdata/
+/restore/
+
+# ── UPLOAD SCRATCH ───────────────────────────────────────────────────────────
+# Statement uploads are written to a temp dir and deleted after parsing.
+# If the cleanup ever fails, this guarantees the leftovers are not committed.
+/tmp/
+/uploads/
+/var/
+
+# ── NODE / PNPM ──────────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── NEXT.JS ──────────────────────────────────────────────────────────────────
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+.vercel/
+*.tsbuildinfo
+
+# ── TESTING ──────────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/
+
+# ── EDITORS & OS ─────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── LOGS ─────────────────────────────────────────────────────────────────────
+# Logs may contain redaction bugs. Never commit them.
+*.log
+logs/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXCEPTIONS — synthetic test fixtures ONLY
+#
+# The blanket *.csv / *.xlsx rules above would otherwise swallow the test
+# fixtures. These re-include ONLY files under tests/fixtures/.
+#
+# Every file matched here MUST be synthetic. Never place a real statement in
+# tests/fixtures/ — the rules below would happily commit it.
+# ─────────────────────────────────────────────────────────────────────────────
+!tests/fixtures/**/*.csv
+!tests/fixtures/**/*.xlsx
