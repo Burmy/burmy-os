@@ -6,6 +6,24 @@
  * precisely so that mistake is hard to make.
  *
  * Idempotent: safe to run repeatedly.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS SCRIPT NEVER CREATES OR CLAIMS AN AUTH USER.
+ *
+ * It used to. It inserted `user` with a hardcoded id of `dev-owner` and the
+ * configured `OWNER_EMAIL`, which broke the moment M2 introduced real
+ * authentication — in both directions, and quietly:
+ *
+ *   · Seed AFTER bootstrap: the real owner already holds that email, `email` is
+ *     UNIQUE, so `onConflictDoNothing()` swallowed the insert. No `dev-owner`
+ *     row existed, and the accounts insert then died on a foreign key.
+ *   · Seed BEFORE bootstrap: `dev-owner` took the email, and bootstrap's own
+ *     `createUser` hit the unique constraint instead. Seeding locked you out.
+ *
+ * The owner row belongs to Better Auth. This script only ever RESOLVES it, by
+ * email, and refuses to run if it is absent. Owning identity in two places is
+ * how the two disagree.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 
 import 'dotenv/config';
@@ -15,9 +33,6 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
 import * as schema from './schema';
-
-const OWNER_ID = 'dev-owner';
-const OWNER_EMAIL = process.env.OWNER_EMAIL ?? 'dev@example.invalid';
 
 /** Mirrors the shape of the owner's real sheet: categories AND merchant-shaped rows. */
 const CATEGORIES: Array<{ name: string; kind: 'spending' | 'income' | 'investment' }> = [
@@ -50,6 +65,22 @@ const slugify = (value: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+function explainMissingOwner(email: string): void {
+  console.error('');
+  console.error(`  No owner row found for OWNER_EMAIL=${email}.`);
+  console.error('');
+  console.error('  Burmy has no signup route, and this script will not invent an');
+  console.error('  identity. Enrol the owner first:');
+  console.error('');
+  console.error('    node scripts/auth-grant.mjs bootstrap');
+  console.error('');
+  console.error('  then redeem the printed token at http://localhost:3000/recovery');
+  console.error('  and enrol two passkeys. Re-run `pnpm db:seed` afterwards.');
+  console.error('');
+  console.error('  If every passkey is lost, use `recovery` instead of `bootstrap`.');
+  console.error('');
+}
+
 async function main(): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -57,24 +88,39 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  const email = process.env.OWNER_EMAIL?.trim().toLowerCase();
+  if (!email) {
+    console.error('OWNER_EMAIL is not set');
+    process.exit(1);
+  }
+
   const client = postgres(url, { max: 1, onnotice: () => {} });
   const db = drizzle(client, { schema });
 
   try {
-    await db
-      .insert(schema.user)
-      .values({ id: OWNER_ID, name: 'Dev Owner', email: OWNER_EMAIL, emailVerified: true })
-      .onConflictDoNothing();
+    // RESOLVE, never create. Better Auth owns this row.
+    const owners = await db
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(eq(schema.user.email, email))
+      .limit(1);
+
+    const ownerId = owners[0]?.id;
+    if (!ownerId) {
+      explainMissingOwner(email);
+      process.exitCode = 1;
+      return;
+    }
 
     const existingAccounts = await db
       .select()
       .from(schema.financeAccounts)
-      .where(eq(schema.financeAccounts.ownerId, OWNER_ID));
+      .where(eq(schema.financeAccounts.ownerId, ownerId));
 
     if (existingAccounts.length === 0) {
       await db.insert(schema.financeAccounts).values(
         ACCOUNTS.map((a, i) => ({
-          ownerId: OWNER_ID,
+          ownerId,
           name: a.name,
           type: a.type,
           institution: 'Bank of America',
@@ -86,12 +132,12 @@ async function main(): Promise<void> {
     const existingCategories = await db
       .select()
       .from(schema.financeCategories)
-      .where(eq(schema.financeCategories.ownerId, OWNER_ID));
+      .where(eq(schema.financeCategories.ownerId, ownerId));
 
     if (existingCategories.length === 0) {
       await db.insert(schema.financeCategories).values(
         CATEGORIES.map((c, i) => ({
-          ownerId: OWNER_ID,
+          ownerId,
           name: c.name,
           slug: slugify(c.name),
           kind: c.kind,
@@ -101,6 +147,7 @@ async function main(): Promise<void> {
     }
 
     console.log(`Seeded ${ACCOUNTS.length} accounts and ${CATEGORIES.length} categories.`);
+    console.log(`Owner resolved by email: ${ownerId}`);
     console.log('No transactions seeded — those arrive through the importer (M5).');
   } catch (error) {
     console.error('Seed failed:', error instanceof Error ? error.message : 'unknown error');

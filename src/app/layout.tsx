@@ -1,4 +1,10 @@
 import type { Metadata, Viewport } from 'next';
+import { headers } from 'next/headers';
+
+import { Toaster } from '@/components/ui/toast';
+import { StyleNonce } from '@/features/shell/style-nonce';
+import { NONCE_HEADER } from '@/server/security/csp';
+import { readTheme, themeClass } from '@/server/security/theme';
 
 import './globals.css';
 
@@ -14,12 +20,30 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
-export default function RootLayout({
+/**
+ * The theme class is resolved DURING SSR from a cookie, so the correct palette is
+ * in the very first byte of HTML. No inline script, nothing for the CSP to block,
+ * and no flash of the wrong theme. See src/server/security/theme.ts.
+ *
+ * Reading a cookie makes every route dynamic, which is already true here: the
+ * only static routes are /sign-in and /recovery, and both are trivial.
+ */
+export default async function RootLayout({
   children,
-}: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+}: Readonly<{ children: React.ReactNode }>): Promise<React.ReactElement> {
+  const [theme, requestHeaders] = await Promise.all([readTheme(), headers()]);
+
+  // Set by src/proxy.ts on every request. Radix injects a real <style> element
+  // for its scroll lock, and `style-src` is nonce-only — see StyleNonce.
+  const nonce = requestHeaders.get(NONCE_HEADER) ?? '';
+
   return (
-    <html lang="en">
-      <body className="min-h-screen antialiased">{children}</body>
+    <html lang="en" className={themeClass(theme)} suppressHydrationWarning>
+      <body className="min-h-screen bg-background text-foreground antialiased">
+        <StyleNonce nonce={nonce} />
+        {children}
+        <Toaster />
+      </body>
     </html>
   );
 }

@@ -4,38 +4,42 @@
 # pnpm 11 moved several settings out of package.json into this file, which is
 # the only reason it exists.
 
-# Dependencies permitted to run install scripts. pnpm blocks all of them by
-# default as a supply-chain control, and each entry below is a deliberate
-# exception rather than a blanket allow:
+# ─────────────────────────────────────────────────────────────────────────────
+# DEPENDENCY INSTALL SCRIPTS — every one decided explicitly.
 #
-#   esbuild        - downloads its platform-native binary. Vitest and tsx are
-#                    both unusable without it.
-#   unrs-resolver  - native module resolver used by the ESLint import plugin.
+# pnpm blocks dependency install scripts by default as a supply-chain control.
+# It then refuses to proceed until each blocked package is ACKNOWLEDGED: an
+# un-acknowledged block raises ERR_PNPM_IGNORED_BUILDS, and because pnpm runs a
+# dependency-status check before every script, that takes out `pnpm typecheck`,
+# `pnpm lint`, `pnpm test` and `pnpm build` — not just `pnpm install`.
 #
-# Adding to this list means granting arbitrary code execution at install time.
-# Do not add an entry without a specific reason recorded here.
-onlyBuiltDependencies:
-  - esbuild
-  - unrs-resolver
+# `allowBuilds` is the mechanism pnpm 11.22 actually honours; it re-injects a
+# placeholder stanza here whenever a new package with a build script appears.
+# `ignoredBuiltDependencies` alone did NOT suppress the error — verified twice,
+# once per milestone. Keep every package listed here with an explicit boolean.
+#
+#   true  = granting arbitrary code execution at install time. Justify it.
+#   false = declining. The package must work without its script.
+# ─────────────────────────────────────────────────────────────────────────────
+allowBuilds:
+  # ── Granted ────────────────────────────────────────────────────────────────
+  # Downloads its platform-native binary. Vitest and tsx are both unusable
+  # without it, so this is load-bearing for the entire test suite.
+  esbuild: true
+  # Native module resolver used by the ESLint import plugin.
+  unrs-resolver: true
 
-# Dependencies whose install scripts are explicitly DECLINED.
-#
-# pnpm blocks these by default, but an un-acknowledged block makes every
-# `pnpm <script>` invocation fail its dependency-status check with
-# ERR_PNPM_IGNORED_BUILDS — which takes out typecheck, lint, test and build.
-# Listing them here records the decision instead of silencing a warning.
-#
-# All three arrive transitively under @testcontainers/postgresql (integration
-# tests only — they never reach the application bundle):
-#
-#   cpu-features - OPTIONAL native probe for ssh2. ssh2 runs pure-JS without it.
-#   ssh2         - ships prebuilt bindings; its script only compiles the
-#                  optional cpu-features accelerator above.
-#   protobufjs   - its postinstall merely regenerates a bundled .d.ts.
-#
-# Verified by actually starting a Testcontainers Postgres and running the
-# integration suite against it — see tests/integration/.
-ignoredBuiltDependencies:
-  - cpu-features
-  - protobufjs
-  - ssh2
+  # ── Declined ───────────────────────────────────────────────────────────────
+  # All three arrive transitively under @testcontainers/postgresql, which is
+  # used by integration tests only and never reaches the application bundle.
+  #
+  #   cpu-features - OPTIONAL native probe for ssh2; ssh2 runs pure-JS without it.
+  #   ssh2         - ships prebuilt bindings; its script only compiles the
+  #                  optional cpu-features accelerator above.
+  #   protobufjs   - its postinstall merely regenerates a bundled .d.ts.
+  #
+  # Verified by actually starting a Testcontainers Postgres and running the
+  # integration suite against it — see tests/integration/.
+  cpu-features: false
+  ssh2: false
+  protobufjs: false

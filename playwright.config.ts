@@ -12,15 +12,24 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
-  fullyParallel: true,
+
+  /**
+   * SERIAL, and it has to be.
+   *
+   * Every spec drives ONE dev server against ONE development database, and each
+   * truncates the auth and finance tables to get a known starting state. Run in
+   * parallel, one spec wipes another's session mid-test and the failure looks like
+   * a flaky passkey ceremony rather than what it is. Learned the hard way in M3.
+   *
+   * Spinning up a database per worker would be the alternative; for twelve tests
+   * that finish in under a minute it is not worth the machinery.
+   */
+  fullyParallel: false,
+  workers: 1,
+
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? 'github' : 'list',
-
-  // Spread rather than assigning `undefined`: `exactOptionalPropertyTypes` is
-  // on, so "absent" and "present but undefined" are different types. Omitting
-  // the key lets Playwright apply its own default (CPUs / 2) locally.
-  ...(process.env.CI ? { workers: 1 } : {}),
 
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:3000',

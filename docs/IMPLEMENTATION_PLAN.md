@@ -583,12 +583,14 @@ burmy-os/
 │   ├── server/
 │   │   ├── auth/                        # Better Auth (passkey), owner guard, bootstrap
 │   │   ├── db/                          # Drizzle client, schema, seed
-│   │   ├── security/                    # CSP, headers, rate limit, audit, redaction
-│   │   └── finance/                     # ← domain core: no React, no Next, no HTTP
+│   │   │   └── finance/          # OWNER-SCOPED data access
+│   │   ├── security/                    # CSP, headers, rate limit, audit, theme
+│   │   └── finance/                     # ← domain core: no React/Next/HTTP, NO DB
 │   │       ├── money.ts                 # Cents type + ALL arithmetic
+│   │       ├── taxonomy.ts              # names, slugs, last_four, reorder
 │   │       ├── merchant.ts  dedupe.ts
 │   │       ├── adapters/                # boa-deposit, boa-card, generic
-│   │       ├── import/  categorize/  classify/  reporting/  queries/
+│   │       └── import/  categorize/  classify/  reporting/
 │   ├── components/   └── lib/
 ├── drizzle/                             # migrations (committed)
 ├── tests/{unit,integration,e2e,fixtures}/   # fixtures are SYNTHETIC ONLY
@@ -596,6 +598,12 @@ burmy-os/
 ├── docs/{IMPLEMENTATION_PLAN,ARCHITECTURE,SECURITY,FINANCE,DEPLOYMENT,BACKUP_RESTORE,ROADMAP,RUNBOOK}.md
 ├── Dockerfile  compose.yml  compose.dev.yml  CLAUDE.md  .env.example  .gitignore
 ```
+
+**Corrected in M3:** an earlier version of this tree put a `queries/` directory inside
+`src/server/finance/`. That contradicted `ARCHITECTURE.md`, which places owner-scoped data access in
+`src/server/db/` and states that `src/server/finance/` performs "no I/O beyond the repo layer". The
+data-access layer is therefore `src/server/db/finance/`, and the domain core holds no Drizzle imports
+at all — which is what keeps it testable in milliseconds without a database.
 
 **Not a monorepo.** One deployable, no shared packages, no reason.
 

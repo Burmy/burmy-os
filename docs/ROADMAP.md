@@ -10,7 +10,7 @@ next. Never mark anything complete without having run the verification and seen 
 | --- | --- | --- |
 | **M1** | Foundation, domain core, protecting what is irreplaceable | ✅ Complete |
 | **M2** | Authentication, bootstrap prototype, security baseline | ✅ Complete |
-| M3 | App shell, accounts, categories | ⚪ Not started |
+| **M3** | App shell, accounts, categories | ✅ Complete |
 | M4 | Parsing & normalization core *(no UI)* | ⚪ Not started |
 | M5 | Import pipeline, preview, duplicates | ⚪ Not started |
 | M6 | Categorization & classification | ⚪ Not started |
@@ -195,48 +195,118 @@ Each cost real time; all are now recorded in `CLAUDE.md`.
 
 ---
 
-## ▶ RESUME HERE — M3: App shell, accounts, categories
+## M3 — App shell, accounts, categories
+
+**Goal:** the owner's taxonomy exists and the app is navigable. **Met.**
+
+### Delivered
+
+- **Owner-scoped finance data access** in `src/server/db/finance/` — every function takes `ownerId`
+  first and injects it into the `WHERE`; mutations match on `(ownerId, id)`, never `id` alone.
+  `src/server/finance/` stays DB- and I/O-free (`taxonomy.ts` holds the pure rules).
+- **App shell**: `(private)` layout with Finance / Settings nav, a `SubNav` for settings sections,
+  sign-out, `error.tsx` (surfacing `error.digest` as a correlation id, never a message),
+  `loading.tsx`, `not-found.tsx`.
+- **shadcn/ui + Lucide initialized** — button, input, label, select, dialog, table, dropdown-menu.
+  Its `sonner` toast template was **replaced** with an in-house `Toaster` (sonner injects an unnonced
+  `<style>` element at module scope); `next-themes`, installed by the CLI as a side effect of that
+  template, was **removed**.
+- **Theme: server-side cookie, three states, zero JavaScript.** `system` emits no class so
+  `prefers-color-scheme` applies; `light`/`dark` stamp a class during SSR. No inline script, so
+  nothing for the CSP to refuse, and no flash.
+- **Accounts CRUD** — deactivate/reactivate, never delete (`account_id` is `ON DELETE RESTRICT`).
+  `last_four` **rejects** anything but 4 digits rather than truncating. `cash` is absent from the UI.
+- **Categories CRUD + archive + reorder** — archive never deletes; duplicate names rejected
+  case-insensitively among live rows only; up/down reorder buttons writing one dense sequence per
+  request inside a transaction.
+- **Passkey management** in Settings, giving M2's `requireOwner({ fresh: true })` and the
+  last-passkey rule their first real callers, including the re-authentication prompt on a 403.
+- **`pnpm db:seed` fixed** — it now RESOLVES the owner by `OWNER_EMAIL` and never creates or claims an
+  auth user, failing loudly with bootstrap instructions when none exists.
+
+### Verification actually run — M3
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0, no errors or warnings |
+| `pnpm test` | **181** (domain 170 + components 11) |
+| `pnpm test:integration` | **85** (Testcontainers PG18) |
+| `pnpm test:e2e` | **14** (Playwright — real Radix overlays + virtual authenticator) |
+| `pnpm build` | exit 0 — 12 routes, Proxy detected |
+| `pnpm db:seed` | both paths: resolves an existing owner, and fails loudly with instructions when absent |
+| Radix under the real CSP | dialog + select open, **zero** violations from application code |
+
+### Bugs and traps found during M3
+
+| Found by | Issue |
+| --- | --- |
+| Integration tests | **Drizzle WRAPS driver errors.** A Postgres `unique_violation` arrives as a Drizzle error with the SQLSTATE on `error.cause`, so `error.code === '23505'` never matched — every duplicate name would have been an unhandled 500 instead of a field error. `isUniqueViolation()` now walks the cause chain. |
+| E2E (CSP events) | **Radix injects a `<style>` ELEMENT**, not only attributes, via `react-remove-scroll`. `style-src-attr` does not cover it. Fixed by feeding the request nonce to `get-nonce`'s `setNonce()` — **`style-src` was NOT relaxed**. |
+| E2E (CSP events) | **`sonner` cannot satisfy a nonce-only `style-src` at all.** It injects its stylesheet with an internal `__insertCSS()` at MODULE EVALUATION time, has zero nonce support, and offers no opt-out — so the violation was intermittent, racing chunk load. Replaced with an ~80-line in-house `Toaster` styled with ordinary Tailwind classes, and the dependency removed. Relaxing `style-src` was refused. |
+| `pnpm typecheck` | `exactOptionalPropertyTypes` rejected shadcn's generated `dropdown-menu.tsx`, whose `checked` prop is `CheckedState` rather than optional-undefined. The generated component was fixed with a conditional spread; the compiler setting stays on. |
+| `pnpm add` | The shadcn CLI installed **`next-themes`** as a dependency of its `sonner` template — the exact library the theme decision rejected. Regenerated the Toaster without it and removed the package. |
+| `pnpm <script>` | pnpm re-injected an `allowBuilds:` placeholder on the next install, breaking every script again. `ignoredBuiltDependencies` alone is **not** sufficient in pnpm 11.22; `allowBuilds` with explicit booleans is. |
+| Playwright | Specs ran in parallel against one dev server and one database, so a `truncate` in one wiped another's session mid-test. Now `fullyParallel: false, workers: 1`. |
+| `pnpm test` | Wiring the RTL/jest-dom setup file globally took the unit suite from ~0.5s to ~4.2s. Split into two Vitest projects by extension: `.test.ts` → node, `.test.tsx` → jsdom. |
+| Self-review | A test claiming to cover U+00A0 / U+202F held literal invisible characters. Replaced with named `NBSP` / `NARROW_NBSP` constants — an invisible character in a test is a test nobody can review. |
+
+### Deliberate decisions
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| CSP and Radix | `style-src-attr 'unsafe-inline'` **only**; `style-src` stays nonce-only | An attribute cannot carry a nonce; a `<style>` element can. Recorded as a real tradeoff, not a neutral one — see `docs/SECURITY.md`. |
+| Theme | Server-read cookie, no `next-themes` | Its flash-prevention inline script is blocked by our nonce-only `script-src`. |
+| Toasts | In-house, not `sonner` | Sonner injects an unnonced `<style>` element at module scope with no opt-out. Keeping `style-src` nonce-only was the constraint; ~80 lines of Tailwind was the cheaper side of that trade. |
+| Reorder | Up/down buttons | Keyboard accessible by construction, no dependency, and the list changes a few times a year. |
+| Data access | `src/server/db/finance/` | Matches `ARCHITECTURE.md`'s layer table and keeps the domain core DB-free. Plan §17's `queries/` sketch corrected. |
+| Accounts | Deactivate, never delete | `ON DELETE RESTRICT`, and an account with no history today may have history next month. |
+
+### Known gaps
+
+- **Manual real-device passkey verification is still outstanding** — carried from M2. The automated
+  ceremony uses Chrome's virtual authenticator (real WebAuthn with a software key store); no physical
+  authenticator has been used. This needs the owner's hands.
+- **No mobile device testing.** The shell uses responsive classes but was not opened on a phone.
+- Categories `parent_id` remains schema-only, as planned.
+
+---
+
+## ▶ RESUME HERE — M4: Parsing & normalization core *(no UI)*
 
 **Get running again:**
 
 ```bash
 docker compose -f compose.dev.yml up -d postgres
 docker compose -f compose.dev.yml run --rm --build migrate    # --build is NOT optional
+node scripts/auth-grant.mjs bootstrap    # only if the owner row is absent
+pnpm db:seed                             # resolves the owner by OWNER_EMAIL
 pnpm dev
 ```
 
-**First run against an empty database** — mint a bootstrap grant, then redeem it at `/recovery`:
+### M4 scope
 
-```bash
-node scripts/auth-grant.mjs bootstrap
-```
+**Starts by reading one real redacted Bank of America export — ask the owner for it first.**
 
-### M3 scope
-
-1. `(private)` layout with `Finance` / `Settings` nav; responsive; theme; error and loading states.
-2. **Initialize shadcn/ui + Lucide** — approved in the plan, not yet installed.
-3. CRUD for `finance_accounts`.
-4. CRUD + archive + reorder for `finance_categories` with `kind`.
-5. Wire `@testing-library/jest-dom` to a Vitest setup file — the first component tests land here.
+1. `NormalizedTransaction`; Papa Parse harness; header-signature detection (never by filename).
+2. BoA deposit and BoA card adapters, plus the generic mapper with saved signatures.
+3. `merchant.ts` — table-driven and pure, every rule a test case.
+4. `dedupe.ts` — Tier 2 count/multiset reconciliation, which does all the work by default.
+5. **The §23 Tier 1 verification**, per account type: obtain two overlapping real exports for the same
+   period and check whether any identifier column is (a) byte-stable, (b) unique across genuinely
+   different transactions, and (c) present on enough rows to matter. Record the verdict with evidence
+   in `docs/FINANCE.md`. **No unique constraint unless all three pass.**
 
 ### Watch out for
 
-- **Every Server Action must call `await requireOwner()`.** `tests/integration/entry-points.test.ts`
-  enumerates the filesystem and fails the suite otherwise — that is the test working, not a nuisance.
-- Pages under `(private)` should call `requireOwner()` directly too, because from M3 they need the
-  returned owner id to scope queries. The layout guard is for navigation, not for data.
-- Sensitive actions (bulk delete, full export, changing `OWNER_EMAIL`) use
-  `requireOwner({ fresh: true })`.
-- Do not bump `typescript` past 6 or `eslint` past 9 — see the pin table in `CLAUDE.md`.
-
-### Ask the owner at M4 — not before
-
-One representative **real Bank of America checking CSV**, plus a **credit-card CSV** if the layout
-differs, so adapters are written against observed reality rather than third-party blog posts. The
-same milestone decides whether any identifier column is stable, unique and well-covered enough to
-earn a unique constraint (§23 Tier 1).
-
----
+- All of M4 belongs in `src/server/finance/` and must stay **DB- and I/O-free** — that is what makes
+  the money rules testable in milliseconds. Persistence arrives with the pipeline in M5.
+- `dedupe_key` and `merchant_key` are **different concepts**. Identity comes from the raw description
+  under a frozen, versioned algorithm; never derive it from `merchant_key`.
+- Sign convention is **asserted, never assumed**. A card export where every row is an inflow must fail
+  the import loudly.
+- Fixtures are **synthetic only**. `.gitignore` blocks `*.csv` repo-wide, with `tests/fixtures/**` as
+  the narrow re-include.
 
 ## Carried forward
 
@@ -248,7 +318,7 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | BoA adapter written against a real redacted export | M4 | Column layout unverified from primary sources |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
-| Manual real-device passkey verification | M3 | Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| Manual real-device passkey verification | **M4** | Still outstanding after M3. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |

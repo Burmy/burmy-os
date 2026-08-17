@@ -52,14 +52,21 @@ Everything else is arranged around it:
 
 | Layer | Responsibility | May depend on |
 | --- | --- | --- |
-| `src/server/finance/` | Domain logic and arithmetic | Nothing framework-related |
-| `src/server/db/` | Drizzle schema, connection, owner-scoped data access | Domain types |
+| `src/server/finance/` | Domain logic and arithmetic. **No Drizzle, no database, no I/O.** | Nothing framework-related |
+| `src/server/db/` | Drizzle schema and connection | Domain types |
+| `src/server/db/finance/` | **Owner-scoped data access.** Every function takes an `ownerId` and injects it into the `WHERE`; mutations match on `(ownerId, id)`, never `id` alone. Routes and actions never build queries. | Drizzle, domain types |
 | `src/server/{auth,security}/` | Sessions, owner guard, CSP, headers, audit | Next.js request APIs |
 | `src/features/finance/` | Finance UI — components, grids, review flow | Domain types, server actions |
 | `src/app/` | Routing, layouts, Server Actions, Route Handlers | Everything above |
 | `src/proxy.ts` | Access JWT verification, headers, CSP nonce | Next.js only |
 
 Dependencies point inward. The domain core knows nothing about what is above it.
+
+**Why data access is `db/finance/` and not `finance/queries/`** (settled in M3): the domain core's
+value is that it can be exercised without a database. Putting queries inside it would mean the money
+rules, merchant normalization and deduplication could only be tested against a live Postgres — slower,
+flakier, and less likely to be written. An earlier sketch in the plan's §17 showed a `queries/`
+directory under `finance/`; that has been corrected.
 
 ---
 

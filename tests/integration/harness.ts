@@ -78,8 +78,12 @@ export function harness(): Promise<Harness> {
  */
 export async function resetDatabase(): Promise<void> {
   const { sql } = await harness();
+  // `user` cascades to every finance table via owner_id, so the finance rows go
+  // with it — but they are listed explicitly so a future table that is NOT
+  // cascade-linked cannot silently start leaking between tests.
   await sql.unsafe(
-    'truncate table "audit_events", "rate_limit", "verification", "passkey", "session", "account", "user" cascade',
+    'truncate table "audit_events", "rate_limit", "verification", "passkey", "session", "account", ' +
+      '"finance_transactions", "finance_categories", "finance_accounts", "user" cascade',
   );
 }
 

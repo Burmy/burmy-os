@@ -1,5 +1,8 @@
 import { redirect } from 'next/navigation';
 
+import { Nav } from '@/features/shell/nav';
+import { SignOutButton } from '@/features/shell/sign-out-button';
+import { ThemeToggle } from '@/features/shell/theme-toggle';
 import {
   OnboardingIncompleteError,
   ReauthRequiredError,
@@ -7,20 +10,21 @@ import {
   UnauthorizedError,
   requireOwner,
 } from '@/server/auth/owner';
+import { readTheme } from '@/server/security/theme';
 
 /**
  * The authenticated area.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * This layout guards every page beneath it, including the monthly grid.
+ * This layout guards every page beneath it, and it is NOT the guard that matters
+ * for mutations. Server Actions are POSTs to their host route and do not re-run a
+ * parent layout, so each one calls `requireOwner()` itself — see
+ * docs/SECURITY.md and the enumeration test in
+ * tests/integration/entry-points.test.ts.
  *
- * It is NOT, however, the guard that matters for mutations. Server Actions are
- * POSTs to their host route and do not re-run a parent layout, so each one calls
- * `requireOwner()` itself — see docs/SECURITY.md and the enumeration test in
- * tests/integration/entry-points.test.ts. From M3 onward every page here also
- * calls `requireOwner()` directly, because it needs the returned owner id to
- * scope its queries; this layout is what makes an unauthenticated NAVIGATION
- * land somewhere sensible instead of rendering a shell.
+ * Pages here also call `requireOwner()` directly, because they need the returned
+ * owner id to scope their queries. This layout is what makes an unauthenticated
+ * NAVIGATION land somewhere sensible instead of rendering an empty shell.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export default async function PrivateLayout({
@@ -28,7 +32,7 @@ export default async function PrivateLayout({
 }: Readonly<{ children: React.ReactNode }>): Promise<React.ReactElement> {
   // `redirect()` signals by throwing, so the destination is decided inside the
   // catch and acted on outside it. Calling redirect() in the catch block would
-  // put its control-flow throw inside the handler that is inspecting errors.
+  // put its control-flow throw inside the handler inspecting errors.
   let destination: string | null = null;
 
   try {
@@ -46,5 +50,22 @@ export default async function PrivateLayout({
 
   if (destination) redirect(destination);
 
-  return <>{children}</>;
+  const theme = await readTheme();
+
+  return (
+    <div className="flex min-h-screen flex-col">
+      <header className="border-b">
+        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6">
+          <span className="text-xs font-semibold tracking-widest uppercase">Burmy</span>
+          <Nav />
+          <div className="ml-auto flex items-center gap-1">
+            <ThemeToggle current={theme} />
+            <SignOutButton />
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+    </div>
+  );
 }

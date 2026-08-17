@@ -180,29 +180,60 @@ category names. Covered by a payload fixture test.
 
 | Control | Setting |
 | --- | --- |
-| CSP | Strict, nonce-based, per request, built in `src/proxy.ts`. No `unsafe-inline` in any directive. `'unsafe-eval'` in **development only** (React Refresh cannot hot reload without it). |
+| CSP | Strict, nonce-based, per request, built in `src/proxy.ts`. `'unsafe-eval'` in **development only** (React Refresh cannot hot reload without it). `'unsafe-inline'` in exactly one directive — `style-src-attr` — as an accepted, non-neutral tradeoff (below). |
 | HSTS | `max-age=63072000; includeSubDomains; preload` |
 | Others | `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`, restrictive `Permissions-Policy` |
 | CSRF | Next.js Server Action origin checks + Better Auth token. **No state-changing GET routes.** |
 | XSS | React escaping; `dangerouslySetInnerHTML` banned by lint. Statement descriptions are untrusted text everywhere they are rendered. |
 | Rate limiting | Cloudflare at the edge; Better Auth limiter on auth routes, counters in the `rate_limit` **table** so a restart does not clear them; 5/hour on grant redemption; per-owner limits on upload and export (M5+) |
 
-### The CSP investigation, recorded so it is not re-litigated
+### The CSP: one accepted relaxation, and one refused
 
-A nonce-only `style-src` reports ~33 violations on `/sign-in`. The obvious diagnosis — "React sets
-inline `style` attributes, and CSP3 forbids a nonce from satisfying `style-src-attr`" — is **wrong
-here**, and acting on it would have widened the policy for no reason.
+Two separate things go wrong under a nonce-only style policy, and they have
+different answers. Both were established by capturing `securitypolicyviolation`
+DOM events (`effectiveDirective` + `sourceFile`) rather than reading console text
+— the console names the *fallback* directive and sends you after the wrong cause.
 
-Capturing `securitypolicyviolation` DOM events (which carry `effectiveDirective` and `sourceFile`,
-unlike the console message) showed all 33 were `style-src-elem`, every one sourced from
-`_next/static/chunks/…next-devtools….js` — the **development overlay**. A production build contains
-zero `next-devtools` chunks. Application code produced **zero** violations, and `script-src` produced
-zero in either mode.
+**1. Style ATTRIBUTES — relaxed, deliberately.** Radix positions floating elements
+by writing inline `style="…"` attributes from JavaScript. Per CSP3 an attribute has
+nowhere to carry a nonce, so `style-src-attr` admits only `'unsafe-inline'` or
+hashes of runtime-computed geometry. There is no Radix configuration that avoids it.
 
-So no relaxation exists. A `style-src-attr 'unsafe-inline'` was added, measured, and reverted.
-`tests/unit/csp.test.ts` asserts `'unsafe-inline'` appears in **no** directive and that no `-attr`
-escape hatch has crept in; `tests/e2e/passkey.spec.ts` asserts zero `script-src` violations and zero
-violations from anything other than the dev overlay.
+> **This is not security-neutral.** Style-attribute injection can overlay or hide
+> UI (clickjacking a confirm button) and can exfiltrate limited information via
+> attribute selectors and background-image requests. It is accepted because the
+> alternative was hand-rolling focus management and overlay accessibility for every
+> dialog. What it does **not** permit is script: `script-src` stays nonce-only with
+> `'strict-dynamic'` and no `'unsafe-inline'` in any environment, so this cannot
+> become code execution. For it to be reachable at all, untrusted text would have to
+> flow into a style attribute — React escapes interpolated output,
+> `dangerouslySetInnerHTML` is banned by lint, and statement text is rendered as
+> text nodes.
+
+**2. Style ELEMENTS — refused, and solved properly.** Radix's scroll lock
+(`react-remove-scroll`) injects a real `<style>` element, governed by
+`style-src-elem` → `style-src`. The easy fix would have been adding
+`'unsafe-inline'` to `style-src`, which is what most Next.js CSP examples do. That
+was refused: it permits *any* injected stylesheet, a materially bigger hole than the
+attribute case. Instead the per-request nonce is handed to `get-nonce`'s `setNonce()`
+(`src/features/shell/style-nonce.tsx`), so the injected tag is legitimate under the
+existing policy. **`<style>` elements and stylesheet links remain nonce-controlled.**
+
+**3. The dev overlay is not a reason to relax anything.** Before Radix arrived, a
+nonce-only policy still reported ~33 `style-src-elem` violations on `/sign-in` —
+all sourced from `_next/static/chunks/…next-devtools…`, the development overlay,
+which produces zero chunks in a production build. A `style-src-attr` exception was
+once added for this, measured, and reverted. Application code produced zero
+violations.
+
+**What the tests pin.** `tests/unit/csp.test.ts` asserts `'unsafe-inline'` appears in
+exactly one directive and that no `script-src-attr` escape hatch exists.
+`tests/e2e/passkey.spec.ts` proves the live header is byte-identical to
+`buildCsp(...)` output, then asserts the four production properties directly:
+`style-src-attr` permits `'unsafe-inline'`; `script-src` does not; production
+`script-src` has no `'unsafe-eval'` (development does); and `style-src` stays
+`'self'` + nonce. `tests/e2e/shell.spec.ts` opens a real Radix dialog and select and
+asserts zero violations from application code.
 
 ---
 

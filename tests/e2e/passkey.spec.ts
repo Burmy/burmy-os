@@ -167,7 +167,7 @@ test.describe('passkey enrolment and sign-in', () => {
 
     await page.getByRole('button', { name: 'Continue to Burmy' }).click();
     await expect(page).toHaveURL(/\/finance\/monthly$/);
-    await expect(page.getByRole('heading', { name: 'Finance — Monthly' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Monthly', level: 1 })).toBeVisible();
 
     // Two credentials really were persisted.
     const passkeyCount = await withDb(async (sql) => {
@@ -188,7 +188,7 @@ test.describe('passkey enrolment and sign-in', () => {
 
     // A session created by verifying a signature over the server's challenge.
     await expect(page).toHaveURL(/\/finance\/monthly$/);
-    await expect(page.getByRole('heading', { name: 'Finance — Monthly' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Monthly', level: 1 })).toBeVisible();
   });
 
   test('recovery after losing every passkey restores access', async ({ page, browser }) => {
@@ -280,43 +280,123 @@ test.describe('passkey enrolment and sign-in', () => {
   });
 });
 
-test.describe('the strict CSP does not break the app', () => {
-  test('renders and hydrates sign-in with no violations from application code', async ({
+test.describe('Content Security Policy', () => {
+  /**
+   * Parse a policy string into directive -> sources.
+   */
+  function directives(policy: string): Map<string, string[]> {
+    return new Map(
+      policy
+        .split(';')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const [name, ...values] = part.split(/\s+/);
+          return [name ?? '', values];
+        }),
+    );
+  }
+
+  test('the live header is exactly what buildCsp produces', async ({ page, request }) => {
+    /**
+     * This test closes the chain the next one depends on.
+     *
+     * The production policy cannot be exercised through a browser here: outside
+     * development the proxy REFUSES every request that lacks a verified
+     * Cloudflare Access assertion, and there is no Cloudflare in a test run.
+     * That is the fail-closed behaviour M2 shipped and it is not worth weakening
+     * to make a test easier.
+     *
+     * So the chain is: (1) prove the running server emits precisely
+     * `buildCsp(...)` output, here; (2) assert the production properties of
+     * `buildCsp({ development: false })` directly, next. Together those say
+     * something real about production without pretending to have browsed it.
+     */
+    const { buildCsp } = await import('../../src/server/security/csp');
+
+    const response = await request.get('/api/health');
+    const header = response.headers()['content-security-policy'];
+    expect(header, 'no CSP header on the response').toBeTruthy();
+
+    const nonce = /'nonce-([^']+)'/.exec(header ?? '')?.[1];
+    expect(nonce, 'CSP header carries no nonce').toBeTruthy();
+
+    expect(header).toBe(buildCsp({ nonce: nonce as string, development: true }));
+
+    // And a second request gets a different nonce — a reused one is a reusable
+    // injection point.
+    const again = await request.get('/api/health');
+    const secondNonce = /'nonce-([^']+)'/.exec(
+      again.headers()['content-security-policy'] ?? '',
+    )?.[1];
+    expect(secondNonce).not.toBe(nonce);
+
+    await page.goto('/sign-in');
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  });
+
+  test('PRODUCTION policy: the four properties that matter', async () => {
+    const { buildCsp } = await import('../../src/server/security/csp');
+
+    const production = directives(buildCsp({ nonce: 'N', development: false }));
+    const development = directives(buildCsp({ nonce: 'N', development: true }));
+
+    // 1. style-src-attr permits 'unsafe-inline'. Radix positions floating
+    //    elements with inline style attributes and CSP3 gives an attribute
+    //    nowhere to carry a nonce. A narrow, accepted relaxation — see csp.ts.
+    expect(production.get('style-src-attr')).toEqual(["'unsafe-inline'"]);
+
+    // 2. script-src does NOT permit 'unsafe-inline'. Nothing here may become
+    //    code execution.
+    expect(production.get('script-src')).not.toContain("'unsafe-inline'");
+    expect(production.get('script-src')).toContain("'strict-dynamic'");
+    expect(production.has('script-src-attr')).toBe(false);
+
+    // 3. production script-src does NOT permit 'unsafe-eval'. Development needs
+    //    it for React Refresh; production must never have it.
+    expect(production.get('script-src')).not.toContain("'unsafe-eval'");
+    expect(development.get('script-src')).toContain("'unsafe-eval'");
+
+    // 4. <style> elements and stylesheet links stay under the nonce. Most
+    //    Next.js CSP examples relax `style-src` wholesale; this does not, so an
+    //    injected <style> block or a remote stylesheet is still refused.
+    expect(production.get('style-src')).toEqual(["'self'", "'nonce-N'"]);
+    expect(production.get('style-src')).not.toContain("'unsafe-inline'");
+
+    // The relaxation is confined to exactly one directive, in both modes.
+    for (const parsed of [production, development]) {
+      const relaxed = [...parsed.entries()]
+        .filter(([, values]) => values.includes("'unsafe-inline'"))
+        .map(([name]) => name);
+      expect(relaxed).toEqual(['style-src-attr']);
+    }
+  });
+
+  test('the app renders and hydrates with no violations from application code', async ({
     page,
   }) => {
     /**
-     * A nonce-based CSP with `strict-dynamic` and no `unsafe-inline` is exactly
-     * the kind of policy that breaks a framework quietly — the page renders but
-     * hydration never runs, and nothing looks wrong until a button does nothing.
+     * Captured via the `securitypolicyviolation` DOM event rather than console
+     * text, because the event carries `effectiveDirective` and `sourceFile`. That
+     * precision mattered: a blanket "zero violations" assertion once failed with
+     * 33 entries that all turned out to come from
+     * `…/chunks/…next-devtools….js` — the development overlay, absent from a
+     * production build (verified: zero `next-devtools` chunks in `.next/static`).
      *
-     * Violations are captured via the `securitypolicyviolation` DOM event rather
-     * than by scraping console text, because the event carries
-     * `effectiveDirective` and `sourceFile`. That precision matters: a blanket
-     * "zero violations" assertion here failed with 33 entries, and reading the
-     * source files showed every one was `style-src-elem` from
-     * `…/chunks/…next-devtools….js` — the Next.js DEVELOPMENT OVERLAY, which is
-     * absent from a production build (verified: zero `next-devtools` chunks in
-     * `.next/static` after `pnpm build`).
-     *
-     * Rather than widen the policy to accommodate a dev-only tool, the assertion
-     * is scoped: nothing from application code may be blocked, and NOTHING may
-     * ever be blocked in `script-src`.
+     * Rather than widen the policy for a dev-only tool, the assertion is scoped:
+     * nothing from application code may be blocked, and NOTHING may ever be
+     * blocked in `script-src`.
      */
-    const violations: Array<{ directive: string; source: string }> = [];
+    const pageErrors: string[] = [];
+    page.on('pageerror', (error) => pageErrors.push(error.message));
 
     await page.addInitScript(() => {
       const record: Array<{ directive: string; source: string }> = [];
       (window as unknown as { __cspViolations: typeof record }).__cspViolations = record;
       document.addEventListener('securitypolicyviolation', (event) => {
-        record.push({
-          directive: event.effectiveDirective,
-          source: event.sourceFile ?? '',
-        });
+        record.push({ directive: event.effectiveDirective, source: event.sourceFile ?? '' });
       });
     });
-
-    const pageErrors: string[] = [];
-    page.on('pageerror', (error) => pageErrors.push(error.message));
 
     await page.goto('/sign-in');
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
@@ -324,21 +404,14 @@ test.describe('the strict CSP does not break the app', () => {
     // Hydration really happened: this is a client component responding.
     await expect(page.getByRole('button', { name: 'Continue with a passkey' })).toBeEnabled();
 
-    violations.push(
-      ...(await page.evaluate(
-        () => (window as unknown as { __cspViolations: Array<{ directive: string; source: string }> })
+    const violations = await page.evaluate(
+      () =>
+        (window as unknown as { __cspViolations: Array<{ directive: string; source: string }> })
           .__cspViolations,
-      )),
     );
 
-    // Not one script may be blocked. This is the assertion that matters.
     expect(violations.filter((v) => v.directive.startsWith('script-src'))).toEqual([]);
-
-    // And nothing from application code may be blocked either. Only the
-    // dev-overlay bundle is tolerated, and only in development.
-    const fromAppCode = violations.filter((v) => !v.source.includes('next-devtools'));
-    expect(fromAppCode).toEqual([]);
-
+    expect(violations.filter((v) => !v.source.includes('next-devtools'))).toEqual([]);
     expect(pageErrors).toEqual([]);
   });
 });

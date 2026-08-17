@@ -3,7 +3,7 @@
 **Read this file first.** It is written for a Claude Code session with **zero prior conversation
 context**. It assumes you have the repository and nothing else.
 
-Last updated: end of **Milestone 2**. Next milestone: **M3 — App shell, accounts, categories**.
+Last updated: end of **Milestone 3**. Next milestone: **M4 — Parsing & normalization core**.
 
 > **Privacy note:** this document deliberately contains no secrets, no `.env` values, no tokens, no
 > account numbers, and no real financial data. It must stay that way.
@@ -353,7 +353,7 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestones 1 and 2 COMPLETE
+## 9. Current status — Milestones 1, 2 and 3 COMPLETE
 
 **M2 added authentication.** Full detail, including every trap hit along the way, is in
 [`docs/ROADMAP.md`](./ROADMAP.md). The short version:
@@ -364,7 +364,10 @@ single clause is the entire double-counting guarantee, and it is covered by test
 | Bootstrap & recovery | One single-use 10-minute grant, minted only by `scripts/auth-grant.mjs` over SSH/Tailscale. Prototyped both candidates, chose, deleted the loser. |
 | Gates | Two passkeys before onboarding completes; last passkey undeletable; re-auth for passkey removal |
 | Schema | **19 tables**, 2 migrations. `session` / `account` / `verification` / `passkey` / `rate_limit` added; M1's `user` table reconciled, not duplicated |
-| Suites | `pnpm test` **144** unit (Docker-free, ~0.5s) · `pnpm test:integration` **64** (Testcontainers) · `pnpm test:e2e` **4** (Playwright virtual authenticator) |
+| Shell | `Finance` / `Settings` nav, cookie-based theme (three states, no inline script), error/loading/not-found boundaries with a correlation id |
+| Taxonomy | Accounts CRUD (deactivate, never delete; `last_four` rejects longer input) and categories CRUD + archive + up/down reorder |
+| Data access | `src/server/db/finance/` — `ownerId` first on every function, injected into every `WHERE`. `src/server/finance/` stays DB-free. |
+| Suites | `pnpm test` **181** (domain + components, Docker-free) · `pnpm test:integration` **85** (Testcontainers) · `pnpm test:e2e` **14** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -460,8 +463,15 @@ burmy-os/
 │   │   ├── api/health/route.ts  UNAUTHENTICATED; booleans + version ONLY
 │   │   ├── api/auth/[...all]/   UNAUTHENTICATED by design; getAuth() per request
 │   │   ├── layout.tsx  globals.css
+│   │   ├── (private)/settings/{accounts,categories,passkeys}/
+│   │   ├── (private)/{error,loading,not-found}.tsx
+│   ├── components/ui/           shadcn/ui — button, input, label, select, dialog,
+│   │                            table, dropdown-menu, sonner
 │   ├── features/auth/           sign-in, enrolment, grant redemption (client)
+│   ├── features/shell/          nav, theme toggle, sign-out, StyleNonce
+│   ├── features/finance/settings/  accounts, categories, passkeys managers + actions
 │   ├── lib/auth-client.ts       Better Auth browser client, passkey plugin only
+│   ├── lib/utils.ts             cn()
 │   ├── server/
 │   │   ├── auth/
 │   │   │   ├── access.ts        FACTOR 1 — Cloudflare Access JWT, fail-closed
@@ -470,14 +480,21 @@ burmy-os/
 │   │   │   ├── grants.ts        single-use token format (hashed at rest)
 │   │   │   ├── grant-plugin.ts  POST /api/auth/burmy/redeem-grant
 │   │   │   └── passkey-policy.ts  re-auth + last-passkey rule + audit
-│   │   ├── security/{csp,audit}.ts
-│   │   ├── db/{index,schema,seed}.ts
-│   │   └── finance/money.ts     THE DOMAIN CORE — framework-free
+│   │   ├── security/{csp,audit,theme}.ts
+│   │   ├── db/
+│   │   │   ├── {index,schema,seed}.ts
+│   │   │   └── finance/{accounts,categories,errors}.ts   OWNER-SCOPED data access
+│   │   └── finance/            THE DOMAIN CORE — framework-free, DB-free
+│   │       ├── money.ts        Cents + ALL arithmetic
+│   │       └── taxonomy.ts     names, slugs, last_four guard, reorder
 ├── tests/
-│   ├── unit/                    144 tests. NO Docker, NO database, ~0.5s.
-│   ├── integration/             64 tests. Testcontainers PG18. Own config.
+│   ├── unit/                    181 tests, NO Docker/database. Two Vitest projects:
+│   │                            *.test.ts -> node, *.test.tsx -> jsdom.
+│   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
+│   ├── integration/             85 tests. Testcontainers PG18. Own config.
 │   │   └── entry-points.test.ts THE anti-silent-coverage-gap test
-│   └── e2e/passkey.spec.ts      4 tests. Chrome virtual authenticator.
+│   └── e2e/                     14 tests, SERIAL. Chrome virtual authenticator,
+│                                real Radix overlays under the real CSP.
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
 ├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
@@ -560,50 +577,78 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 3 — the exact next objective
+## 12. Milestone 4 — the exact next objective
 
-**Goal:** the owner's taxonomy exists and the app is navigable.
-**Depends on:** M2 (complete).
+**Goal:** the domain heart, provably correct.
+**Depends on:** M1 (complete). M3 is complete, so the taxonomy the parser maps onto already exists.
+
+### Ask the owner FIRST — this milestone starts with real data
+
+**M4 begins by reading one real redacted Bank of America export.** Request:
+
+1. One representative **checking** CSV.
+2. One **credit-card** CSV, if the layout differs.
+3. For the Tier 1 verification: **two overlapping exports of the same date range, taken on different
+   days**, per account type.
+
+BoA's exact column layout could not be confirmed from any authoritative primary source during
+planning — search results were dominated by statement-converter marketing pages. `docs/FINANCE.md`
+records what is known and what is not, and its verification log is filled in here from observed
+reality rather than from third-party blog posts.
 
 ### Work
 
-1. `(private)` layout with `Finance` / `Settings` nav; responsive; theme; error and loading states.
-2. **Initialize shadcn/ui + Lucide** — approved in the plan, installed in neither M1 nor M2.
-3. CRUD for `finance_accounts` (checking, savings, credit card, brokerage). `last_four` is optional and
-   is the only account-number fragment ever stored.
-4. CRUD + archive + reorder for `finance_categories`, with `kind` (spending | income | investment).
-   **Archive, never delete** — history must stay intact.
-5. Wire `@testing-library/jest-dom` to a Vitest setup file; the first component tests land here.
-6. Do the outstanding **manual real-device passkey check** (see §9 / ROADMAP "known gaps").
+1. `NormalizedTransaction`; Papa Parse harness (streaming, 50k row cap, 4KB cell cap).
+2. **Header-signature detection — never by filename.** A renamed file must still be recognized, and an
+   unrecognized file must never be silently mis-parsed.
+3. BoA deposit and BoA card adapters, plus the generic mapper with saved signatures.
+4. `merchant.ts` — table-driven and pure. Emits `normalized_merchant` (readable) and `merchant_key`
+   (aggressive). Every rule is a test case.
+5. `dedupe.ts` — Tier 2 count/multiset reconciliation, which does all the work by default.
+6. **The §23 Tier 1 verification, per account type.** Check whether any candidate identifier column is
+   (a) byte-stable across two exports, (b) unique across genuinely different transactions, and
+   (c) present on enough rows to matter. Record the verdict **with evidence** in `docs/FINANCE.md`.
 
-### Non-negotiable, inherited from M2
+### Non-negotiable for this milestone
 
-- **Every Server Action starts with `await requireOwner()`.**
-  `tests/integration/entry-points.test.ts` enumerates `src/app/**/route.ts` and every `'use server'`
-  file from the filesystem, and fails the suite if one is neither guarded nor on the two-item
-  allowlist. That test has been validated by deliberately adding an unguarded route and watching it
-  fail. It is doing its job, not being awkward.
-- **Pages under `(private)` should also call `requireOwner()` directly**, because from M3 they need the
-  returned owner id to scope their queries. The layout guard exists for navigation, not for data.
-- **Sensitive actions use `requireOwner({ fresh: true })`** — bulk delete, full export, changing
-  `OWNER_EMAIL`. Freshness is 15 minutes from session creation, and a rolling refresh does not reset
-  it, so it genuinely means "authenticated recently".
-- **Every Finance query goes through a data-access layer that takes an owner id** and injects the
-  `WHERE` clause. Routes and actions never build queries directly.
+- **Everything lands in `src/server/finance/`, which is DB- and I/O-free.** That boundary is what makes
+  the money rules testable in milliseconds without a browser, a server or a database. An ESLint rule
+  keeps React/Next out; keeping Drizzle out is on you. Persistence arrives with the pipeline in M5.
+- **`dedupe_key` and `merchant_key` are different concepts and must stay separate.** Identity comes
+  from the raw description under a frozen, versioned algorithm (trim, uppercase, collapse whitespace —
+  nothing else, ever). `merchant_key` is expected to evolve. Deriving identity from `merchant_key`
+  would mean one new normalization rule silently stops matching years of committed history.
+- **Sign convention is asserted, never assumed.** BoA uses a single signed column in some exports and
+  separate Debit/Credit columns in others. A card export where every row is an inflow must fail the
+  import loudly rather than invert a month of spending.
+- **No unique constraint on `source_transaction_id`** unless all three Tier 1 checks pass. A constraint
+  added on the strength of a column's *name* would either reject legitimate rows or silently merge
+  distinct transactions.
+- **Fixtures are synthetic only.** `.gitignore` blocks `*.csv` repo-wide, with `tests/fixtures/**` as
+  the narrow re-include. The owner's real export is read, not committed.
 
 ### Tests required
 
-- Archiving a category preserves history and frees the name for reuse.
-- Duplicate category names are rejected case-insensitively among live rows only.
-- Accounts and categories are owner-scoped.
-- The new Server Actions reject unauthenticated invocation (the enumeration test does this
-  automatically once they exist).
+- Adapter suites for BoA deposit, BoA card and the generic mapper.
+- **Both sign conventions**, and a wrong-sign file that fails loudly.
+- Malformed rows; encoding (UTF-8 + BOM); dates without a year **rejected rather than guessed**.
+- `dedupe_key` stability across a `merchant_key` normalization change: add a strip rule, re-import,
+  assert zero new duplicates.
 
 ### Definition of Done
 
-- The owner's real category list can be entered.
-- The shell works on desktop and mobile.
+- Fixtures parse to exact expected output.
+- A wrong-sign file fails loudly.
+- **The Tier 1 verdict is recorded with evidence, and no unique constraint is added unless all three
+  checks passed.**
 - `pnpm typecheck` / `lint` / `test` / `test:integration` / `build` all green — **actually run**.
+
+### Also outstanding, carried from M2 and M3
+
+**Manual real-device passkey verification.** The automated ceremony passes against Chrome's virtual
+authenticator (real WebAuthn with a software key store), but no physical authenticator has ever been
+used. It needs the owner's hands and about two minutes: run `pnpm dev`, sign in at `/sign-in` with a
+real phone or Windows Hello, and confirm passkey management under Settings → Passkeys.
 
 ---
 
@@ -612,7 +657,7 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 | # | Milestone | Essence |
 | --- | --- | --- |
 | ~~M2~~ | ~~Authentication & security baseline~~ | **Complete.** Access JWT verification, Better Auth passkeys, `requireOwner()`, bootstrap/recovery settled by prototype, CSP, audit events |
-| **M3** | App shell, accounts, categories | `Finance` / `Settings` nav, `/` → `/finance/monthly`, shadcn/ui init, CRUD for accounts and categories (archive never delete) |
+| ~~M3~~ | ~~App shell, accounts, categories~~ **Complete.** | `Finance` / `Settings` nav, `/` → `/finance/monthly`, shadcn/ui init, CRUD for accounts and categories (archive never delete) |
 | **M4** | Parsing & normalization core *(no UI)* | **Starts by reading one real redacted BoA export.** Header-signature detection, BoA deposit + card adapters, generic mapper, merchant normalization, dedupe. **Also verifies whether `source_transaction_id` earns a unique constraint.** |
 | **M5** | Import pipeline, preview, duplicates | Multi-file batch upload, sanitized staging, 60-day expiry, preview, count-based dedupe, atomic commit |
 | **M6** | Categorization & classification | Rules, merchant memory, history, source-category mapping; transfer / card-payment / investment detection with deterministic evidence only |
@@ -684,11 +729,11 @@ proceeding.
 not redesign approved architecture** unless implementation evidence requires it — and if it does,
 stop, present the evidence, and recommend the change rather than making it unilaterally.
 
-**The next unfinished milestone is M3 — App shell, accounts, categories** (§12).
+**The next unfinished milestone is M4 — Parsing & normalization core** (§12). It is the first milestone that needs real input from the owner: ask for a redacted Bank of America export before writing any adapter.
 
 Bootstrap and recovery are **no longer open questions** — M2 settled both by prototype, and
 `docs/SECURITY.md` records the comparison and the evidence. Do not reopen that decision without new
 evidence.
 
-**Before beginning M3, summarize your understanding and your proposed work, and get the owner's
+**Before beginning M4, summarize your understanding and your proposed work, and get the owner's
 approval.** Then proceed one milestone at a time under the working agreement in §14.

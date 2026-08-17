@@ -28,12 +28,18 @@
   "dependencies": {
     "@better-auth/passkey": "1.6.29",
     "better-auth": "1.6.29",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "drizzle-orm": "0.45.2",
+    "get-nonce": "^1.0.1",
     "jose": "6.2.9",
+    "lucide-react": "^1.31.0",
     "next": "^16.3.1",
     "postgres": "^3.4.9",
+    "radix-ui": "^1.6.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

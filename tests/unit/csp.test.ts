@@ -60,21 +60,34 @@ describe('buildCsp — production', () => {
     expect(parsed.get('script-src')).not.toContain("'unsafe-inline'");
   });
 
-  it('allows unsafe-inline NOWHERE, in any directive', () => {
-    // Investigated, not assumed. A nonce-only style-src produced 33 violations
-    // on /sign-in, and capturing `securitypolicyviolation` events showed every
-    // one was `style-src-elem` from the Next.js DEV OVERLAY — absent in a
-    // production build. Nothing in application code needed a relaxation, so a
-    // `style-src-attr 'unsafe-inline'` was tried and reverted.
-    expect(policy).not.toContain('unsafe-inline');
+  it('confines unsafe-inline to style ATTRIBUTES and nowhere else', () => {
+    // A real, accepted relaxation — not a neutral one. Radix positions floating
+    // elements with inline style attributes, and CSP3 gives an attribute nowhere
+    // to carry a nonce, so `style-src-attr` admits only 'unsafe-inline' or
+    // hashes of runtime-computed geometry. See the rationale in csp.ts.
+    //
+    // This test exists to keep it CONFINED. If 'unsafe-inline' ever spreads to
+    // another directive — especially script-src or style-src — it fails.
+    expect(parsed.get('style-src-attr')).toEqual(["'unsafe-inline'"]);
 
-    // And no `-attr` escape hatch crept in either.
-    expect(parsed.has('style-src-attr')).toBe(false);
-    expect(parsed.has('script-src-attr')).toBe(false);
+    const relaxed = [...parsed.entries()]
+      .filter(([, values]) => values.includes("'unsafe-inline'"))
+      .map(([name]) => name);
+
+    expect(relaxed).toEqual(['style-src-attr']);
   });
 
-  it('requires a nonce for <style> elements and stylesheet links', () => {
+  it('never relaxes script attributes', () => {
+    // The equivalent hole for scripts would be code execution.
+    expect(parsed.has('script-src-attr')).toBe(false);
+    expect(parsed.get('script-src')).not.toContain("'unsafe-inline'");
+  });
+
+  it('keeps <style> elements and stylesheet links under the nonce', () => {
+    // Most Next.js CSP examples relax `style-src` wholesale. This does not: an
+    // injected <style> block or a remote stylesheet is still refused.
     expect(parsed.get('style-src')).toEqual(["'self'", "'nonce-TESTNONCE'"]);
+    expect(parsed.get('style-src')).not.toContain("'unsafe-inline'");
   });
 
   it('locks down the directives a nonce cannot protect', () => {

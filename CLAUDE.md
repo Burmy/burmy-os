@@ -106,6 +106,35 @@ These are verified, not folklore. Do not "fix" them back.
 - **The deploy script never restores the database automatically.** On healthcheck failure it rolls
   back the *image* only and leaves Postgres untouched. A failed healthcheck usually means a bad build,
   not bad data, and the database may hold newer writes.
+- **Drizzle WRAPS driver errors — check the `cause` chain, not `error.code`.** A Postgres
+  `unique_violation` arrives as a Drizzle error carrying `query`/`params`, with the real SQLSTATE on
+  `error.cause`. A naive `error.code === '23505'` compiles, reads correctly, and silently never
+  matches — turning every duplicate-name into an unhandled 500 instead of a field error. Use
+  `isUniqueViolation()` in `src/server/db/finance/errors.ts`, which walks the chain. Caught by
+  integration tests, not review.
+- **Radix needs the CSP nonce, and `style-src` must NOT be relaxed to give it one.** Radix overlays
+  (dialog, select, dropdown) inject a real `<style>` element via `react-remove-scroll`, governed by
+  `style-src-elem` → `style-src`, which is nonce-only. The fix is `setNonce()` from `get-nonce` in
+  `src/features/shell/style-nonce.tsx`, fed the per-request nonce from the `x-nonce` header. Adding
+  `'unsafe-inline'` to `style-src` would "fix" it by permitting *any* injected stylesheet — do not.
+  Separately, Radix's inline `style="…"` *attributes* genuinely cannot carry a nonce, which is why
+  `style-src-attr 'unsafe-inline'` exists as a narrow, documented exception (see `docs/SECURITY.md`).
+- **Do not reintroduce `sonner`, and check any new dependency for runtime `<style>` injection.**
+  Sonner calls an internal `__insertCSS()` at module evaluation, has zero nonce support and no opt-out,
+  so it can never satisfy a nonce-only `style-src`. The in-house `src/components/ui/toast.tsx` replaces
+  it. A future `npx shadcn add` that pulls the sonner template back in will also re-add `next-themes` —
+  reject both.
+- **Playwright runs SERIAL (`fullyParallel: false`, `workers: 1`) and must stay that way.** Every spec
+  drives one dev server against one development database and truncates tables to get a known state.
+  In parallel, one spec wipes another's session mid-test and it looks like a flaky passkey ceremony.
+- **A new dependency with an install script breaks EVERY `pnpm <script>`, not just `pnpm install`.**
+  pnpm runs a dependency-status check before each script, so an un-acknowledged
+  `ERR_PNPM_IGNORED_BUILDS` takes out typecheck, lint, test and build at once — with a stack trace
+  ending in `runDepsStatusCheck` that looks nothing like a dependency problem. Fix it in
+  `pnpm-workspace.yaml` under **`allowBuilds`**, with an explicit `true`/`false` per package and a
+  recorded reason. `ignoredBuiltDependencies` alone does **not** suppress it in pnpm 11.22 — verified
+  twice. pnpm also re-injects a placeholder `allowBuilds:` stanza whenever a new such package appears;
+  replace the placeholders with real booleans rather than deleting the block.
 - **Never `export NODE_ENV=development` before `pnpm build`.** Sourcing `.env` into the shell
   (`set -a; . ./.env`) does exactly that, and `next build` then resolves the *development* React
   build during prerender and dies with `TypeError: Cannot read properties of null (reading
