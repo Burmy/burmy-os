@@ -611,7 +611,7 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 | # | Milestone | Essence |
 | --- | --- | --- |
-| **M2** | Authentication & security baseline | Access JWT verification, Better Auth passkeys, `requireOwner()`, bootstrap/recovery prototype, CSP, audit events |
+| ~~M2~~ | ~~Authentication & security baseline~~ | **Complete.** Access JWT verification, Better Auth passkeys, `requireOwner()`, bootstrap/recovery settled by prototype, CSP, audit events |
 | **M3** | App shell, accounts, categories | `Finance` / `Settings` nav, `/` → `/finance/monthly`, shadcn/ui init, CRUD for accounts and categories (archive never delete) |
 | **M4** | Parsing & normalization core *(no UI)* | **Starts by reading one real redacted BoA export.** Header-signature detection, BoA deposit + card adapters, generic mapper, merchant normalization, dedupe. **Also verifies whether `source_transaction_id` earns a unique constraint.** |
 | **M5** | Import pipeline, preview, duplicates | Multi-file batch upload, sanitized staging, 60-day expiry, preview, count-based dedupe, atomic commit |
@@ -673,8 +673,8 @@ git status --short
 node -v && pnpm -v && docker version --format '{{.Server.Version}}'
 pnpm install
 docker compose -f compose.dev.yml up -d postgres
-docker compose -f compose.dev.yml run --rm migrate
-pnpm typecheck && pnpm lint && pnpm test && pnpm build
+docker compose -f compose.dev.yml run --rm --build migrate   # --build is NOT optional
+pnpm typecheck && pnpm lint && pnpm test && pnpm test:integration && pnpm build
 ```
 
 Confirm the working tree and toolchain match what §9 and §11 describe. If they do not, say so before
@@ -684,8 +684,11 @@ proceeding.
 not redesign approved architecture** unless implementation evidence requires it — and if it does,
 stop, present the evidence, and recommend the change rather than making it unilaterally.
 
-**The next unfinished milestone is M2 — Authentication** (§12). Note especially that bootstrap and
-recovery are *intentionally* unresolved and must be settled by a working prototype, not an assumption.
+**The next unfinished milestone is M3 — App shell, accounts, categories** (§12).
 
-**Before beginning M2, summarize your understanding and your proposed work, and get the owner's
+Bootstrap and recovery are **no longer open questions** — M2 settled both by prototype, and
+`docs/SECURITY.md` records the comparison and the evidence. Do not reopen that decision without new
+evidence.
+
+**Before beginning M3, summarize your understanding and your proposed work, and get the owner's
 approval.** Then proceed one milestone at a time under the working agreement in §14.
