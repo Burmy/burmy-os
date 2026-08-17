@@ -1,0 +1,212 @@
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+import { type Page, expect, test } from '@playwright/test';
+import postgres from 'postgres';
+
+import {
+  GRANT_TTL_SECONDS,
+  encodeGrantPayload,
+  generateGrantToken,
+  grantIdentifier,
+} from '../../scripts/auth-grant.mjs';
+
+/**
+ * M5's golden path through a real browser: upload → preview → categorize →
+ * commit, and the idempotency property that makes re-uploading the same
+ * statement safe.
+ *
+ * `signIntoApp` and `resetAll` are duplicated from shell.spec.ts rather than
+ * shared — there is no shared e2e helper module yet, matching that file's own
+ * existing pattern.
+ */
+
+const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://burmy:burmy@localhost:5432/burmy';
+const OWNER_EMAIL = process.env.OWNER_EMAIL ?? 'dev@example.invalid';
+
+const DEPOSIT_FIXTURE = path.resolve(process.cwd(), 'tests/fixtures/finance/boa-deposit-2026-05.csv');
+const CARD_FIXTURE = path.resolve(process.cwd(), 'tests/fixtures/finance/boa-card-2026-05.csv');
+
+/**
+ * How many transaction rows `boa-deposit-2026-05.csv` yields: 12 data rows
+ * after the preamble and the one beginning-balance pseudo-row (empty amount,
+ * skipped) are excluded. Verified against the same fixture in
+ * tests/unit/parse-boa.test.ts.
+ */
+const DEPOSIT_TRANSACTION_COUNT = 12;
+
+async function withDb<T>(fn: (sql: postgres.Sql) => Promise<T>): Promise<T> {
+  const sql = postgres(DATABASE_URL, { max: 1 });
+  try {
+    return await fn(sql);
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+async function resetAll(): Promise<void> {
+  await withDb(async (sql) => {
+    await sql.unsafe(
+      'truncate table "audit_events", "rate_limit", "verification", "passkey", "session", ' +
+        '"account", "finance_transactions", "finance_import_rows", "finance_import_files", ' +
+        '"finance_imports", "finance_categories", "finance_accounts", "user" cascade',
+    );
+  });
+}
+
+/** Bootstrap, enrol two passkeys, and land in the app. */
+async function signIntoApp(page: Page): Promise<void> {
+  const client = await page.context().newCDPSession(page);
+  await client.send('WebAuthn.enable', { enableUI: false });
+
+  const addDevice = async (transport: 'internal' | 'usb'): Promise<void> => {
+    await client.send('WebAuthn.addVirtualAuthenticator', {
+      options: {
+        protocol: 'ctap2',
+        transport,
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    });
+  };
+
+  const token = generateGrantToken();
+  await withDb(async (sql) => {
+    await sql`
+      insert into "verification" ("id", "identifier", "value", "expires_at")
+      values (
+        ${randomUUID()},
+        ${grantIdentifier(token)},
+        ${encodeGrantPayload({
+          kind: 'bootstrap',
+          email: OWNER_EMAIL.toLowerCase(),
+          issuedAt: new Date().toISOString(),
+        })},
+        ${new Date(Date.now() + GRANT_TTL_SECONDS * 1000)}
+      )
+    `;
+  });
+
+  await addDevice('internal');
+
+  await page.goto('/recovery');
+  await page.getByRole('radio', { name: 'bootstrap' }).check();
+  await page.getByLabel('Token').fill(token);
+  await page.getByRole('button', { name: 'Redeem' }).click();
+  await expect(page).toHaveURL(/\/onboarding\/passkeys$/);
+
+  await page.getByRole('button', { name: 'Add a passkey' }).click();
+  await expect(page.getByText('1 of 2 enrolled')).toBeVisible();
+
+  await addDevice('usb');
+  await page.getByRole('button', { name: 'Add a passkey' }).click();
+  await expect(page.getByText('2 of 2 enrolled')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Continue to Burmy' }).click();
+  await expect(page).toHaveURL(/\/finance\/monthly$/);
+}
+
+async function addAccount(page: Page, name: string): Promise<void> {
+  await page.goto('/settings/accounts');
+  await page.getByRole('button', { name: 'Add account' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Name').fill(name);
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('cell', { name, exact: true })).toBeVisible();
+}
+
+async function selectAccount(page: Page, name: string): Promise<void> {
+  await page.getByLabel('Account').click();
+  await page.getByRole('option', { name }).click();
+}
+
+test.describe.configure({ mode: 'serial' });
+
+test.describe('import', () => {
+  test.beforeEach(async () => {
+    await resetAll();
+  });
+
+  test('upload, categorize, commit — and a repeat upload adds nothing new', async ({ page }) => {
+    await signIntoApp(page);
+    await addAccount(page, 'BoA Checking');
+
+    await page.goto('/settings/categories');
+    await page.getByRole('button', { name: 'Add category' }).click();
+    const categoryDialog = page.getByRole('dialog');
+    await categoryDialog.getByLabel('Name').fill('Groceries');
+    await categoryDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Groceries')).toBeVisible();
+
+    await page.goto('/finance/import');
+    await selectAccount(page, 'BoA Checking');
+    await page.getByLabel('Statement (.csv)').setInputFiles(DEPOSIT_FIXTURE);
+    await page.getByRole('button', { name: 'Upload' }).click();
+
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
+    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} new`)).toBeVisible();
+    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} will import`)).toBeVisible();
+
+    // Categorize one row from the ACTUAL statement text, which the preview
+    // shows verbatim beneath the normalized merchant.
+    await expect(page.getByText("LARSEN'S #0366", { exact: false })).toBeVisible();
+    const larsensRow = page.getByRole('row', { name: /LARSEN'S/ });
+    await larsensRow.getByLabel(/^Category for/).click();
+    await page.getByRole('option', { name: 'Groceries' }).click();
+
+    await page
+      .getByRole('button', { name: `Import ${DEPOSIT_TRANSACTION_COUNT} transactions` })
+      .click();
+    await expect(page.getByText('Import complete.')).toBeVisible();
+    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} transactions added`)).toBeVisible();
+    await expect(page.getByText('0 skipped as already imported')).toBeVisible();
+
+    const committedCategory = await withDb(async (sql) => {
+      const rows = await sql<{ name: string | null }[]>`
+        select c."name" from "finance_transactions" t
+        join "finance_categories" c on c."id" = t."category_id"
+        where t."original_description" like '%LARSEN%'
+      `;
+      return rows[0]?.name ?? null;
+    });
+    expect(committedCategory).toBe('Groceries');
+
+    // Re-upload the SAME file: every row must show as already imported, and
+    // committing must add zero new transactions — the idempotency property.
+    await page.goto('/finance/import');
+    await selectAccount(page, 'BoA Checking');
+    await page.getByLabel('Statement (.csv)').setInputFiles(DEPOSIT_FIXTURE);
+    await page.getByRole('button', { name: 'Upload' }).click();
+
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
+    await expect(page.getByText('You already imported this exact file')).toBeVisible();
+    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} already imported`)).toBeVisible();
+    await expect(page.getByText('0 will import')).toBeVisible();
+    await expect(page.getByRole('button', { name: /^Import \d+ transaction/ })).toBeDisabled();
+
+    const totalCount = await withDb(async (sql) => {
+      const rows = await sql<{ n: string }[]>`select count(*)::text as n from "finance_transactions"`;
+      return Number(rows[0]?.n ?? '0');
+    });
+    expect(totalCount).toBe(DEPOSIT_TRANSACTION_COUNT);
+  });
+
+  test('refuses to stage a credit card export against a checking account', async ({ page }) => {
+    await signIntoApp(page);
+    await addAccount(page, 'BoA Checking');
+
+    await page.goto('/finance/import');
+    await selectAccount(page, 'BoA Checking');
+    await page.getByLabel('Statement (.csv)').setInputFiles(CARD_FIXTURE);
+    await page.getByRole('button', { name: 'Upload' }).click();
+
+    // Scoped to a `<p>` because Next's route announcer also carries
+    // `role="alert"` (an empty `<div>`, mounted once a client-side navigation
+    // has occurred) and `page.getByRole('alert')` matches both.
+    await expect(page.locator('p[role="alert"]')).toContainText('credit card export');
+    // No import was staged — the owner is still on the upload form.
+    await expect(page).toHaveURL(/\/finance\/import$/);
+  });
+});

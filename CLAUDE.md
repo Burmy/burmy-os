@@ -200,6 +200,17 @@ These are verified, not folklore. Do not "fix" them back.
 - **`exactOptionalPropertyTypes` is on.** Assigning `undefined` to an optional property is an error;
   omit the key instead (`...(cond ? { key: value } : {})`). This caught a real issue in
   `playwright.config.ts` and it stays on.
+- **Postgres has no `MIN()`/`MAX()` aggregate for `uuid`.** Casting the aggregate's *result* to text
+  (`min(id)::text`) still fails — the cast has to happen to the *column*, before aggregation
+  (`min(id::text)`), or the query never compiles at all (`function min(uuid) does not exist`). Caught
+  by the M5 integration suite the moment a real query ran against real Postgres.
+- **A Server Action's own `revalidatePath()` can beat the client state it was supposed to reveal.**
+  `commitImportAction` (M5) calls `revalidatePath()`, which re-renders the calling Server Component
+  with fresh data — including a `status` prop that had just flipped to `'committed'`. A client
+  component checking that prop before its own local "here's what just happened" state showed "already
+  committed" instead of the completion summary it just received. If a component holds both a
+  server-supplied status prop and a local result-of-my-own-action state, check the local state FIRST.
+  Missed by manual testing, caught by the e2e suite.
 
 ---
 

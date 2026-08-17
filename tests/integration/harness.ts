@@ -83,7 +83,8 @@ export async function resetDatabase(): Promise<void> {
   // cascade-linked cannot silently start leaking between tests.
   await sql.unsafe(
     'truncate table "audit_events", "rate_limit", "verification", "passkey", "session", "account", ' +
-      '"finance_transactions", "finance_categories", "finance_accounts", "user" cascade',
+      '"finance_transactions", "finance_import_rows", "finance_import_files", "finance_imports", ' +
+      '"finance_categories", "finance_accounts", "user" cascade',
   );
 }
 

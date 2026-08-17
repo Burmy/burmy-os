@@ -33,6 +33,14 @@ export class NotFoundError extends Error {
   }
 }
 
+/** The import is not in `review` status — already committed, discarded, or mid-commit. */
+export class ImportNotReviewableError extends Error {
+  constructor(readonly status: string) {
+    super(`This import is ${status.replace(/_/g, ' ')}, not awaiting review.`);
+    this.name = 'ImportNotReviewableError';
+  }
+}
+
 /**
  * Is this a Postgres unique-constraint violation?
  *

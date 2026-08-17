@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { assertCardHasOutflows } from '@/server/finance/adapters/boa-card';
 import { assertDepositTotals, parseBoaDeposit } from '@/server/finance/adapters/boa-deposit';
-import { detectFormat, parseStatement } from '@/server/finance/parse';
+import { detectFormat, parseStatement, parseStatementTolerant } from '@/server/finance/parse';
 import { sourceAmounts } from '@/server/finance/parse/normalize';
 import { ParseError } from '@/server/finance/parse/types';
 
@@ -434,5 +434,52 @@ describe('malformed input fails loudly', () => {
       expect(message).toMatch(/^line \d+:/);
       expect(message).not.toContain('Too few columns');
     }
+  });
+});
+
+describe('parseStatementTolerant — one bad row does not abort the file', () => {
+  // Hand-built, deliberately — unlike the adapter suites above, this is testing
+  // M5's generic collect-instead-of-throw control flow, not BoA's real shape,
+  // so it does not need the redacted corpus.
+  function cardCsv(rows: string): Uint8Array {
+    return new TextEncoder().encode(`Posted Date,Reference Number,Payee,Address,Amount\n${rows}`);
+  }
+
+  it('collects a per-row normalize failure instead of throwing', () => {
+    const bytesWithOneBadRow = cardCsv(
+      '05/01/2026,REF1,GOOD MERCHANT,,-10.00\n' +
+        '13/45/2026,REF2,BAD DATE ROW,,-20.00\n' +
+        '05/03/2026,REF3,ANOTHER GOOD ONE,,-5.00\n',
+    );
+
+    const result = parseStatementTolerant(bytesWithOneBadRow, NOW);
+
+    expect(result.candidates.map((c) => c.originalDescription)).toEqual([
+      'GOOD MERCHANT',
+      'ANOTHER GOOD ONE',
+    ]);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.lineNumber).toBe(3);
+    expect(result.failures[0]?.message).toMatch(/impossible date/);
+  });
+
+  it('still throws for a FILE-level structural failure — the all-inflow guard', () => {
+    // Row-level tolerance must never mask a whole-file integrity problem: the
+    // deposit checksum, the running balance, and this all-inflow guard all stay
+    // hard failures, exactly as in `parseStatement`.
+    const allInflow = cardCsv('05/01/2026,REF1,REFUND,,10.00\n');
+    expect(() => parseStatementTolerant(allInflow, NOW)).toThrow(ParseError);
+  });
+
+  it('produces the identical result to parseStatement when nothing fails', () => {
+    // `parseStatement()` itself is untouched — same detection, same assertions,
+    // same candidates — this only proves the refactor that shares that logic
+    // did not change its behaviour.
+    const tolerant = parseStatementTolerant(card, NOW);
+    const strict = parseStatement(card, NOW);
+
+    expect(tolerant.candidates).toEqual(strict.candidates);
+    expect(tolerant.format).toEqual(strict.format);
+    expect(tolerant.failures).toEqual([]);
   });
 });

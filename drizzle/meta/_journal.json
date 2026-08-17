@@ -15,6 +15,13 @@
       "when": 1786977234399,
       "tag": "0001_nappy_ultron",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786995616646,
+      "tag": "0002_strong_red_hulk",
+      "breakpoints": true
     }
   ]
 }

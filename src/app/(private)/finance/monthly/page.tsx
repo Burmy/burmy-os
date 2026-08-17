@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { listCategories } from '@/server/db/finance/categories';
 import { requireOwner } from '@/server/auth/owner';
@@ -29,8 +30,11 @@ export default async function MonthlyPage(): Promise<React.ReactElement> {
     <div>
       <h1 className="text-xl font-semibold">Monthly</h1>
       <p className="text-muted-foreground mt-2 text-sm leading-relaxed">
-        The category × month grid arrives in Milestone 8, and the importer that
-        fills it in Milestone 5. Your row axis is below.
+        The category × month grid arrives in Milestone 8.{' '}
+        <Link href="/finance/import" className="underline underline-offset-2">
+          Import a statement
+        </Link>{' '}
+        to start adding transactions. Your row axis is below.
       </p>
 
       {categories.length === 0 ? (

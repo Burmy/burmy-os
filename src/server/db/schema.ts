@@ -480,6 +480,20 @@ export const financeImportRows = pgTable(
     duplicateKind: duplicateKindEnum('duplicate_kind'),
 
     decision: rowDecisionEnum('decision').notNull().default('pending'),
+    /**
+     * Did the OWNER explicitly set `decision` (or did it come from staging-time
+     * Tier 2 reconciliation and nothing has touched it since)?
+     *
+     * This is what lets `commitImport()` re-run reconciliation against the
+     * CURRENT committed count immediately before inserting — closing the race
+     * where two concurrently staged imports both see the same key as unclaimed
+     * surplus — without discarding a deliberate owner override. A row the owner
+     * flipped back to Include after reviewing it (a genuine same-day repeat the
+     * heuristic mis-flagged) is honoured as-is; a row still following the default
+     * is re-checked against the fresh count and demoted if a concurrent commit
+     * already claimed the surplus. See docs/FINANCE.md.
+     */
+    decisionOverridden: boolean('decision_overridden').notNull().default(false),
     reviewNote: text('review_note'),
     /** Message only. NEVER the offending row content — that would leak into logs. */
     parseError: text('parse_error'),

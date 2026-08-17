@@ -12,7 +12,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M2** | Authentication, bootstrap prototype, security baseline | ✅ Complete |
 | **M3** | App shell, accounts, categories | ✅ Complete |
 | **M4** | Parsing & normalization core *(no UI)* | ✅ Complete |
-| M5 | Import pipeline, preview, duplicates | ⚪ Not started |
+| **M5** | Import pipeline, preview, duplicates | ✅ Complete |
 | M6 | Categorization & classification | ⚪ Not started |
 | M7 | Review queue | ⚪ Not started |
 | M8 | Monthly grid & drill-down *(the product)* | ⚪ Not started |
@@ -396,7 +396,85 @@ function call over two captured sets rather than a parser change.
 
 ---
 
-## ▶ RESUME HERE — M5: Import pipeline, preview, duplicates
+## M5 — Import pipeline, preview, duplicates
+
+**Goal:** the owner's actual monthly workflow — upload a CSV, see what's new versus
+already-imported, categorize, commit — working end to end, without the
+infrastructure M1's schema anticipated but M5 does not yet need.
+
+**Course-corrected from the original plan** (owner decision, before implementation):
+single file per import, not a multi-file batch — batching existed only so
+transfer/card-payment counterpart matching could see both legs at once, and that
+matching is M6's. In memory only, never a temp file on disk — the plan's own note
+that a 10 MB cap makes the deletion hazard moot turned out correct. No generic
+mapper UI or `finance_format_signatures` persistence, no owner-facing
+transaction-type picker. All confirmed explicitly out of scope; see FINANCE.md
+"Import pipeline (M5)" for what shipped instead.
+
+**Work:** `src/server/finance/import/compatibility.ts` (account/format check,
+pure) and `import/staging.ts` (`planStagedDecisions`, `defaultTransactionType`,
+pure) — both framework-free, per the `src/server/finance/` boundary.
+`parse/index.ts` gained `parseStatementTolerant()`, additive alongside
+`parseStatement()`, so one bad row no longer aborts a whole file. Repository layer
+in `src/server/db/finance/imports.ts`: staging, the review-page reads, per-row
+decision/category updates, commit, discard, and the file-hash pre-check. Server
+Actions in `src/features/finance/import/actions.ts`. UI at
+`/finance/import` (upload + in-progress list) and `/finance/import/[id]`
+(preview/review/commit), plus a `finance/layout.tsx` sub-nav so the screen is
+actually reachable.
+
+**Three adjustments requested during review, before implementation started:**
+
+1. **Account/format compatibility**, checked before staging — see FINANCE.md.
+2. **Commit-time Tier 2 re-check.** Reconciling once at staging is not enough
+   under concurrency: two imports staged close together can each see "0
+   committed" for the same key. `commitImport()` re-runs the identical pure
+   reconciliation a second time, inside the commit transaction (serialized per
+   owner via `pg_advisory_xact_lock`), against the current committed count — and
+   an explicit owner override (`decision_overridden`) is honoured unconditionally,
+   never demoted by the re-check. One small, deliberate schema addition:
+   `finance_import_rows.decision_overridden boolean`.
+3. **Status-aware file-hash messaging.** Only a `committed` prior upload is ever
+   called "already imported" — `review` and `discarded` matches get their own
+   honest sentence.
+
+Plus one UI requirement: the preview shows the normalized merchant AND the raw
+statement description beneath it, so a categorization decision is made from the
+actual statement text.
+
+**Bugs found by the test suites, not by review:**
+
+- **`MIN(uuid)` does not exist in Postgres.** The "sample committed transaction id"
+  query cast the aggregate's *result* to text (`MIN(id)::text`) instead of casting
+  the *column* before aggregating (`MIN(id::text)`) — compiled, and every
+  integration test touching a duplicate immediately failed with `function min(uuid)
+  does not exist`. Caught the moment `getCommittedCounts` ran against real
+  Postgres.
+- **A Server Action's own `revalidatePath` beat the client's post-commit state.**
+  `commitImportAction` calls `revalidatePath()`, which re-renders the review page's
+  Server Component with the now-`committed` status — and the review table checked
+  that `status` prop before its local "just committed" result state, so the
+  success summary flashed and was immediately replaced by "already committed."
+  Found by the e2e test, not by manual review; fixed by checking the local commit
+  result first.
+
+**Tests:** unit — compatibility, staging decision-planning (including that a
+genuine same-day repeat purchase still defaults to new, and that the surplus pick
+is deterministic by row order), `parseStatementTolerant`'s per-row collection
+versus `parseStatement`'s unchanged behaviour. Integration — staging, Tier 2 at
+staging, the commit-time race demotion AND the override-survives-a-second-race
+case (both reproduced directly against Postgres, not mocked), file-hash messaging
+by status, cross-owner isolation, `updateRowDecision`'s guards. E2E — the golden
+path against the real redacted `boa-deposit-2026-05.csv` fixture (upload,
+categorize, commit, verify the committed category server-side) followed by a
+re-upload of the identical file proving zero new transactions; a second spec
+proves the account/format mismatch is refused before staging.
+
+**DoD:** a redacted real BoA export uploads, previews with new/duplicate/failed
+correctly distinguished, categorizes, commits; the same file re-uploaded commits
+nothing new.
+
+## ▶ RESUME HERE — M6: Categorization & classification
 
 **Get running again:**
 
@@ -408,45 +486,13 @@ pnpm db:seed
 pnpm dev
 ```
 
-### M5 scope
-
-1. Multi-file batch upload with every §21 validation — size, count, extension,
-   magic bytes, row cap, cell cap, encoding, date and amount sanity.
-2. Temp-file lifecycle with **guaranteed deletion, including on the failure path**.
-   Worth considering: uploads are capped at 10 MB, so this stage could stay in
-   memory and remove the deletion hazard entirely.
-3. **Sanitized** staging — no raw blob, unmapped columns discarded at parse.
-4. 60-day expiry, extended on every edit.
-5. Preview UI, server-rendered from staged rows.
-6. Tier 2 duplicate reconciliation against committed history, plus the file-hash
-   pre-check that warns *before* parsing.
-7. Atomic commit in one transaction; failure and cleanup paths.
-8. The generic column-mapping UI, persisting to `finance_format_signatures`.
-
-### What M4 hands over
-
-- `parseStatement(bytes)` returns `{ format, result, candidates }`. **`result.rows`
-  still carries the source fields**, so the pipeline can read the card export's
-  `Address` as an exact location hint for `normalizeMerchant` without persisting it.
-- `groupByDedupeKey()` and `reconcileCounts()` are pure. M5 supplies
-  `committedCount` from the database and owns the decision; `dedupe.ts` only computes.
-- The deposit checksum runs inside `parseStatement`, so a bad parse never reaches
-  staging.
-
-### Watch out for
-
-- **Every Server Action starts with `await requireOwner()`** —
-  `tests/integration/entry-points.test.ts` enumerates the filesystem and will fail
-  the suite otherwise.
-- **Raw uploads are deleted immediately after parsing, including on the failure
-  path**, and never written to `public/` or any statically served path.
-- **Only the file the owner selects in the browser** — no watched folders, no
-  directory scanning (CLAUDE.md invariant 7).
-- Staging stores **no raw jsonb dump**. Unmapped columns are discarded at parse.
-- Expiry is **60 days**, not 7. A 7-day sweep would delete an in-progress review
-  before a monthly user returned to it.
-- If a fixture must change, update its checksum in `tests/unit/fixture-guard.test.ts`
-  in the same commit — that is the guard working, not a nuisance.
+M5 left `finance_import_rows.suggested_category_id` populated only by the owner's
+own manual pick in the preview (`categorization_source = 'manual'`); M6 is what
+makes most transactions categorize themselves — rules, merchant memory, source-
+category mapping, confidence scoring, and the exclusionary-type detection
+(transfer / card-payment / investment) gated on a rule, a matched counterpart, or
+explicit confirmation, never a bare heuristic. Full scope in
+`IMPLEMENTATION_PLAN.md` §39.
 
 ## Carried forward
 
@@ -458,8 +504,8 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~BoA adapter written against a real export~~ | ~~M4~~ | **Done.** Two real exports read; three of the plan's assumptions about the layout were wrong. See `docs/FINANCE.md`. |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
-| Manual real-device passkey verification | **M5** | Still outstanding after M4. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
-| **E2E suite shares one database; `workers: 1` is a workaround** | M5 or when the suite slows | All Playwright specs truncate the same development database, so parallel runs wipe each other's sessions mid-test. Serial execution is a **bill not yet due**, not a design decision. Real fix: a database per worker (the integration suite already does this with Testcontainers) plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. Acceptable at 14 tests / ~35s; revisit when M5 and M8 add journeys. |
+| Manual real-device passkey verification | **M6** | Still outstanding after M5. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| **E2E suite shares one database; `workers: 1` is a workaround — now OBSERVED, not just predicted** | M8 or when the suite slows further | M5 added `tests/e2e/import.spec.ts`. Running the full suite together, `shell.spec.ts`'s pre-existing categories-reorder test (M3, untouched by M5) intermittently fails a `toBeDisabled()` assertion after `page.reload()` — reproduced twice in a row when run after `import.spec.ts`, and confirmed passing reliably in isolation via `--grep`. This is exactly the interaction this note predicted ("revisit when M5 and M8 add journeys"), not a defect in M5's own code, and M5 does not touch categories or the reorder feature. Left as documented debt rather than patched around, per the milestone's own scope discipline. Real fix unchanged: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |

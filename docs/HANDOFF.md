@@ -353,7 +353,7 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestones 1 through 4 COMPLETE
+## 9. Current status — Milestones 1 through 5 COMPLETE
 
 **M2 added authentication.** Full detail, including every trap hit along the way, is in
 [`docs/ROADMAP.md`](./ROADMAP.md). The short version:
@@ -369,8 +369,9 @@ single clause is the entire double-counting guarantee, and it is covered by test
 | Data access | `src/server/db/finance/` — `ownerId` first on every function, injected into every `WHERE`. `src/server/finance/` stays DB-free. |
 | Parser | `raw bytes → parse → normalized candidate`, two stages kept apart. BoA deposit + card adapters written against REAL exports. Deposit exports **validate themselves to the cent** against their own summary block. |
 | Fixtures | `tests/fixtures/finance/` — 10 files **redacted from real exports** (invariant amended in M4), consumed as raw bytes, checksummed, with a guard test validated by a negative control. |
-| Dedupe | **Tier 2 count reconciliation is active.** Tier 1 (`Reference Number`) is captured, documented, and UNVERIFIED for cross-export stability — no unique constraint. |
-| Suites | `pnpm test` **266** (domain + components, Docker-free) · `pnpm test:integration` **85** (Testcontainers) · `pnpm test:e2e` **14** (Playwright) |
+| Dedupe | **Tier 2 count reconciliation is active**, at staging AND again inside `commitImport()`'s transaction against the current committed count — closing the race between two concurrently staged imports. An explicit owner override (`decision_overridden`) is exempt from the re-check. Tier 1 (`Reference Number`) remains captured, documented, and UNVERIFIED — no unique constraint. |
+| Import pipeline | `/finance/import` → `/finance/import/[id]`. Single file per import, in-memory only, never written to disk. Account/format compatibility checked before staging. One bad row stages as a reviewable "needs attention" row (`parseStatementTolerant`) instead of aborting the file. File-hash pre-check distinguishes `committed` ("already imported") from `review`/`discarded` (never called that). Category optional at commit; no owner-facing transaction-type picker — every row defaults to `expense`/`income` by sign alone. |
+| Suites | `pnpm test` **289** (domain + components, Docker-free) · `pnpm test:integration` **106** (Testcontainers) · `pnpm test:e2e` **16** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -446,7 +447,8 @@ burmy-os/
 │   └── ROADMAP.md               Live milestone tracker + "RESUME HERE"
 ├── drizzle/                     Generated migrations (COMMITTED)
 │   ├── 0000_wet_malcolm_colcord.sql   14 tables — M1
-│   └── 0001_nappy_ultron.sql          + 5 auth tables — M2, purely additive
+│   ├── 0001_nappy_ultron.sql          + 5 auth tables — M2, purely additive
+│   └── 0002_strong_red_hulk.sql       + finance_import_rows.decision_overridden — M5
 ├── scripts/
 │   ├── migrate.mjs              Migration runner — plain ESM on purpose
 │   └── auth-grant.mjs           BREAK GLASS. Mints bootstrap/recovery grants.
@@ -462,7 +464,10 @@ burmy-os/
 │   │   ├── (onboarding)/onboarding/passkeys/   the two-passkey gate. Own route
 │   │   │                        group so it cannot redirect-loop with (private).
 │   │   ├── (private)/layout.tsx requireOwner() for navigation
+│   │   ├── (private)/finance/layout.tsx   Monthly / Import sub-nav — M5
 │   │   ├── (private)/finance/monthly/page.tsx   placeholder until M8
+│   │   ├── (private)/finance/import/page.tsx    upload + in-progress list — M5
+│   │   ├── (private)/finance/import/[importId]/page.tsx   preview/review/commit — M5
 │   │   ├── api/health/route.ts  UNAUTHENTICATED; booleans + version ONLY
 │   │   ├── api/auth/[...all]/   UNAUTHENTICATED by design; getAuth() per request
 │   │   ├── layout.tsx  globals.css
@@ -473,6 +478,7 @@ burmy-os/
 │   ├── features/auth/           sign-in, enrolment, grant redemption (client)
 │   ├── features/shell/          nav, theme toggle, sign-out, StyleNonce
 │   ├── features/finance/settings/  accounts, categories, passkeys managers + actions
+│   ├── features/finance/import/    upload form, review table, actions — M5
 │   ├── lib/auth-client.ts       Better Auth browser client, passkey plugin only
 │   ├── lib/utils.ts             cn()
 │   ├── server/
@@ -487,6 +493,8 @@ burmy-os/
 │   │   ├── db/
 │   │   │   ├── {index,schema,seed}.ts
 │   │   │   └── finance/{accounts,categories,errors}.ts   OWNER-SCOPED data access
+│   │   │       └── imports.ts   staging, review reads, decisions, commit — M5.
+│   │   │                        The advisory-lock commit-time Tier 2 re-check lives here.
 │   │   └── finance/            THE DOMAIN CORE — framework-free, DB-free
 │   │       ├── money.ts        Cents + ALL arithmetic
 │   │       ├── taxonomy.ts     names, slugs, last_four guard, reorder
@@ -497,19 +505,23 @@ burmy-os/
 │   │       │   ├── csv.ts      bytes -> cells, BOM, header LOCATION
 │   │       │   ├── signature.ts  header-set hash; never the filename
 │   │       │   ├── normalize.ts  dates, sign INVERSION, Cents
-│   │       │   └── index.ts    detection + composition
-│   │       └── adapters/       boa-deposit (self-validating), boa-card
+│   │       │   └── index.ts    detection + composition + parseStatementTolerant — M5
+│   │       ├── adapters/       boa-deposit (self-validating), boa-card
+│   │       └── import/         M5: account/format compatibility, staging decisions
 ├── tests/
-│   ├── unit/                    266 tests, NO Docker/database. Two Vitest projects:
+│   ├── unit/                    289 tests, NO Docker/database. Two Vitest projects:
 │   │                            *.test.ts -> node, *.test.tsx -> jsdom.
 │   ├── fixtures/finance/        10 REDACTED files from real exports. Consumed as
 │   │                            raw BYTES. Checksummed — update the digest in
 │   │                            fixture-guard.test.ts when one legitimately changes.
 │   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
-│   ├── integration/             85 tests. Testcontainers PG18. Own config.
-│   │   └── entry-points.test.ts THE anti-silent-coverage-gap test
-│   └── e2e/                     14 tests, SERIAL. Chrome virtual authenticator,
+│   ├── integration/             106 tests. Testcontainers PG18. Own config.
+│   │   ├── entry-points.test.ts THE anti-silent-coverage-gap test
+│   │   └── finance-imports.test.ts   staging, Tier 2, the commit-time race +
+│   │                            override preservation, file-hash status — M5
+│   └── e2e/                     16 tests, SERIAL. Chrome virtual authenticator,
 │                                real Radix overlays under the real CSP.
+│                                import.spec.ts: golden path + re-upload idempotency.
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
 ├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
@@ -592,82 +604,77 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 5 — the exact next objective
+## 12. Milestone 6 — the exact next objective
 
-**Goal:** multi-file batch → sanitized staging → preview → commit, idempotently.
-**Depends on:** M3 (taxonomy) and M4 (parser). Both complete.
+**Goal:** most transactions categorize themselves, and nothing is silently
+excluded from spending.
+**Depends on:** M5 (import pipeline). Complete.
 
-### What M4 hands over
+### What M5 hands over
 
-`parseStatement(bytes)` returns `{ format, result, candidates }`:
+- Every committed `finance_transactions` row carries `normalized_merchant`,
+  `dedupe_key`, and — only when the owner picked one during review —
+  `category_id` with `categorization_source = 'manual'` and
+  `review_status = 'confirmed'`. Everything else committed uncategorized is
+  `review_status = 'needs_review'`, which is M7's queue, not M6's.
+- `transaction_type` is `expense` or `income` by sign alone, `type_source =
+  'default'`, on every M5-committed row. **None of them have been classified as
+  `transfer`, `credit_card_payment` or `investment`** — M6 is what is allowed to
+  assign those, and only via a rule, a matched counterpart, or explicit
+  confirmation (invariant 5).
+- The confirmation-number linkage M4 found and preserved (`Confirmation# <token>`
+  on checking, `CONF#<token>` on the card, same token, opposite signs, ±1 day) is
+  still sitting in `original_description`, untouched, waiting for M6 to extract and
+  match it. See FINANCE.md "Confirmation numbers link both legs of a card
+  payment."
+- `finance_rules` and `finance_merchant_memory` exist in the schema (M1) and are
+  empty. Nothing has written to them yet.
 
-- `candidates` are `NormalizedCandidate[]` — typed, ISO dates, `Cents` in Burmy's
-  convention (positive = outflow), nothing judged.
-- **`result.rows` still carries the source fields.** That is deliberate: the card
-  export's `Address` column is an exact location hint for `normalizeMerchant`, and
-  the pipeline can read it transiently **without persisting it**.
-- The deposit checksum runs inside `parseStatement`, so a bad parse never reaches
-  staging.
-- `groupByDedupeKey()` and `reconcileCounts()` are pure. M5 supplies
-  `committedCount` from the database and owns the decision.
+### Work (full definition in `IMPLEMENTATION_PLAN.md` §39)
 
-### Work
-
-1. Upload with every §21 validation: ≤10 MB/file, ≤10 files, extension allowlist,
-   magic-byte sniff, ≤50k rows, ≤4KB cells, UTF-8 + BOM, date sanity (reject >1 year
-   future, >30 years past), amount sanity.
-2. Temp-file lifecycle with **guaranteed deletion on every path**. Worth considering
-   first: uploads are capped at 10 MB, so this stage could stay in memory and remove
-   the deletion hazard entirely.
-3. **Sanitized** staging — no raw `jsonb`, unmapped columns discarded at parse.
-4. 60-day expiry, extended on every edit.
-5. Preview UI, server-rendered from staged rows so it survives a refresh, a deploy
-   or a phone locking.
-6. Tier 2 duplicate reconciliation against committed history, plus the file-level
-   `sha256` pre-check that warns **before** parsing.
-7. Commit in one transaction; failure and cleanup paths.
-8. The generic column-mapping UI, persisted to `finance_format_signatures`.
+1. Rules CRUD with priority ordering.
+2. Merchant memory — promote a manually confirmed category to a standing rule
+   after repetition.
+3. Source-category mapping (BoA supplies none today; the field exists for a bank
+   that does).
+4. Confidence scoring, so a low-confidence guess still reads as a guess in the
+   UI, not a fact.
+5. Transfer / card-payment / investment detection, gated on a rule, a matched
+   counterpart (this batch **and** committed history, ±7 days), or explicit
+   confirmation — **never a bare heuristic**. Ambiguous counterpart candidates
+   produce a review item, not a silent pairing.
+6. Reporting exclusions through one shared SQL clause, so "what counts as
+   spending" is defined once.
 
 ### Non-negotiable for this milestone
 
-- **Only the file the owner selects in the browser upload control** — no watched
-  folders, no directory scanning, no import-from-path (CLAUDE.md invariant 7).
-- **Raw uploads are deleted immediately after parsing, including on the failure
-  path**, and never written to `public/` or any statically served path.
-- **Staging stores no raw blob.** Unmapped source columns are discarded at parse and
-  never persisted — that is what keeps address fragments and internal bank codes out
-  of a table that lives for 60 days.
+- **Invariant 5, still.** `transfer` / `credit_card_payment` / `investment` may
+  only be assigned via a rule, a qualified counterpart match, or explicit review
+  confirmation. A suspicion produces a review item, never an exclusion.
 - **Every Server Action begins with `await requireOwner()`.**
   `tests/integration/entry-points.test.ts` enumerates the filesystem and fails the
   suite otherwise.
-- **Expiry is 60 days, not 7.** A 7-day sweep would delete an in-progress review
-  before a monthly user ever returned to it.
-- **Commit is one transaction.** Nothing partially enters `finance_transactions`.
-- **No unique constraint on `source_transaction_id`.** Tier 1 stability is
-  unverified and descoped; Tier 2 does all the work.
-
-### Tests required
-
-- Commit atomicity; a failed commit writes zero rows.
-- The temp file is always deleted, including when parsing throws.
-- Repeat import → 0 new transactions.
-- Overlapping date ranges; genuine same-day repeats preserved.
-- The 60-day expiry sweep spares active imports.
+- `src/server/finance/` stays framework-free — the classifier's decision logic is
+  pure, testable without a database.
 
 ### Definition of Done
 
-- Three fixture CSVs upload together, preview, and commit.
-- The same file twice changes nothing.
-- `pnpm typecheck` / `lint` / `test` / `test:integration` / `test:e2e` / `build` all
-  green — **actually run**.
+- A rule and merchant memory both categorize correctly, with priority resolved
+  deterministically.
+- A confirmation-number pair correctly excludes both legs as
+  `credit_card_payment`, and an unmatched leg (predates or postdates the import
+  window) stays a review item rather than a guess.
+- A bare heuristic, tested directly, never produces an exclusionary type.
+- `pnpm typecheck` / `lint` / `test` / `test:integration` / `test:e2e` / `build`
+  all green — **actually run**.
 
 ### Also outstanding
 
-**Manual real-device passkey verification**, carried from M2 and M3. The automated
-ceremony passes against Chrome's virtual authenticator (real WebAuthn with a
-software key store), but no physical authenticator has been used. Two minutes:
-`pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then check
-Settings → Passkeys.
+**Manual real-device passkey verification**, carried from M2 through M5. The
+automated ceremony passes against Chrome's virtual authenticator (real WebAuthn
+with a software key store), but no physical authenticator has been used. Two
+minutes: `pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then
+check Settings → Passkeys.
 
 ---
 

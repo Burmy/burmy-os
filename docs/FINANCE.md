@@ -501,3 +501,104 @@ reason the two are separate.
 The database query that supplies `committed_count`, and the preview that lets the
 owner override the default, are the import pipeline's job in M5. `dedupe.ts`
 computes; it does not decide.
+
+## Import pipeline (M5)
+
+One CSV per import, in memory only — never written to disk, never persisted as a
+blob. `upload → parse & stage → preview → categorize/include-exclude → commit`. No
+generic mapper, no confirmation-number matching, no transfer/card-payment
+reconciliation, no bank beyond Bank of America. Those are M6+.
+
+### Account/format compatibility
+
+`detectFormat()` identifies the statement; the owner separately picks which account
+it belongs to (Burmy has no other way to know — it never connects to a bank).
+`src/server/finance/import/compatibility.ts` checks the two agree — a `boa-card`
+export cannot stage against a `checking`/`savings` account, and a `boa-deposit`
+export cannot stage against `credit_card` — and refuses with a clear error before
+anything is staged. Without this, a card export uploaded against the wrong account
+would parse cleanly (nothing about the file says which account it is) and every row
+would carry a plausible-looking wrong `account_id`: not rejected, not flagged,
+just silently misfiled spending that the dedupe key would never collide with real
+history and so would never surface as a duplicate either.
+
+### Tolerant parsing
+
+`parseStatement()` (M4) throws on the first row that fails normalization — a
+missing field, an impossible date — which aborts the *entire* file. M5 needs
+per-row failures to be visible and reviewable instead, so `parse/index.ts` gained
+`parseStatementTolerant()`, additive alongside the original: same format detection,
+same FILE-level assertions (the deposit checksum, the running balance, the
+all-inflow guard all still abort the whole file — those really do mean the file is
+suspect), but row normalization runs in a loop with its own try/catch, collecting
+successes as candidates and failures as `{ lineNumber, message }`. `parseStatement()`
+itself, and its M4 test suite, are unchanged; the two functions now share their
+detection/assertion logic via a private `detectAndParse()` helper rather than
+duplicating it.
+
+A failed row stages with every data field null, `parse_error` set to the message,
+and `decision` permanently `exclude` — visible in the preview with its error text
+next to it, never silently dropped, never includable (there is nothing valid to
+write to `finance_transactions`).
+
+### Staging-time reconciliation, and the commit-time re-check
+
+At staging, every dedupe key groups its candidates and reconciles once against
+`committed_count` as of that moment (`planStagedDecisions()` in
+`import/staging.ts`, wrapping `dedupe.ts`'s `reconcileCounts()`). That default is
+what the owner sees and can override per row.
+
+That single check is not enough for correctness under concurrency: two imports
+staged around the same time can each see "0 committed" for the same key and each
+default their row to Include — correct individually, wrong if both commit.
+`commitImport()` therefore re-runs the identical reconciliation a second time,
+*inside* the commit transaction, immediately before inserting, against the
+now-current committed count. Postgres's default READ COMMITTED isolation would not
+catch this on its own (two inserts of new rows never conflict with each other), so
+the transaction opens with `pg_advisory_xact_lock`, keyed to the owner, which
+serializes commits for that owner — trivial cost with exactly one owner, and it
+means the second commit's re-check genuinely sees the first one's result.
+
+The re-check applies only to rows still following the staging-time default. A row
+the owner explicitly flipped — `decision_overridden = true` on
+`finance_import_rows`, set by `updateRowDecision()` whenever `decision` is passed
+explicitly — is honoured unconditionally, never demoted by the re-check. This is
+what "explicit review confirmation" (CLAUDE.md invariant 5's third permitted path,
+here applied to duplicate handling rather than exclusionary typing) means in
+practice: the owner reviewing a row flagged as a duplicate and recognising a
+genuine same-day repeat is stronger evidence than a second automatic count, and the
+mechanism must not silently overrule it.
+
+A row demoted by the re-check has its persisted `decision` corrected in the same
+transaction (so a reload shows the truth) and is reported back to the owner as
+`demotedByRaceCount` in the commit summary — the count differing from what the
+preview showed is surfaced, not hidden.
+
+### File-hash messaging is status-aware
+
+`finance_import_files.file_sha256` lets `findPriorFileUpload()` recognise an exact
+re-upload before parsing even runs. The wording depends on what happened to the
+prior import: only `status = 'committed'` is ever described as "already
+imported" — a match still `review` (uploaded before, not yet acted on) or
+`discarded` (uploaded before, deliberately abandoned) gets its own honest
+sentence. Calling either of those "already imported" would be a claim the owner has
+no way to verify and that is not true. The warning is informational either way,
+never a hard block: Tier 2 row-level reconciliation is what actually guarantees a
+re-upload adds nothing, regardless of whether the owner reads the banner.
+
+### Transaction type: sign only, nothing else
+
+M5 assigns exactly `expense` (outflow) or `income` (inflow) by the sign of
+`amount_cents` alone (`defaultTransactionType()`), with `type_source = 'default'`.
+Never `transfer`, `credit_card_payment` or `investment` — invariant 5 requires
+deterministic evidence for those, and M5 has none. There is deliberately no
+transaction-type picker in the M5 UI; refining beyond expense/income (refunds,
+fees, exclusionary detection) is M6's classifier.
+
+### Category is optional at commit
+
+The owner can leave a row uncategorized and commit anyway. A category picked in
+the preview commits with `review_status = 'confirmed'`; a blank one commits with
+`category_id = null` and `review_status = 'needs_review'`, for M7's review queue to
+pick up. This is what lets the monthly import be fast even when a few rows need
+more thought than the moment allows.
