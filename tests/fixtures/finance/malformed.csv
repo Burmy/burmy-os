@@ -1,0 +1,8 @@
+Date,Description,Amount,Running Bal.
+05/14/2026,"Fine row","-10.00","1,000.00"
+05/15/2026,"Too few columns"
+05/16/2026,"Too many columns","-1.00","2.00","3.00"
+13/45/2026,"Impossible date","-1.00","1.00"
+05/17,"No year at all","-1.00","1.00"
+05/18/2026,"Amount is words","abc","1.00"
+05/19/2026,"Four decimal places","-1.2345","1.00"

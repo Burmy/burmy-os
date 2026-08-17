@@ -11,6 +11,21 @@
 *.mjs text eol=lf
 Dockerfile text eol=lf
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PARSER FIXTURES ARE BYTE-EXACT. Do not let Git touch their line endings.
+#
+# `* text=auto eol=lf` above would rewrite the CRLF fixtures to LF, which would:
+#   · make `boa-*-crlf.csv` byte-identical to its LF twin, so the fixture proving
+#     the parser handles CRLF would silently stop proving anything, and
+#   · change every recorded digest in tests/unit/fixture-guard.test.ts, so a fresh
+#     clone would fail the checksum test for a reason that looks like a bug.
+#
+# These files are INPUT DATA, not source. Their bytes — line endings, the BOM, the
+# fixed-width padding, the trailing spaces — are exactly what is under test.
+# Caught by `git add` warning that CRLF "will be replaced by LF".
+# ─────────────────────────────────────────────────────────────────────────────
+tests/fixtures/** -text
+
 # Generated; keep diffs collapsed in reviews.
 pnpm-lock.yaml linguist-generated=true
 drizzle/**/*.sql linguist-generated=true

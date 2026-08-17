@@ -11,7 +11,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M1** | Foundation, domain core, protecting what is irreplaceable | ✅ Complete |
 | **M2** | Authentication, bootstrap prototype, security baseline | ✅ Complete |
 | **M3** | App shell, accounts, categories | ✅ Complete |
-| M4 | Parsing & normalization core *(no UI)* | ⚪ Not started |
+| **M4** | Parsing & normalization core *(no UI)* | ✅ Complete |
 | M5 | Import pipeline, preview, duplicates | ⚪ Not started |
 | M6 | Categorization & classification | ⚪ Not started |
 | M7 | Review queue | ⚪ Not started |
@@ -272,7 +272,131 @@ Each cost real time; all are now recorded in `CLAUDE.md`.
 
 ---
 
-## ▶ RESUME HERE — M4: Parsing & normalization core *(no UI)*
+## M4 — Parsing & normalization core *(no UI)*
+
+**Goal:** the domain heart, provably correct. **Met**, with Tier 1 verification
+explicitly descoped by the owner rather than completed.
+
+### Delivered
+
+- **Two stages, kept apart.** `raw bytes → source-specific parse → normalized
+  candidate`. Nothing in either stage categorizes, decides duplicates, classifies a
+  transaction type, writes to a database, or calls a model. A `NormalizedCandidate`
+  is a *candidate* precisely because nothing has yet decided whether it imports.
+- **`src/server/finance/parse/`** — `types.ts` (the stage boundary), `csv.ts` (bytes
+  → cells, BOM stripping, ≤50k rows, ≤4KB cells), `signature.ts` (header-set hash),
+  `normalize.ts` (dates, sign inversion, `Cents`), `index.ts` (detection + composition).
+- **`src/server/finance/adapters/`** — `boa-deposit.ts`, `boa-card.ts`, written
+  against two real exports rather than documentation.
+- **`merchant.ts`** — table-driven and pure, every rule from an observed shape.
+- **`dedupe.ts`** — frozen `dedupeKey`, Tier 2 count reconciliation, and the Tier 1
+  observation/stability helpers.
+- **Redacted fixture corpus** at `tests/fixtures/finance/` — 10 files, consumed as
+  raw bytes by the tests, with a guard test and recorded checksums.
+
+### The deposit export validates itself to the cent
+
+The five-line preamble is not decoration. Verified against the real file:
+
+```
+parsed credits            = stated Total credits
+parsed debits             = stated Total debits
+beginning + credits − debits = stated Ending balance
+every Running Bal.        = previous balance + row amount
+```
+
+A dropped row, an inverted sign, or a thousands separator eaten by a bad split all
+become **loud failures** rather than a total that is quietly wrong — on every real
+import, forever, not just against fixtures. This is the strongest correctness signal
+the project has, and it exists only because a real file was read.
+
+### Confirmation numbers link both legs of a card payment
+
+The checking leg carries `Confirmation# <token>`; the card leg carries
+`CONF#<token>` — the same token, opposite signs, a day apart, on two independent
+payments. That is far stronger evidence than the keyword-plus-amount-plus-date
+signal plan §24 designed, and it only appeared in real data.
+
+M4 **preserves** it and stops there; extracting and matching is M6's job, because
+doing it in the parser would put classification inside a stage that must not
+classify. A test asserts the linkage survives so a future description "tidy up"
+cannot silently destroy it.
+
+Three details that confirm existing decisions: one payment leg predates the checking
+window and another postdates the card statement, so **multi-file batching and the
+±7-day window are both load-bearing and an unmatched leg is normal**; a third-party
+card autopay has no counterpart at all, so it correctly stays a review item; and the
+matched legs were dated a day apart, so the window cannot be zero.
+
+### Tier 1 — descoped, documented, and ready
+
+Per the owner's instruction, the overlapping-export verification was skipped rather
+than allowed to block M4 or M5.
+
+| Property | Result |
+| --- | --- |
+| Coverage (card) | **100%** — 40/40 rows, payments included |
+| Unique within the sample | **Yes** — 40 distinct 23-digit values |
+| Byte-stable across exports | **UNVERIFIED** — needs two overlapping exports |
+| Unique database constraint | **None.** Index stays non-unique. |
+
+`source_transaction_id` is captured but nothing reads it: a test asserts that two
+rows with different reference numbers but identical account/date/amount/description
+still collide on identity, proving **Tier 2 is what is actually running**.
+`tierOneCandidateStability()` exists and is unused, so closing this out later is a
+function call over two captured sets rather than a parser change.
+
+### Verification actually run — M4
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0, no errors or warnings |
+| `pnpm test` | **266** (domain 255 + components 11) |
+| `pnpm test:integration` | **85** (Testcontainers PG18) |
+| `pnpm test:e2e` | **14** |
+| `pnpm build` | exit 0 — 12 routes, Proxy detected |
+| Deposit checksum | reconciles to the cent; a mismatch fixture fails loudly |
+| Fixture guard | **validated by a negative control** — a file with a Luhn-valid card number and real identifiers was added, all three guards fired, then it was removed |
+
+### Bugs and traps found during M4
+
+| Found by | Issue |
+| --- | --- |
+| Own test expectations | **Merchant location stripping was greedy.** A lazy prefix in the regex made `TST*HARVEST NAAN - EAS Eastvale TX` strip down to `HARVEST`. Ten tests failed at once. Replaced with a token-based rule that removes the state and **at most one** city token — deliberately conservative, because over-stripping merges distinct merchants and moves money between two visible grid rows, while under-stripping costs one extra review card. |
+| Own test expectations | **Bare trailing store-number rule was too aggressive** at 3+ digits: it turned `VIA 313` into `VIA`, merging a restaurant with every other `VIA`. Raised to 5+ digits, matching the observed bare store numbers (5 and 9 digits); hash-marked numbers stay unambiguous at any length. |
+| ESLint `no-control-regex` | A regex written via a generator contained literal **0x08 BACKSPACE** bytes instead of `\b` word boundaries — it matched nothing and looked correct. Second time an invisible character has hidden in a regex in this project (after M1's U+00A0). |
+| Fixture digest test | **Python's text mode translates newlines.** Reading fixtures with `io.open(..., encoding='utf-8')` made the CRLF fixture hash identically to the LF one, so the checksums were silently wrong. Needs `newline=''`. |
+| Own guard design | The first fixture guard flagged any 13–19 digit run, which is red on **correct** data: BoA deposit descriptions carry ACH trace ids and card exports carry 23-digit references. A permanently red guard gets ignored. Replaced with isolated, Luhn-valid, card-length runs, excluding `ID:`-prefixed values. |
+| Self-review | The `boa-card-thousands-quoted.csv` fixture contained **no four-figure amount**, so the "thousands separator" fixture exercised no thousands separator. Added a genuine one — and, on the second pass, **prepended** rather than appended it, because appending a later date destroyed the file's strictly-descending order. |
+
+### Deliberate decisions
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| Card `transaction_date` | Posted Date populates **both** dates | The column is `NOT NULL` and the grid buckets on it. Inventing an earlier transaction date would be fabricating data. |
+| Deposit validation | Totals **and** per-row running balance, both fatal on mismatch | The strongest available correctness signal, and it works on unseen data. |
+| Confirmation-number extraction | **Deferred to M6** | The raw description is already retained verbatim for `dedupe_key`, so M6 can extract when it has a use. Adding a field now would be speculative, and interpreting it is classification. |
+| Four-figure card amounts | Accept both comma and plain forms | No sample value reached four figures, so the behaviour is an assumption; both fixtures exist so whichever BoA emits, it parses. |
+| Merchant location | Exact strip when the format supplies an `Address` hint; otherwise one token | Precision where certainty exists, conservatism where it does not. |
+| Fixtures | Redacted from real exports, not synthetic | Synthetic fixtures encode only the author's assumptions about the format M4 exists to stop trusting. Invariant amended in CLAUDE.md and SECURITY.md. |
+
+### Known gaps
+
+- **Tier 1 stability is unverified**, by instruction. No unique constraint exists.
+- **Encoding and line endings could not be preserved from the source.** The exports
+  arrived through a chat upload, which may normalize both, so the fixtures cannot
+  claim byte-fidelity on those two properties. Explicit CRLF and BOM variants exist
+  so the parser is tested against both regardless.
+- **The generic mapper is detection-only.** An unknown layout is correctly reported
+  as `generic` with a stable signature, and then refused with a clear message. The
+  column-mapping UI and `finance_format_signatures` persistence are M5.
+- **No XLSX.** ExcelJS is gated behind the M9 dependency review, as planned.
+- **Manual real-device passkey verification** is still outstanding, carried from M2.
+
+---
+
+## ▶ RESUME HERE — M5: Import pipeline, preview, duplicates
 
 **Get running again:**
 
@@ -280,33 +404,49 @@ Each cost real time; all are now recorded in `CLAUDE.md`.
 docker compose -f compose.dev.yml up -d postgres
 docker compose -f compose.dev.yml run --rm --build migrate    # --build is NOT optional
 node scripts/auth-grant.mjs bootstrap    # only if the owner row is absent
-pnpm db:seed                             # resolves the owner by OWNER_EMAIL
+pnpm db:seed
 pnpm dev
 ```
 
-### M4 scope
+### M5 scope
 
-**Starts by reading one real redacted Bank of America export — ask the owner for it first.**
+1. Multi-file batch upload with every §21 validation — size, count, extension,
+   magic bytes, row cap, cell cap, encoding, date and amount sanity.
+2. Temp-file lifecycle with **guaranteed deletion, including on the failure path**.
+   Worth considering: uploads are capped at 10 MB, so this stage could stay in
+   memory and remove the deletion hazard entirely.
+3. **Sanitized** staging — no raw blob, unmapped columns discarded at parse.
+4. 60-day expiry, extended on every edit.
+5. Preview UI, server-rendered from staged rows.
+6. Tier 2 duplicate reconciliation against committed history, plus the file-hash
+   pre-check that warns *before* parsing.
+7. Atomic commit in one transaction; failure and cleanup paths.
+8. The generic column-mapping UI, persisting to `finance_format_signatures`.
 
-1. `NormalizedTransaction`; Papa Parse harness; header-signature detection (never by filename).
-2. BoA deposit and BoA card adapters, plus the generic mapper with saved signatures.
-3. `merchant.ts` — table-driven and pure, every rule a test case.
-4. `dedupe.ts` — Tier 2 count/multiset reconciliation, which does all the work by default.
-5. **The §23 Tier 1 verification**, per account type: obtain two overlapping real exports for the same
-   period and check whether any identifier column is (a) byte-stable, (b) unique across genuinely
-   different transactions, and (c) present on enough rows to matter. Record the verdict with evidence
-   in `docs/FINANCE.md`. **No unique constraint unless all three pass.**
+### What M4 hands over
+
+- `parseStatement(bytes)` returns `{ format, result, candidates }`. **`result.rows`
+  still carries the source fields**, so the pipeline can read the card export's
+  `Address` as an exact location hint for `normalizeMerchant` without persisting it.
+- `groupByDedupeKey()` and `reconcileCounts()` are pure. M5 supplies
+  `committedCount` from the database and owns the decision; `dedupe.ts` only computes.
+- The deposit checksum runs inside `parseStatement`, so a bad parse never reaches
+  staging.
 
 ### Watch out for
 
-- All of M4 belongs in `src/server/finance/` and must stay **DB- and I/O-free** — that is what makes
-  the money rules testable in milliseconds. Persistence arrives with the pipeline in M5.
-- `dedupe_key` and `merchant_key` are **different concepts**. Identity comes from the raw description
-  under a frozen, versioned algorithm; never derive it from `merchant_key`.
-- Sign convention is **asserted, never assumed**. A card export where every row is an inflow must fail
-  the import loudly.
-- Fixtures are **synthetic only**. `.gitignore` blocks `*.csv` repo-wide, with `tests/fixtures/**` as
-  the narrow re-include.
+- **Every Server Action starts with `await requireOwner()`** —
+  `tests/integration/entry-points.test.ts` enumerates the filesystem and will fail
+  the suite otherwise.
+- **Raw uploads are deleted immediately after parsing, including on the failure
+  path**, and never written to `public/` or any statically served path.
+- **Only the file the owner selects in the browser** — no watched folders, no
+  directory scanning (CLAUDE.md invariant 7).
+- Staging stores **no raw jsonb dump**. Unmapped columns are discarded at parse.
+- Expiry is **60 days**, not 7. A 7-day sweep would delete an in-progress review
+  before a monthly user returned to it.
+- If a fixture must change, update its checksum in `tests/unit/fixture-guard.test.ts`
+  in the same commit — that is the guard working, not a nuisance.
 
 ## Carried forward
 
@@ -314,11 +454,11 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 
 | Item | Milestone | Why deferred |
 | --- | --- | --- |
-| BoA `source_transaction_id` verification (stability / uniqueness / coverage) | M4 | Requires real overlapping exports. No unique constraint until proven. |
-| BoA adapter written against a real redacted export | M4 | Column layout unverified from primary sources |
+| BoA `source_transaction_id` **stability** verification | **Descoped — no milestone** | Coverage (100%) and in-sample uniqueness confirmed in M4; cross-export stability skipped by owner decision so it blocks nothing. No unique constraint. `tierOneCandidateStability()` is written and unused, so closing it out later is a function call. |
+| ~~BoA adapter written against a real export~~ | ~~M4~~ | **Done.** Two real exports read; three of the plan's assumptions about the layout were wrong. See `docs/FINANCE.md`. |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
-| Manual real-device passkey verification | **M4** | Still outstanding after M3. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| Manual real-device passkey verification | **M5** | Still outstanding after M4. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
 | **E2E suite shares one database; `workers: 1` is a workaround** | M5 or when the suite slows | All Playwright specs truncate the same development database, so parallel runs wipe each other's sessions mid-test. Serial execution is a **bill not yet due**, not a design decision. Real fix: a database per worker (the integration suite already does this with Testcontainers) plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. Acceptable at 14 tests / ~35s; revisit when M5 and M8 add journeys. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |

@@ -149,7 +149,12 @@ Gated on Milestone 4 verification, per account type:
 3. **Coverage** — enough rows actually carry one.
 
 **Until all three pass, `source_transaction_id` is advisory metadata only and no unique constraint
-exists.** Findings are recorded in the log at the bottom of this document.
+exists.**
+
+> **M4 verdict: coverage and in-sample uniqueness confirmed; cross-export stability UNVERIFIED, so no
+> unique constraint exists and Tier 2 does all the work.** Obtaining the two overlapping exports was
+> explicitly descoped rather than allowed to block M4 or M5. The parser captures the identifier so
+> verifying later is a comparison, not a rewrite. Full log at the bottom of this document.
 
 ### Tier 2 — count reconciliation (the default)
 
@@ -328,26 +333,171 @@ drifts from reality permanently and silently.
 
 ## Bank of America adapter findings
 
-> **Status: not yet verified.** BoA's exact column layout could not be confirmed from an authoritative
-> primary source — search results were dominated by third-party statement-converter marketing pages.
-> **Milestone 4 begins by reading one real redacted export** and this section is filled in from
-> observed reality, not from documentation.
+> **Status: OBSERVED.** Filled in during M4 from two real exports read in
+> conversation — a checking export covering 05/13–06/11/2026 and a credit-card
+> export covering 04/28–05/27/2026. Superseded the pre-M4 guesses, which came from
+> third-party statement-converter pages and were wrong in three places.
 
-What is established well enough to design against:
+### What the plan expected versus what the files contain
 
-| Aspect | Finding | Implication |
-| --- | --- | --- |
-| Column layout | Varies by product. Personal checking trends `Date / Description / Amount`; other products use `Posted Date / Reference Number / Payee / Amount`. | Two adapters (deposit-style, card-style) + generic fallback, selected by **header signature**, never filename |
-| Amount sign | Single signed column in some exports, **separate Debit/Credit columns in others** | Normalizer accepts both, emits one signed `amount_cents`. Convention **asserted**, never assumed |
-| Dates | Multiple dates per transaction; some formats omit the year | Store `transaction_date` and nullable `posted_date`. **Reject rather than guess** when a year is absent |
-| Descriptions | Merchant name with reference numbers / city / state appended | Merchant normalization is a real component, not a `trim()` |
-| History window | ~12–18 months available online | Older history exists **only** in the owner's local archive — which is why it is backed up first |
+| Plan assumed | Reality |
+| --- | --- |
+| Deposit trends `Date / Description / Amount` | Adds `Running Bal.`, and is preceded by a **five-line preamble with its own three-column header, then a blank line**. Row 1 is not the header. |
+| Card is `Posted Date / Reference Number / Payee / Amount` | Also carries `Address`, fixed-width padded with a trailing space, empty on payment rows. |
+| "Multiple dates per transaction" | The card export has **one date only**, labelled `Posted Date`. There is no transaction date. |
+| Filename indicates the period | The file named for May covered 04/28–05/27. |
 
-### Verification log
+### Deposit export
 
-*To be completed in Milestone 4.*
+```
+Description,,Summary Amt.                  ← summary header, 3 columns
+Beginning balance as of 05/13/2026,,"…"
+Total credits,,"…"
+Total debits,,"…"
+Ending balance as of 06/11/2026,,"…"
+                                           ← BLANK LINE
+Date,Description,Amount,Running Bal.       ← the real header, 4 columns
+05/13/2026,Beginning balance as of …,,"…"  ← pseudo-row, EMPTY amount
+05/14/2026,"…","-540.25","9,909.75"
+```
 
-| Account type | Identifier column | Stable? | Unique? | Coverage | Verdict | Date |
+| Aspect | Observed |
+| --- | --- |
+| Header position | Line 7. Located by scanning for required columns, never by index. |
+| First data row | A `Beginning balance` pseudo-row with an **empty** amount. Skipped — importing it would put a phantom 0.00 transaction on day one of every statement. |
+| Amounts | Quoted, comma thousands separators, single signed column. |
+| Sign | **Negative = outflow**, the inverse of Burmy's convention. Inverted once, in the normalizer. |
+| Quoting | Mixed: some descriptions quoted, some not. Commas appear **inside** quoted description fields. |
+| Descriptions | ACH detail as `ORIGINATOR DES:PURPOSE ID:… INDN:… CO ID:… PPD`. `INDN:` is the **account holder's own name** and must never become a merchant key. |
+| Row order | Ascending. |
+| `Running Bal.` | Unmapped, discarded at parse. Used transiently for validation only. |
+
+**The summary block is a checksum, and it is the strongest correctness signal the
+project has.** Verified against the real export to the cent:
+
+```
+parsed credits            = stated Total credits
+parsed debits             = stated Total debits
+beginning + credits − debits = stated Ending balance
+every Running Bal.        = previous balance + row amount
+```
+
+A dropped row, an inverted sign, or a thousands separator eaten by a bad split all
+become loud failures instead of a total that is quietly wrong — on every real
+import, forever, not only against fixtures. `assertDepositTotals` and
+`assertRunningBalances` enforce it, and the fixture preserves the property because
+the totals are recomputed after redaction.
+
+### Card export
+
+| Aspect | Observed |
+| --- | --- |
+| Header position | Line 1. No preamble, therefore **no summary block and no checksum** — the deposit export's strongest guarantee is unavailable here. |
+| Dates | `Posted Date` only. Populates **both** `transaction_date` and `posted_date`, because the column is `NOT NULL` and the monthly grid buckets on it. Inventing an earlier transaction date would be fabricating data. |
+| Amounts | Unquoted, **no thousands separator in the sample**. No value reached four figures, so behaviour above 999.99 is an **assumption**; `parseMoney` accepts both forms and fixtures cover each. |
+| Sign | Negative = purchase. Inverted, as above. |
+| `Address` | `city` left-justified in 14 columns, then the state, then a trailing space. Empty on payment rows. **Discarded at parse** (plan §18 keeps address fragments out of staging), read transiently as an exact location hint for merchant normalization. |
+| `Payee` | Truncated to ~22 characters. City and state are appended, sometimes **fused with no separator** (`BAY HARBOURCA`, `Sunset ValleyTX`) and sometimes spaced (`SPRINGFIELD TX`) — in the same file. One payee had its spaces stripped entirely. |
+| Row order | **Descending**, the opposite of the deposit export. No stage assumes ordering. |
+| Processor prefixes | `TST*`, `SQ *`, `NPO* `, `YSI*`, `PADDLE.NET* `, `OPENAI *`, `ROVER.COM* ` |
+| Store numbers | Trailing hashed (`#0366`, `# 2065`, `#801`), trailing bare (5 and 9 digits), and **leading bare** (`078 …`). |
+
+**The spaced-versus-fused city/state rule is unresolved.** Both forms appear in one
+file and no reliable rule separates them from the payee text, so the fixtures record
+both verbatim and merchant normalization handles both. Where the format supplies an
+`Address` column the location is removed exactly; otherwise the conservative
+one-token rule applies.
+
+### Confirmation numbers link both legs of a card payment
+
+The single most valuable discovery in the real data. The checking leg carries
+`Confirmation# <token>`; the card leg carries `CONF#<token>` — the **same token**,
+opposite signs, a day apart. It held for two independent payments.
+
+Plan §24 designed a qualified counterpart match as structural conditions plus a
+recognized keyword plus uniqueness, because amount and date alone are
+coincidence-prone. A shared confirmation number is far stronger: effectively one
+transaction id present on both legs.
+
+**M4 only preserves it.** Extracting and matching is M6's work — doing it in the
+parser would put classification inside a stage that must not classify. A test in
+`tests/unit/parse-boa.test.ts` asserts the linkage survives, so a future "tidy up
+the description" change cannot silently destroy it.
+
+Three corroborating observations, all of which confirm existing design decisions:
+
+- One payment appears in the card export but predates the checking window; another
+  appears in checking but postdates the card statement. **Multi-file batching and
+  the ±7-day window are both load-bearing, and an unmatched leg is normal rather
+  than an error.**
+- A third-party card autopay in the checking export has no counterpart leg at all,
+  so it correctly stays a review item and must never be auto-excluded.
+- The two legs were dated one day apart, which is why the window cannot be zero.
+
+---
+
+## Deduplication — Tier 1 verification log
+
+### Verdict: Tier 2 is the active mechanism. Tier 1 remains unverified.
+
+| Account type | Identifier column | Coverage | Unique in sample | Stable across exports | Verdict | Date |
 | --- | --- | --- | --- | --- | --- | --- |
-| BoA deposit | — | — | — | — | pending | — |
-| BoA card | — | — | — | — | pending | — |
+| BoA deposit | *(none provided)* | 0% | n/a | n/a | **No identifier exists.** Tier 2 only. | 2026-08-17 |
+| BoA card | `Reference Number` | **100%** (40/40 rows, payments included) | **Yes** (40 distinct) | **UNVERIFIED** | **Candidate only. No unique constraint.** | 2026-08-17 |
+
+**What was measured.** Both properties a single export can answer: coverage and
+in-file uniqueness. `observeTierOne()` computes them, and a test asserts the result
+against the fixture.
+
+**What was not, and why.** Byte-stability across two exports of the same period is
+the property a unique constraint would actually depend on, and it requires two
+overlapping exports pulled on different days. Those were not available, and
+obtaining them was explicitly descoped rather than blocking M4 or M5.
+
+**Structural observations, recorded but not relied on.** The identifier is 23
+digits. Its shape is consistent with a card-network acquirer reference number, and a
+three-digit group appears to track the posting date as a day-of-year (`…145…` on
+May 25, `…146…` on May 27). Payment rows follow a visibly different pattern from
+purchase rows. None of this is evidence of stability — a value can be structured and
+still be regenerated per export.
+
+**Consequences, in force now:**
+
+- `source_transaction_id` is **captured** by the parser and stored as advisory
+  metadata.
+- There is **no unique constraint** on it, and the index stays non-unique.
+- **Nothing in `dedupe.ts` reads it.** A test asserts that two rows with different
+  reference numbers but identical account, date, amount and description still
+  collide on identity — proving Tier 2 is what is actually running.
+- `tierOneCandidateStability()` exists and is unused. Verifying later is a
+  comparison of two captured sets, not a parser change.
+
+**To close this out later:** obtain two exports of the same card account covering an
+overlapping period, pulled on different days; run `tierOneCandidateStability()` over
+the two captured identifier sets; record the result here. A unique constraint is
+added only if coverage, uniqueness **and** stability all pass, per account type.
+
+---
+
+## Deduplication — Tier 2, the active mechanism
+
+Unchanged from the plan and now implemented as pure functions in `dedupe.ts`.
+
+```
+dedupe_key = sha256( v1, account_id, transaction_date, amount_cents,
+                     sha256(collapse_ws(upper(trim(original_description)))) )   -- NOT unique
+
+per key:  surplus = staged_count − committed_count
+          surplus ≤ 0  → already present → excluded by default, shown, reversible
+          surplus > 0  → import exactly `surplus`
+```
+
+`identityDescription` is **frozen**: trim, collapse whitespace, uppercase. Nothing
+else, ever. Punctuation is identity-bearing here precisely because stripping it is a
+`merchantKey` concern — and a test asserts that two descriptions which normalize to
+the *same* `merchantKey` still produce *different* dedupe keys. That is the whole
+reason the two are separate.
+
+The database query that supplies `committed_count`, and the preview that lets the
+owner override the default, are the import pipeline's job in M5. `dedupe.ts`
+computes; it does not decide.

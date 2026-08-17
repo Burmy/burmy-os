@@ -3,7 +3,7 @@
 **Read this file first.** It is written for a Claude Code session with **zero prior conversation
 context**. It assumes you have the repository and nothing else.
 
-Last updated: end of **Milestone 3**. Next milestone: **M4 — Parsing & normalization core**.
+Last updated: end of **Milestone 4**. Next milestone: **M5 — Import pipeline, preview, duplicates**.
 
 > **Privacy note:** this document deliberately contains no secrets, no `.env` values, no tokens, no
 > account numbers, and no real financial data. It must stay that way.
@@ -353,7 +353,7 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestones 1, 2 and 3 COMPLETE
+## 9. Current status — Milestones 1 through 4 COMPLETE
 
 **M2 added authentication.** Full detail, including every trap hit along the way, is in
 [`docs/ROADMAP.md`](./ROADMAP.md). The short version:
@@ -367,7 +367,10 @@ single clause is the entire double-counting guarantee, and it is covered by test
 | Shell | `Finance` / `Settings` nav, cookie-based theme (three states, no inline script), error/loading/not-found boundaries with a correlation id |
 | Taxonomy | Accounts CRUD (deactivate, never delete; `last_four` rejects longer input) and categories CRUD + archive + up/down reorder |
 | Data access | `src/server/db/finance/` — `ownerId` first on every function, injected into every `WHERE`. `src/server/finance/` stays DB-free. |
-| Suites | `pnpm test` **181** (domain + components, Docker-free) · `pnpm test:integration` **85** (Testcontainers) · `pnpm test:e2e` **14** (Playwright) |
+| Parser | `raw bytes → parse → normalized candidate`, two stages kept apart. BoA deposit + card adapters written against REAL exports. Deposit exports **validate themselves to the cent** against their own summary block. |
+| Fixtures | `tests/fixtures/finance/` — 10 files **redacted from real exports** (invariant amended in M4), consumed as raw bytes, checksummed, with a guard test validated by a negative control. |
+| Dedupe | **Tier 2 count reconciliation is active.** Tier 1 (`Reference Number`) is captured, documented, and UNVERIFIED for cross-export stability — no unique constraint. |
+| Suites | `pnpm test` **266** (domain + components, Docker-free) · `pnpm test:integration` **85** (Testcontainers) · `pnpm test:e2e` **14** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -486,10 +489,22 @@ burmy-os/
 │   │   │   └── finance/{accounts,categories,errors}.ts   OWNER-SCOPED data access
 │   │   └── finance/            THE DOMAIN CORE — framework-free, DB-free
 │   │       ├── money.ts        Cents + ALL arithmetic
-│   │       └── taxonomy.ts     names, slugs, last_four guard, reorder
+│   │       ├── taxonomy.ts     names, slugs, last_four guard, reorder
+│   │       ├── merchant.ts     display + matching names. NOT identity.
+│   │       ├── dedupe.ts       frozen dedupeKey + Tier 2 reconciliation
+│   │       ├── parse/          STAGE BOUNDARY: bytes -> rows -> candidates
+│   │       │   ├── types.ts    NormalizedCandidate; what neither stage does
+│   │       │   ├── csv.ts      bytes -> cells, BOM, header LOCATION
+│   │       │   ├── signature.ts  header-set hash; never the filename
+│   │       │   ├── normalize.ts  dates, sign INVERSION, Cents
+│   │       │   └── index.ts    detection + composition
+│   │       └── adapters/       boa-deposit (self-validating), boa-card
 ├── tests/
-│   ├── unit/                    181 tests, NO Docker/database. Two Vitest projects:
+│   ├── unit/                    266 tests, NO Docker/database. Two Vitest projects:
 │   │                            *.test.ts -> node, *.test.tsx -> jsdom.
+│   ├── fixtures/finance/        10 REDACTED files from real exports. Consumed as
+│   │                            raw BYTES. Checksummed — update the digest in
+│   │                            fixture-guard.test.ts when one legitimately changes.
 │   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
 │   ├── integration/             85 tests. Testcontainers PG18. Own config.
 │   │   └── entry-points.test.ts THE anti-silent-coverage-gap test
@@ -577,78 +592,82 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 4 — the exact next objective
+## 12. Milestone 5 — the exact next objective
 
-**Goal:** the domain heart, provably correct.
-**Depends on:** M1 (complete). M3 is complete, so the taxonomy the parser maps onto already exists.
+**Goal:** multi-file batch → sanitized staging → preview → commit, idempotently.
+**Depends on:** M3 (taxonomy) and M4 (parser). Both complete.
 
-### Ask the owner FIRST — this milestone starts with real data
+### What M4 hands over
 
-**M4 begins by reading one real redacted Bank of America export.** Request:
+`parseStatement(bytes)` returns `{ format, result, candidates }`:
 
-1. One representative **checking** CSV.
-2. One **credit-card** CSV, if the layout differs.
-3. For the Tier 1 verification: **two overlapping exports of the same date range, taken on different
-   days**, per account type.
-
-BoA's exact column layout could not be confirmed from any authoritative primary source during
-planning — search results were dominated by statement-converter marketing pages. `docs/FINANCE.md`
-records what is known and what is not, and its verification log is filled in here from observed
-reality rather than from third-party blog posts.
+- `candidates` are `NormalizedCandidate[]` — typed, ISO dates, `Cents` in Burmy's
+  convention (positive = outflow), nothing judged.
+- **`result.rows` still carries the source fields.** That is deliberate: the card
+  export's `Address` column is an exact location hint for `normalizeMerchant`, and
+  the pipeline can read it transiently **without persisting it**.
+- The deposit checksum runs inside `parseStatement`, so a bad parse never reaches
+  staging.
+- `groupByDedupeKey()` and `reconcileCounts()` are pure. M5 supplies
+  `committedCount` from the database and owns the decision.
 
 ### Work
 
-1. `NormalizedTransaction`; Papa Parse harness (streaming, 50k row cap, 4KB cell cap).
-2. **Header-signature detection — never by filename.** A renamed file must still be recognized, and an
-   unrecognized file must never be silently mis-parsed.
-3. BoA deposit and BoA card adapters, plus the generic mapper with saved signatures.
-4. `merchant.ts` — table-driven and pure. Emits `normalized_merchant` (readable) and `merchant_key`
-   (aggressive). Every rule is a test case.
-5. `dedupe.ts` — Tier 2 count/multiset reconciliation, which does all the work by default.
-6. **The §23 Tier 1 verification, per account type.** Check whether any candidate identifier column is
-   (a) byte-stable across two exports, (b) unique across genuinely different transactions, and
-   (c) present on enough rows to matter. Record the verdict **with evidence** in `docs/FINANCE.md`.
+1. Upload with every §21 validation: ≤10 MB/file, ≤10 files, extension allowlist,
+   magic-byte sniff, ≤50k rows, ≤4KB cells, UTF-8 + BOM, date sanity (reject >1 year
+   future, >30 years past), amount sanity.
+2. Temp-file lifecycle with **guaranteed deletion on every path**. Worth considering
+   first: uploads are capped at 10 MB, so this stage could stay in memory and remove
+   the deletion hazard entirely.
+3. **Sanitized** staging — no raw `jsonb`, unmapped columns discarded at parse.
+4. 60-day expiry, extended on every edit.
+5. Preview UI, server-rendered from staged rows so it survives a refresh, a deploy
+   or a phone locking.
+6. Tier 2 duplicate reconciliation against committed history, plus the file-level
+   `sha256` pre-check that warns **before** parsing.
+7. Commit in one transaction; failure and cleanup paths.
+8. The generic column-mapping UI, persisted to `finance_format_signatures`.
 
 ### Non-negotiable for this milestone
 
-- **Everything lands in `src/server/finance/`, which is DB- and I/O-free.** That boundary is what makes
-  the money rules testable in milliseconds without a browser, a server or a database. An ESLint rule
-  keeps React/Next out; keeping Drizzle out is on you. Persistence arrives with the pipeline in M5.
-- **`dedupe_key` and `merchant_key` are different concepts and must stay separate.** Identity comes
-  from the raw description under a frozen, versioned algorithm (trim, uppercase, collapse whitespace —
-  nothing else, ever). `merchant_key` is expected to evolve. Deriving identity from `merchant_key`
-  would mean one new normalization rule silently stops matching years of committed history.
-- **Sign convention is asserted, never assumed.** BoA uses a single signed column in some exports and
-  separate Debit/Credit columns in others. A card export where every row is an inflow must fail the
-  import loudly rather than invert a month of spending.
-- **No unique constraint on `source_transaction_id`** unless all three Tier 1 checks pass. A constraint
-  added on the strength of a column's *name* would either reject legitimate rows or silently merge
-  distinct transactions.
-- **Fixtures are synthetic only.** `.gitignore` blocks `*.csv` repo-wide, with `tests/fixtures/**` as
-  the narrow re-include. The owner's real export is read, not committed.
+- **Only the file the owner selects in the browser upload control** — no watched
+  folders, no directory scanning, no import-from-path (CLAUDE.md invariant 7).
+- **Raw uploads are deleted immediately after parsing, including on the failure
+  path**, and never written to `public/` or any statically served path.
+- **Staging stores no raw blob.** Unmapped source columns are discarded at parse and
+  never persisted — that is what keeps address fragments and internal bank codes out
+  of a table that lives for 60 days.
+- **Every Server Action begins with `await requireOwner()`.**
+  `tests/integration/entry-points.test.ts` enumerates the filesystem and fails the
+  suite otherwise.
+- **Expiry is 60 days, not 7.** A 7-day sweep would delete an in-progress review
+  before a monthly user ever returned to it.
+- **Commit is one transaction.** Nothing partially enters `finance_transactions`.
+- **No unique constraint on `source_transaction_id`.** Tier 1 stability is
+  unverified and descoped; Tier 2 does all the work.
 
 ### Tests required
 
-- Adapter suites for BoA deposit, BoA card and the generic mapper.
-- **Both sign conventions**, and a wrong-sign file that fails loudly.
-- Malformed rows; encoding (UTF-8 + BOM); dates without a year **rejected rather than guessed**.
-- `dedupe_key` stability across a `merchant_key` normalization change: add a strip rule, re-import,
-  assert zero new duplicates.
+- Commit atomicity; a failed commit writes zero rows.
+- The temp file is always deleted, including when parsing throws.
+- Repeat import → 0 new transactions.
+- Overlapping date ranges; genuine same-day repeats preserved.
+- The 60-day expiry sweep spares active imports.
 
 ### Definition of Done
 
-- Fixtures parse to exact expected output.
-- A wrong-sign file fails loudly.
-- **The Tier 1 verdict is recorded with evidence, and no unique constraint is added unless all three
-  checks passed.**
-- `pnpm typecheck` / `lint` / `test` / `test:integration` / `build` all green — **actually run**.
+- Three fixture CSVs upload together, preview, and commit.
+- The same file twice changes nothing.
+- `pnpm typecheck` / `lint` / `test` / `test:integration` / `test:e2e` / `build` all
+  green — **actually run**.
 
-### Also outstanding, carried from M2 and M3
+### Also outstanding
 
-**Manual real-device passkey verification.** The automated ceremony passes against Chrome's virtual
-authenticator (real WebAuthn with a software key store), but no physical authenticator has ever been
-used. It needs the owner's hands and about two minutes: run `pnpm dev`, sign in at `/sign-in` with a
-real phone or Windows Hello, and confirm passkey management under Settings → Passkeys.
+**Manual real-device passkey verification**, carried from M2 and M3. The automated
+ceremony passes against Chrome's virtual authenticator (real WebAuthn with a
+software key store), but no physical authenticator has been used. Two minutes:
+`pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then check
+Settings → Passkeys.
 
 ---
 
@@ -658,7 +677,7 @@ real phone or Windows Hello, and confirm passkey management under Settings → P
 | --- | --- | --- |
 | ~~M2~~ | ~~Authentication & security baseline~~ | **Complete.** Access JWT verification, Better Auth passkeys, `requireOwner()`, bootstrap/recovery settled by prototype, CSP, audit events |
 | ~~M3~~ | ~~App shell, accounts, categories~~ **Complete.** | `Finance` / `Settings` nav, `/` → `/finance/monthly`, shadcn/ui init, CRUD for accounts and categories (archive never delete) |
-| **M4** | Parsing & normalization core *(no UI)* | **Starts by reading one real redacted BoA export.** Header-signature detection, BoA deposit + card adapters, generic mapper, merchant normalization, dedupe. **Also verifies whether `source_transaction_id` earns a unique constraint.** |
+| ~~M4~~ | ~~Parsing & normalization core~~ **Complete.** | **Starts by reading one real redacted BoA export.** Header-signature detection, BoA deposit + card adapters, generic mapper, merchant normalization, dedupe. **Also verifies whether `source_transaction_id` earns a unique constraint.** |
 | **M5** | Import pipeline, preview, duplicates | Multi-file batch upload, sanitized staging, 60-day expiry, preview, count-based dedupe, atomic commit |
 | **M6** | Categorization & classification | Rules, merchant memory, history, source-category mapping; transfer / card-payment / investment detection with deterministic evidence only |
 | **M7** | Review queue | Keyboard-first, bulk actions, merchant grouping, "remember merchant", separate duplicate and transfer passes |
@@ -729,11 +748,11 @@ proceeding.
 not redesign approved architecture** unless implementation evidence requires it — and if it does,
 stop, present the evidence, and recommend the change rather than making it unilaterally.
 
-**The next unfinished milestone is M4 — Parsing & normalization core** (§12). It is the first milestone that needs real input from the owner: ask for a redacted Bank of America export before writing any adapter.
+**The next unfinished milestone is M5 — Import pipeline, preview, duplicates** (§12). The parser it builds on was written against two real Bank of America exports; what those files actually contain, and where the plan guessed wrong, is recorded in `docs/FINANCE.md`.
 
 Bootstrap and recovery are **no longer open questions** — M2 settled both by prototype, and
 `docs/SECURITY.md` records the comparison and the evidence. Do not reopen that decision without new
 evidence.
 
-**Before beginning M4, summarize your understanding and your proposed work, and get the owner's
+**Before beginning M5, summarize your understanding and your proposed work, and get the owner's
 approval.** Then proceed one milestone at a time under the working agreement in §14.

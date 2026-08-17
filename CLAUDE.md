@@ -115,6 +115,27 @@ These are verified, not folklore. Do not "fix" them back.
 - **The deploy script never restores the database automatically.** On healthcheck failure it rolls
   back the *image* only and leaves Postgres untouched. A failed healthcheck usually means a bad build,
   not bad data, and the database may hold newer writes.
+- **BoA deposit exports validate themselves — never bypass that check.** The five-line preamble states
+  beginning balance, total credits, total debits and ending balance, and the transaction rows reconcile
+  to it TO THE CENT (verified against a real export). `assertDepositTotals` and
+  `assertRunningBalances` make a dropped row, an inverted sign or a mis-split amount a loud failure
+  instead of a quietly wrong total, on every real import. It is the strongest correctness signal in the
+  project; do not downgrade it to a warning.
+- **Never let Papa Parse use `header: true` on row one for a BoA deposit export.** Row one is
+  `Description,,Summary Amt.` — the summary block, not the transactions. Every subsequent row would be
+  keyed by the wrong names and parse as garbage that still looks structurally valid. The header is
+  LOCATED by scanning for required columns (`src/server/finance/parse/csv.ts`).
+- **Merchant normalization must UNDER-strip, never over-strip.** Stripping too little costs one extra
+  review card; stripping too much MERGES TWO DIFFERENT MERCHANTS and moves money between two visible
+  grid rows. Hence: the location rule removes the state plus at most ONE city token, and bare trailing
+  store numbers are stripped only at 5+ digits (`VIA 313` is a restaurant). Both rules exist because
+  an earlier, greedier version failed ten tests at once.
+- **Python's text mode translates newlines.** `io.open(path, encoding='utf-8')` silently converts CRLF
+  to LF, which made a CRLF fixture hash identically to its LF twin and the recorded checksums wrong.
+  Use `newline=''` whenever hashing or comparing files.
+- **Fixtures are checksummed.** If one legitimately changes, update its digest in
+  `tests/unit/fixture-guard.test.ts` in the SAME commit. The guard exists because `tests/fixtures/` is
+  the one directory where a real statement would be committed silently.
 - **Drizzle WRAPS driver errors — check the `cause` chain, not `error.code`.** A Postgres
   `unique_violation` arrives as a Drizzle error carrying `query`/`params`, with the real SQLSTATE on
   `error.cause`. A naive `error.code === '23505'` compiles, reads correctly, and silently never
