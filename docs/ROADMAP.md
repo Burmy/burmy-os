@@ -472,7 +472,9 @@ proves the account/format mismatch is refused before staging.
 
 **DoD:** a redacted real BoA export uploads, previews with new/duplicate/failed
 correctly distinguished, categorizes, commits; the same file re-uploaded commits
-nothing new.
+nothing new. `pnpm test:e2e` — all 16 tests, including the pre-existing M3 suite
+— passes as a complete run, confirmed repeatedly; see "Carried forward" for the
+one test race that surfaced and was fixed.
 
 ## ▶ RESUME HERE — M6: Categorization & classification
 
@@ -505,7 +507,8 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
 | Manual real-device passkey verification | **M6** | Still outstanding after M5. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
-| **E2E suite shares one database; `workers: 1` is a workaround — now OBSERVED, not just predicted** | M8 or when the suite slows further | M5 added `tests/e2e/import.spec.ts`. Running the full suite together, `shell.spec.ts`'s pre-existing categories-reorder test (M3, untouched by M5) intermittently fails a `toBeDisabled()` assertion after `page.reload()` — reproduced twice in a row when run after `import.spec.ts`, and confirmed passing reliably in isolation via `--grep`. This is exactly the interaction this note predicted ("revisit when M5 and M8 add journeys"), not a defect in M5's own code, and M5 does not touch categories or the reorder feature. Left as documented debt rather than patched around, per the milestone's own scope discipline. Real fix unchanged: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
+| ~~Categories-reorder e2e test intermittently failed when run after `import.spec.ts`~~ | ~~M5~~ | **Done — root cause was not shared database state.** `shell.spec.ts`'s reorder test asserted `toBeDisabled()` (true instantly via `useOptimistic`, before the Server Action round-trips) and then called `page.reload()` with no wait for the mutation to actually persist. Under a quiet dev server the write reliably landed first by coincidence; the heavier `import.spec.ts` running immediately before added just enough latency to the shared dev-server process to flip that coincidence, and the reload fetched the PRE-reorder order (confirmed by screenshot: "Mortgage, Gas" instead of "Gas, Mortgage"). Fixed by making the test wait for the reorder Server Action's response before reloading — a missing synchronization point the test always had, now closed, not a data-isolation problem. `resetAll()` in both e2e files also now lists the M5 import tables explicitly, matching `tests/integration/harness.ts`'s existing discipline, as defense in depth. Confirmed with three consecutive full-suite runs, 16/16 green each time. |
+| **E2E suite shares one database; `workers: 1` remains a real architectural simplification** | M8 or when the suite slows further | Not urgent — the specific flake above is fixed, not papered over. But a shared dev-server process across all specs means a heavy spec can still shift timing enough to expose a genuinely un-synchronized test elsewhere, which is what happened here. Real fix, if the suite outgrows this: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |

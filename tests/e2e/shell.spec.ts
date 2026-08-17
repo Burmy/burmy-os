@@ -41,9 +41,15 @@ async function withDb<T>(fn: (sql: postgres.Sql) => Promise<T>): Promise<T> {
 
 async function resetAll(): Promise<void> {
   await withDb(async (sql) => {
+    // The M5 import tables (finance_import_rows/files/imports) are listed
+    // explicitly even though `user cascade` already reaches them transitively
+    // — same reasoning as tests/integration/harness.ts: a future table that
+    // stops being cascade-linked should not silently start leaking between
+    // specs instead of failing loudly here.
     await sql.unsafe(
       'truncate table "audit_events", "rate_limit", "verification", "passkey", "session", ' +
-        '"account", "finance_transactions", "finance_categories", "finance_accounts", "user" cascade',
+        '"account", "finance_transactions", "finance_import_rows", "finance_import_files", ' +
+        '"finance_imports", "finance_categories", "finance_accounts", "user" cascade',
     );
   });
 }
@@ -228,8 +234,23 @@ test.describe('categories', () => {
     }
 
     // Reachable by keyboard, which is the reason drag-and-drop was rejected.
+    //
+    // The button disables IMMEDIATELY on click via `useOptimistic` — before
+    // `reorderCategoriesAction` has actually round-tripped to the server. A
+    // `page.reload()` right after that optimistic update races the real
+    // persistence: under a quiet dev server the write reliably lands first, but
+    // under load (e.g. a heavier spec running immediately before this one) the
+    // reload can win, and the fetched page reflects the PRE-reorder order. The
+    // listener is created before the keypress so it cannot miss the response.
+    const reorderPersisted = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().endsWith('/settings/categories') &&
+        response.status() === 200,
+    );
     await page.getByRole('button', { name: 'Move Gas up' }).focus();
     await page.keyboard.press('Enter');
+    await reorderPersisted;
 
     await expect(page.getByRole('button', { name: 'Move Gas up' })).toBeDisabled();
 

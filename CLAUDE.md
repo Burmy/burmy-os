@@ -211,6 +211,16 @@ These are verified, not folklore. Do not "fix" them back.
   committed" instead of the completion summary it just received. If a component holds both a
   server-supplied status prop and a local result-of-my-own-action state, check the local state FIRST.
   Missed by manual testing, caught by the e2e suite.
+- **An e2e assertion right after a mutation can pass on OPTIMISTIC state alone — it proves nothing
+  about the server.** `useOptimistic` makes a button reflect a change before its Server Action has
+  round-tripped, so `expect(...).toBeDisabled()` immediately after the click can be true well before
+  the database write lands. `page.reload()` right after that assertion is a race: on a quiet dev
+  server the write reliably wins by coincidence, but a heavier spec running immediately before (M5's
+  `import.spec.ts`, ahead of `shell.spec.ts`'s categories-reorder test) added enough latency to flip
+  it, and the reload fetched the PRE-mutation state. The fix is not a longer timeout or a retry — wait
+  for the action's own network response (`page.waitForResponse`, listener attached BEFORE the
+  triggering interaction) before trusting a reload to reflect it. Reproduced 3 times in a row before
+  the fix, gone in 3 consecutive full-suite runs after.
 
 ---
 
