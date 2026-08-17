@@ -602,3 +602,120 @@ the preview commits with `review_status = 'confirmed'`; a blank one commits with
 `category_id = null` and `review_status = 'needs_review'`, for M7's review queue to
 pick up. This is what lets the monthly import be fast even when a few rows need
 more thought than the moment allows.
+
+## Categorization & classification (M6)
+
+Two mechanisms, both narrow and deterministic. Investment auto-classification
+(account-type based) was proposed and then explicitly deferred by owner
+decision: it is currently unreachable (no adapter targets `brokerage`
+accounts) and "every transaction on a brokerage account is an investment" was
+judged not certain to stay semantically correct. `finance_rules` stays empty —
+no rule-builder UI. No confidence scoring — `confidence` columns stay null,
+match/no-match is binary.
+
+### Merchant memory — recurring mappings from confirmed history
+
+`finance_merchant_memory` (built in M1, unused until now): unique on
+`(owner_id, merchant_key)`. At staging, every candidate's `merchant_key` is
+looked up in bulk (`getMerchantMemoryForKeys`); a hit pre-fills
+`suggested_category_id` with `categorization_source = 'merchant_memory'`, so
+the owner sees most rows already categorized in the M5 preview. At commit,
+whatever category ends up on a row — accepted suggestion or owner override —
+is upserted back (`ON CONFLICT DO UPDATE`, incrementing `confirmed_count`).
+**The owner's current choice always wins**: overriding a suggestion updates
+the memory to the new category, not the old one. This is the whole mechanism
+behind "Capital One Auto → Car Payments", "Planet Fitness → Gym", and "known
+payroll → Income" — none of them needed bespoke logic. Payroll in particular
+needs nothing extra: M5 already types inflows `income` by sign; memory only
+ever supplies the *category*.
+
+`review_status` follows directly: `needs_review` with no category,
+`confirmed` when `categorization_source = 'manual'` (the owner picked it),
+`auto` otherwise (memory supplied it and nothing overrode that) —
+`reviewStatusFor()` in `import/staging.ts`.
+
+### Counterpart matching — transfers and credit-card payments, one mechanism
+
+M4 found that BoA stamps both legs of a transfer or card payment with the same
+bank-assigned token (`Confirmation# X` on checking, `CONF#X` on the card),
+opposite signs, equal magnitude, days apart. That token is what makes this
+safe to automate under invariant 5: without it, "is this a card payment" is a
+description-keyword guess; with it, it is a deterministic cross-reference
+between two real transactions the bank itself linked — not a fuzzy or scored
+match, a single exact lookup.
+
+`src/server/finance/classify/counterpart.ts` (pure):
+
+```
+extractConfirmationToken(description) -> token | null     -- CONF#/Confirmation#, case-insensitive
+dateWindow(date, days) -> { start, end }                   -- ±N days, UTC epoch math
+findQualifyingCounterpart(token, amountCents, thisAccountType, candidates)
+  -> { id, transactionType: 'transfer' | 'credit_card_payment' } | null
+```
+
+A candidate qualifies only if ALL of: same owner (enforced by the SQL that
+supplies the pool), same token (exact — the SQL pre-filter is a coarse `ILIKE`
+substring match, re-checked exactly here to rule out one token merely
+containing another), `amount_cents` the EXACT negation of this transaction's
+(one comparison capturing both opposite sign and equal magnitude), a
+different account, within **±7 days**, and `type_source` still `'default'` —
+filtered in the SQL itself, so an ineligible row is never even selectable, not
+just skipped when found. **Zero or more than one qualifying candidate is
+`null` — no match, not a best guess.** The type label depends on EITHER side
+being a `credit_card` account (checked both ways, so importing the card
+statement before or after the checking statement resolves identically);
+otherwise `transfer`.
+
+`commitImport()` runs this once per staged row carrying a token, against
+COMMITTED history (not just the current batch — a batch is single-account by
+construction, so the two legs of a pair can never both be in one import
+anyway). A match sets both legs' `transaction_type`, `type_source =
+'counterpart_match'`, and `counterpart_transaction_id` pointing at each other
+— including a **retroactive UPDATE of an already-committed transaction from a
+prior import**, in either import order. `review_status` on that retroactive
+update moves `needs_review → auto` (a SQL `CASE`, not a flat set) but never
+touches an existing `confirmed` — the classification must never appear to
+overrule a category decision the owner already made.
+
+**Verified against real fixture data only for the credit-card-payment case**
+(M4's two real exports). The transfer path (e.g. checking ↔ savings) is the
+identical mechanism, unverified for BoA's inter-account-transfer token format
+specifically — if the pattern doesn't hold, the transaction simply stays
+default-classified rather than being guessed. `COUNTERPART_WINDOW_DAYS = 7`
+matches the window `IMPLEMENTATION_PLAN.md` §39 already specified for M6.
+
+### Never overwrites a manual decision, by construction
+
+Every write this milestone makes — the type/counterpart UPDATE above, and (by
+simply never running for rows outside `type_source = 'default'`) any future
+manual confirmation M7 adds — is gated on `type_source = 'default'`. M7's
+planned "mark as Transfer/Card Payment/Investment" UI will set `type_source =
+'manual_confirmation'`; from that moment, this milestone's automation cannot
+touch that transaction's type again, by the same guard, with no additional
+code required when M7 ships. Verified directly: a transaction with
+`type_source` manually forced to `'manual_confirmation'` is confirmed
+untouched by a newly-imported, otherwise-qualifying counterpart, and the new
+transaction correctly falls back to its M5 default rather than linking
+one-sided.
+
+### What was deferred, and why
+
+- **Investment auto-classification** (account-type based) — proposed, then
+  cut by owner decision before implementation. Currently unreachable (no
+  adapter produces `brokerage`-account transactions) and "every transaction on
+  a brokerage account is an investment" may not hold once real usage exists.
+  Revisit when there's a concrete case.
+- **A `counterpart_transaction_id` foreign-key constraint** — the column has
+  none (M1). Considered and explicitly not added: application-level guards
+  (`type_source = 'default'` on every write) plus the integration tests above
+  are sufficient for V1; a migration purely for architectural neatness was
+  ruled out by owner decision.
+- **Correcting a wrong auto-classification** — no UI in M6. The matching
+  criteria are strict enough that a false positive should be rare, but M7's
+  review queue, not M6, is where an owner would fix one.
+- **A staging-time counterpart-match preview** — the review table shows
+  merchant-memory category suggestions immediately, but NOT a "this will
+  become a Transfer" indicator before commit. Type classification is decided
+  and applied only at commit, same as Tier 2 duplicate reconciliation's own
+  staging-preview-vs-commit-authoritative split from M5. A cheap scope cut,
+  not a limitation of the mechanism.

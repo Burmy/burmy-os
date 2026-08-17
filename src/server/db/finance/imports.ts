@@ -11,16 +11,28 @@
  * by `src/features/finance/import/actions.ts`.
  */
 
-import { and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, lte, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import {
+  financeAccounts,
   financeImportFiles,
   financeImportRows,
   financeImports,
+  financeMerchantMemory,
   financeTransactions,
 } from '@/server/db/schema';
-import { defaultTransactionType, planStagedDecisions } from '@/server/finance/import/staging';
+import {
+  COUNTERPART_WINDOW_DAYS,
+  dateWindow,
+  extractConfirmationToken,
+  findQualifyingCounterpart,
+} from '@/server/finance/classify/counterpart';
+import {
+  defaultTransactionType,
+  planStagedDecisions,
+  reviewStatusFor,
+} from '@/server/finance/import/staging';
 import type { CommittedMatch } from '@/server/finance/import/staging';
 import { fromDb } from '@/server/finance/money';
 import type { AdapterId } from '@/server/finance/parse/types';
@@ -136,6 +148,9 @@ export interface StageRowInput {
   readonly duplicateOfTransactionId: string | null;
   /** Set only for rows `parseStatementTolerant` could not normalize. */
   readonly parseError: string | null;
+  /** M6: from merchant memory at staging, or the owner's own pick via `updateRowDecision`. */
+  readonly suggestedCategoryId: string | null;
+  readonly categorizationSource: 'manual' | 'merchant_memory' | null;
 }
 
 export interface StageImportInput {
@@ -216,6 +231,8 @@ export async function createStagedImport(
           duplicateKind: row.duplicateOfTransactionId ? ('exact' as const) : null,
           decision: row.decision,
           parseError: row.parseError,
+          suggestedCategoryId: row.suggestedCategoryId,
+          categorizationSource: row.categorizationSource,
         })),
       );
     }
@@ -397,6 +414,11 @@ export interface CommitResult {
    * from what the preview showed.
    */
   readonly demotedByRaceCount: number;
+  /**
+   * Rows that required zero manual input: a category from merchant memory, a
+   * counterpart match, or both. M6's whole point, made visible.
+   */
+  readonly autoClassifiedCount: number;
 }
 
 /**
@@ -429,26 +451,34 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
       sql`select pg_advisory_xact_lock(hashtext('burmy_import_commit'), hashtext(${ownerId}))`,
     );
 
+    // Joined all the way to `financeAccounts` so `accountType` is available
+    // for the counterpart-matching step below (transfer vs credit_card_payment
+    // depends on whether EITHER side of a match is a credit_card account).
+    // Selecting `accountId`/`accountType` from `financeAccounts` itself, past
+    // an inner join, means both are structurally non-null here — no separate
+    // "does this import have an account" guard needed.
     const [imp] = await tx
       .select({
         id: financeImports.id,
         status: financeImports.status,
-        accountId: financeImportFiles.accountId,
+        accountId: financeAccounts.id,
+        accountType: financeAccounts.type,
       })
       .from(financeImports)
       .innerJoin(financeImportFiles, eq(financeImportFiles.importId, financeImports.id))
+      .innerJoin(financeAccounts, eq(financeAccounts.id, financeImportFiles.accountId))
       .where(and(eq(financeImports.ownerId, ownerId), eq(financeImports.id, importId)))
       .limit(1);
 
     if (!imp) throw new NotFoundError('Import');
     if (imp.status !== 'review') throw new ImportNotReviewableError(imp.status);
-    if (!imp.accountId) throw new Error('Import has no associated account');
-    const accountId = imp.accountId;
+    const { accountId, accountType } = imp;
 
     const rows = await tx
       .select()
       .from(financeImportRows)
-      .where(eq(financeImportRows.importId, importId));
+      .where(eq(financeImportRows.importId, importId))
+      .orderBy(asc(financeImportRows.rowNumber));
 
     const failedCount = rows.filter((row) => row.parseError !== null).length;
     const overriddenInclude = rows.filter(
@@ -507,27 +537,164 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
 
     const toInsert = [...overriddenInclude, ...naturalInclude];
 
+    /**
+     * Counterpart matching — see classify/counterpart.ts for the full
+     * reasoning. Run BEFORE insert (each candidate's own account/amount/date
+     * are already known from staging), so the new row's `counterpartTransactionId`
+     * can be set in its own INSERT rather than needing a follow-up UPDATE.
+     * Only the OLD (already-committed) counterpart needs a follow-up UPDATE,
+     * once the new row's real id exists.
+     *
+     * `claimedCounterpartIds` stops two different rows in this same batch from
+     * both claiming the same old transaction — vanishingly unlikely (it would
+     * need two genuinely different transactions sharing one confirmation
+     * token), but cheap to rule out.
+     */
+    const claimedCounterpartIds = new Set<string>();
+    const matchByRowId = new Map<
+      string,
+      { readonly id: string; readonly transactionType: 'transfer' | 'credit_card_payment' }
+    >();
+
+    for (const row of toInsert) {
+      const token = extractConfirmationToken(row.description!);
+      if (!token) continue;
+
+      const { start, end } = dateWindow(row.transactionDate!, COUNTERPART_WINDOW_DAYS);
+
+      const candidates = await tx
+        .select({
+          id: financeTransactions.id,
+          amountCents: financeTransactions.amountCents,
+          description: financeTransactions.originalDescription,
+          accountType: financeAccounts.type,
+        })
+        .from(financeTransactions)
+        .innerJoin(financeAccounts, eq(financeAccounts.id, financeTransactions.accountId))
+        .where(
+          and(
+            eq(financeTransactions.ownerId, ownerId),
+            // Never touch a row a rule, a prior match, or (once M7 ships) a
+            // manual confirmation already decided — see schema.ts and
+            // FINANCE.md. Filtered here so an ineligible row can't even be
+            // selected as a candidate, not just skipped when found.
+            eq(financeTransactions.typeSource, 'default'),
+            ne(financeTransactions.accountId, accountId),
+            gte(financeTransactions.transactionDate, start),
+            lte(financeTransactions.transactionDate, end),
+            ilike(financeTransactions.originalDescription, `%${token}%`),
+          ),
+        );
+
+      const eligible = candidates.filter((candidate) => !claimedCounterpartIds.has(candidate.id));
+      const match = findQualifyingCounterpart(token, row.amountCents!, accountType, eligible);
+
+      if (match) {
+        matchByRowId.set(row.id, match);
+        claimedCounterpartIds.add(match.id);
+      }
+    }
+
+    let autoClassifiedCount = 0;
+
     if (toInsert.length > 0) {
-      await tx.insert(financeTransactions).values(
-        toInsert.map((row) => ({
-          ownerId,
-          accountId,
-          importId,
-          transactionDate: row.transactionDate!,
-          postedDate: row.postedDate,
-          originalDescription: row.description!,
-          normalizedMerchant: row.normalizedMerchant,
-          amountCents: row.amountCents!,
-          transactionType: defaultTransactionType(fromDb(row.amountCents)),
-          categoryId: row.suggestedCategoryId,
-          sourceTransactionId: row.sourceTransactionId,
-          reviewStatus: row.suggestedCategoryId ? ('confirmed' as const) : ('needs_review' as const),
-          categorizationSource: row.suggestedCategoryId ? ('manual' as const) : null,
-          typeSource: 'default' as const,
-          dedupeKey: row.dedupeKey!,
-          dedupeKeyVersion: row.dedupeKeyVersion,
-        })),
-      );
+      const inserted = await tx
+        .insert(financeTransactions)
+        .values(
+          toInsert.map((row) => {
+            const match = matchByRowId.get(row.id);
+            const categoryId = row.suggestedCategoryId;
+            // Narrowed by construction: `staging.ts`/`updateRowDecision` never
+            // write anything else into this column.
+            const categorizationSource = row.categorizationSource as 'manual' | 'merchant_memory' | null;
+
+            return {
+              ownerId,
+              accountId,
+              importId,
+              transactionDate: row.transactionDate!,
+              postedDate: row.postedDate,
+              originalDescription: row.description!,
+              normalizedMerchant: row.normalizedMerchant,
+              amountCents: row.amountCents!,
+              transactionType: match ? match.transactionType : defaultTransactionType(fromDb(row.amountCents)),
+              categoryId,
+              sourceTransactionId: row.sourceTransactionId,
+              // A counterpart match is its own strong evidence — 'auto'
+              // regardless of category, since an excluded transfer/card
+              // payment genuinely has no spending category to pick.
+              reviewStatus: match ? ('auto' as const) : reviewStatusFor(categoryId, categorizationSource),
+              categorizationSource,
+              typeSource: match ? ('counterpart_match' as const) : ('default' as const),
+              counterpartTransactionId: match?.id ?? null,
+              dedupeKey: row.dedupeKey!,
+              dedupeKeyVersion: row.dedupeKeyVersion,
+            };
+          }),
+        )
+        .returning({ id: financeTransactions.id });
+
+      // A single multi-row INSERT ... RETURNING preserves VALUES order in
+      // Postgres, so `inserted[index]` is `toInsert[index]`'s real row.
+      for (const [index, row] of toInsert.entries()) {
+        const match = matchByRowId.get(row.id);
+        if (!match) continue;
+
+        const newTransactionId = inserted[index]!.id;
+
+        // Re-checks `type_source = 'default'` even though the SELECT above
+        // already filtered on it — nothing changed it in between within this
+        // transaction, but the guard costs nothing and states the invariant
+        // at the point that actually matters: the write.
+        //
+        // `reviewStatus` only moves needs_review → auto (a CASE, not a flat
+        // set): this counterpart may have committed BEFORE its match existed,
+        // with no category and therefore needs_review — now correctly
+        // excluded, it needs no owner attention either. But if the owner had
+        // already looked at it and confirmed a category, that 'confirmed'
+        // status is left exactly as it was; the type classification here must
+        // never appear to touch a decision the owner already made.
+        await tx
+          .update(financeTransactions)
+          .set({
+            transactionType: match.transactionType,
+            typeSource: 'counterpart_match',
+            counterpartTransactionId: newTransactionId,
+            reviewStatus: sql`case when ${financeTransactions.reviewStatus} = 'needs_review' then 'auto'::review_status else ${financeTransactions.reviewStatus} end`,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(financeTransactions.id, match.id),
+              eq(financeTransactions.ownerId, ownerId),
+              eq(financeTransactions.typeSource, 'default'),
+            ),
+          );
+      }
+
+      // Merchant memory: remember whatever category ended up on each
+      // committed row, whatever its source. The owner's current choice always
+      // wins going forward, whether that choice was made just now or is a
+      // suggestion they left untouched.
+      for (const row of toInsert) {
+        if (!row.suggestedCategoryId || !row.merchantKey) continue;
+
+        await tx
+          .insert(financeMerchantMemory)
+          .values({ ownerId, merchantKey: row.merchantKey, categoryId: row.suggestedCategoryId })
+          .onConflictDoUpdate({
+            target: [financeMerchantMemory.ownerId, financeMerchantMemory.merchantKey],
+            set: {
+              categoryId: row.suggestedCategoryId,
+              confirmedCount: sql`${financeMerchantMemory.confirmedCount} + 1`,
+              lastConfirmedAt: new Date(),
+            },
+          });
+      }
+
+      autoClassifiedCount = toInsert.filter(
+        (row) => matchByRowId.has(row.id) || row.categorizationSource === 'merchant_memory',
+      ).length;
     }
 
     await tx
@@ -540,6 +707,7 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
       skippedDuplicateCount: rows.length - toInsert.length - failedCount,
       skippedFailedCount: failedCount,
       demotedByRaceCount,
+      autoClassifiedCount,
     };
   });
 }

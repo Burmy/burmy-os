@@ -13,7 +13,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M3** | App shell, accounts, categories | ✅ Complete |
 | **M4** | Parsing & normalization core *(no UI)* | ✅ Complete |
 | **M5** | Import pipeline, preview, duplicates | ✅ Complete |
-| M6 | Categorization & classification | ⚪ Not started |
+| **M6** | Categorization & classification | ✅ Complete |
 | M7 | Review queue | ⚪ Not started |
 | M8 | Monthly grid & drill-down *(the product)* | ⚪ Not started |
 | M9 | Transactions table, Excel reconciliation, export | ⚪ Not started |
@@ -476,7 +476,72 @@ nothing new. `pnpm test:e2e` — all 16 tests, including the pre-existing M3 sui
 — passes as a complete run, confirmed repeatedly; see "Carried forward" for the
 one test race that surfaced and was fixed.
 
-## ▶ RESUME HERE — M6: Categorization & classification
+## M6 — Categorization & classification
+
+**Goal:** reduce the owner's manual review after import — obvious transactions
+categorize/classify themselves, uncertain ones stay `needs_review`. Narrowly
+scoped to that one goal, by owner instruction; not a rules engine, not a
+reconciliation framework.
+
+**Two mechanisms, both deterministic, no schema migration:**
+
+1. **Merchant memory** (`finance_merchant_memory`, built in M1, unused until
+   now) — a category confirmed once, whether by owner pick or accepted
+   suggestion, is remembered and pre-fills the same merchant next time. The
+   owner's current choice always overwrites what's remembered.
+2. **Counterpart matching** (`classify/counterpart.ts`, new) — the M4-discovered
+   confirmation-token linkage, used for both transfers and credit-card
+   payments as ONE mechanism: same owner, same token (exact), amount the exact
+   negation of the other leg's, different account, ±7 days, `type_source`
+   still `'default'`, and exactly one qualifying candidate — anything else is
+   no match, never a guess.
+
+**Two scope changes made during review, before implementation:**
+
+1. **Investment auto-classification deferred entirely.** The account-type-based
+   path (`brokerage` account → every transaction is `investment`) was proposed
+   and then cut: it's currently unreachable (no adapter imports into a
+   `brokerage` account) and might not stay semantically correct once real
+   usage exists. Left for a later milestone with a concrete case.
+2. **No FK migration for `counterpart_transaction_id`.** The column already
+   existed, unconstrained, from M1. Application-level `type_source = 'default'`
+   guards plus the integration suite were judged sufficient for V1; a
+   migration purely for architectural neatness was explicitly rejected.
+
+**The "never overwrite a manual decision" requirement**, verified directly: every
+automated write is gated on `type_source = 'default'`. M7's still-unbuilt manual
+correction UI will set `type_source = 'manual_confirmation'` — from that instant,
+this milestone's code can never touch that transaction's type again, through the
+exact same guard, with zero code changes needed when M7 ships. A test forces this
+scenario directly (a transaction's `type_source` set to `'manual_confirmation'`
+ahead of an otherwise-qualifying import) and confirms it survives untouched.
+
+**A real bug the integration suite caught, not review:** the retroactive
+counterpart update (reclassifying an already-committed transaction from a prior
+import) touched only `transaction_type`/`type_source`/`counterpart_transaction_id`
+— correctly leaving category state alone — but that also meant a transaction with
+`review_status = 'needs_review'` (no category, nothing to review at staging time)
+stayed stuck at `needs_review` forever, even though it was now correctly excluded
+and needed no owner attention at all. Fixed with a SQL `CASE`: `needs_review` moves
+to `auto`, but an existing `confirmed` is left exactly as it was — the fix couldn't
+just flip the field unconditionally without risking exactly the manual-overwrite
+problem the whole milestone is about avoiding.
+
+**Tests:** unit — `extractConfirmationToken` (both BoA forms, case-insensitivity,
+no-match), `dateWindow` (month/year boundaries), `findQualifyingCounterpart` (every
+disqualifying case: wrong token via ILIKE substring collision, wrong sign, wrong
+magnitude, ambiguous, ambiguous is null not a guess), `reviewStatusFor`. Integration
+— memory upsert/override, both counterpart-match import orders, transfer (non-card)
+matching, ambiguous match classifies nothing, cross-owner isolation, the
+manual-decision-survives guard, re-upload idempotency still holds with
+classification composed in. E2E — a merchant confirmed in a prior session pre-fills
+its category with zero owner interaction, computed via the real normalizer rather
+than a guessed key.
+
+**DoD:** `pnpm typecheck` / `lint` / `test` (306) / `test:integration` (119) /
+`test:e2e` (17, two consecutive full runs) / `build` all green — actually run.
+
+## ▶ RESUME HERE — M7: Review queue
 
 **Get running again:**
 
@@ -488,12 +553,15 @@ pnpm db:seed
 pnpm dev
 ```
 
-M5 left `finance_import_rows.suggested_category_id` populated only by the owner's
-own manual pick in the preview (`categorization_source = 'manual'`); M6 is what
-makes most transactions categorize themselves — rules, merchant memory, source-
-category mapping, confidence scoring, and the exclusionary-type detection
-(transfer / card-payment / investment) gated on a rule, a matched counterpart, or
-explicit confirmation, never a bare heuristic. Full scope in
+M6 leaves every `needs_review` transaction exactly that — no page shows them
+anywhere yet. M7 is that page: a queue of `review_status = 'needs_review'`
+transactions (plus, per M6's design, wherever a wrong auto-classification needs
+correcting) with a way to assign a category and — the piece M6 deliberately did
+not build — mark a transaction's type as Transfer / Credit Card Payment /
+Investment by explicit confirmation, setting `type_source = 'manual_confirmation'`.
+That column value is what permanently exempts a transaction from M6's automatic
+reclassification, verified in M6's own test suite; M7 does not need to add any
+guard on the automation side, only the UI that sets it. Full scope in
 `IMPLEMENTATION_PLAN.md` §39.
 
 ## Carried forward

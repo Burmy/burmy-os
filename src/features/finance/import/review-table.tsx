@@ -121,6 +121,11 @@ export function ImportReviewTable({
             {result.importedCount} transaction{result.importedCount === 1 ? '' : 's'} added
           </li>
           <li>{result.skippedDuplicateCount} skipped as already imported</li>
+          {result.autoClassifiedCount > 0 ? (
+            <li>
+              {result.autoClassifiedCount} categorized or classified automatically — nothing to review
+            </li>
+          ) : null}
           {result.skippedFailedCount > 0 ? (
             <li>{result.skippedFailedCount} needed attention and were not imported</li>
           ) : null}

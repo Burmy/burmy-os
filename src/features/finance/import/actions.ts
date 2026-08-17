@@ -17,6 +17,7 @@ import {
   updateRowDecision,
   MAX_UPLOAD_BYTES,
 } from '@/server/db/finance/imports';
+import { getMerchantMemoryForKeys } from '@/server/db/finance/merchant-memory';
 import { DEDUPE_KEY_VERSION, dedupeKey } from '@/server/finance/dedupe';
 import {
   AccountFormatMismatchError,
@@ -156,10 +157,14 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
         originalDescription: candidate.originalDescription,
       }),
       dedupeKeyVersion: DEDUPE_KEY_VERSION,
-      // Placeholder — replaced below once Tier 2 reconciliation runs.
+      // Placeholders — decision/duplicateOfTransactionId replaced once Tier 2
+      // reconciliation runs; suggestedCategoryId/categorizationSource once
+      // merchant memory is looked up. Both below.
       decision: 'exclude',
       duplicateOfTransactionId: null,
       parseError: null,
+      suggestedCategoryId: null,
+      categorizationSource: null,
     };
   });
 
@@ -179,6 +184,8 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
     decision: 'exclude',
     duplicateOfTransactionId: null,
     parseError: failure.message,
+    suggestedCategoryId: null,
+    categorizationSource: null,
   }));
 
   const keys = candidateRows
@@ -192,12 +199,25 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
   );
   const decisionByRow = new Map(decisions.map((decision) => [decision.rowNumber, decision]));
 
+  // Merchant memory: a recurring mapping confirmed before ("Capital One Auto"
+  // → "Car Payments") pre-fills the category the owner would otherwise pick
+  // again by hand. Looked up here (staging), written back in
+  // `commitImport()` — an owner override always replaces what's remembered.
+  const merchantKeys = [
+    ...new Set(candidateRows.map((row) => row.merchantKey).filter((key): key is string => key !== null)),
+  ];
+  const memory = await getMerchantMemoryForKeys(owner.userId, merchantKeys);
+
   const decidedRows: StageRowInput[] = candidateRows.map((row) => {
     const decision = decisionByRow.get(row.rowNumber);
+    const remembered = row.merchantKey ? memory.get(row.merchantKey) : undefined;
+
     return {
       ...row,
       decision: decision?.decision ?? 'exclude',
       duplicateOfTransactionId: decision?.duplicateOfTransactionId ?? null,
+      suggestedCategoryId: remembered?.categoryId ?? null,
+      categorizationSource: remembered ? ('merchant_memory' as const) : null,
     };
   });
 

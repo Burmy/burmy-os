@@ -5,6 +5,7 @@ import {
   defaultTransactionType,
   parseBoaCardAddressHint,
   planStagedDecisions,
+  reviewStatusFor,
 } from '@/server/finance/import/staging';
 
 describe('planStagedDecisions', () => {
@@ -109,5 +110,22 @@ describe('parseBoaCardAddressHint', () => {
 
   it('returns undefined when there is no city — just two letters alone', () => {
     expect(parseBoaCardAddressHint('TX')).toBeUndefined();
+  });
+});
+
+describe('reviewStatusFor', () => {
+  it('is needs_review with no category at all, regardless of source', () => {
+    expect(reviewStatusFor(null, null)).toBe('needs_review');
+    // A source with no category is not a state staging ever produces, but the
+    // function should still treat "no category" as the deciding fact.
+    expect(reviewStatusFor(null, 'merchant_memory')).toBe('needs_review');
+  });
+
+  it('is confirmed when the OWNER picked the category', () => {
+    expect(reviewStatusFor('cat-1', 'manual')).toBe('confirmed');
+  });
+
+  it('is auto when merchant memory supplied the category and nothing overrode it', () => {
+    expect(reviewStatusFor('cat-1', 'merchant_memory')).toBe('auto');
   });
 });

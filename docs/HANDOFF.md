@@ -353,7 +353,7 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestones 1 through 5 COMPLETE
+## 9. Current status — Milestones 1 through 6 COMPLETE
 
 **M2 added authentication.** Full detail, including every trap hit along the way, is in
 [`docs/ROADMAP.md`](./ROADMAP.md). The short version:
@@ -370,8 +370,9 @@ single clause is the entire double-counting guarantee, and it is covered by test
 | Parser | `raw bytes → parse → normalized candidate`, two stages kept apart. BoA deposit + card adapters written against REAL exports. Deposit exports **validate themselves to the cent** against their own summary block. |
 | Fixtures | `tests/fixtures/finance/` — 10 files **redacted from real exports** (invariant amended in M4), consumed as raw bytes, checksummed, with a guard test validated by a negative control. |
 | Dedupe | **Tier 2 count reconciliation is active**, at staging AND again inside `commitImport()`'s transaction against the current committed count — closing the race between two concurrently staged imports. An explicit owner override (`decision_overridden`) is exempt from the re-check. Tier 1 (`Reference Number`) remains captured, documented, and UNVERIFIED — no unique constraint. |
-| Import pipeline | `/finance/import` → `/finance/import/[id]`. Single file per import, in-memory only, never written to disk. Account/format compatibility checked before staging. One bad row stages as a reviewable "needs attention" row (`parseStatementTolerant`) instead of aborting the file. File-hash pre-check distinguishes `committed` ("already imported") from `review`/`discarded` (never called that). Category optional at commit; no owner-facing transaction-type picker — every row defaults to `expense`/`income` by sign alone. |
-| Suites | `pnpm test` **289** (domain + components, Docker-free) · `pnpm test:integration` **106** (Testcontainers) · `pnpm test:e2e` **16** (Playwright) |
+| Import pipeline | `/finance/import` → `/finance/import/[id]`. Single file per import, in-memory only, never written to disk. Account/format compatibility checked before staging. One bad row stages as a reviewable "needs attention" row (`parseStatementTolerant`) instead of aborting the file. File-hash pre-check distinguishes `committed` ("already imported") from `review`/`discarded` (never called that). Category optional at commit. |
+| Classification | **Merchant memory** (`finance_merchant_memory`) pre-fills a category from confirmed history; owner override always wins going forward. **Counterpart matching** (`classify/counterpart.ts`) links transfer/credit-card-payment legs by BoA's shared confirmation token — exact match, ±7 days, exactly one candidate, or no classification at all. Every automated write gated on `type_source = 'default'`, so a future M7 manual confirmation can never be overwritten. Investment auto-classification and the `counterpart_transaction_id` FK were both explicitly deferred. |
+| Suites | `pnpm test` **306** (domain + components, Docker-free) · `pnpm test:integration` **119** (Testcontainers) · `pnpm test:e2e` **17** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -492,9 +493,11 @@ burmy-os/
 │   │   ├── security/{csp,audit,theme}.ts
 │   │   ├── db/
 │   │   │   ├── {index,schema,seed}.ts
-│   │   │   └── finance/{accounts,categories,errors}.ts   OWNER-SCOPED data access
-│   │   │       └── imports.ts   staging, review reads, decisions, commit — M5.
-│   │   │                        The advisory-lock commit-time Tier 2 re-check lives here.
+│   │   │   ├── finance/{accounts,categories,errors}.ts   OWNER-SCOPED data access
+│   │   │   ├── finance/imports.ts   staging, review reads, decisions, commit — M5.
+│   │   │   │                    The advisory-lock commit-time Tier 2 re-check AND
+│   │   │   │                    M6's counterpart-match/merchant-memory-write live here.
+│   │   │   └── finance/merchant-memory.ts   READ side of learned category mappings — M6
 │   │   └── finance/            THE DOMAIN CORE — framework-free, DB-free
 │   │       ├── money.ts        Cents + ALL arithmetic
 │   │       ├── taxonomy.ts     names, slugs, last_four guard, reorder
@@ -507,21 +510,26 @@ burmy-os/
 │   │       │   ├── normalize.ts  dates, sign INVERSION, Cents
 │   │       │   └── index.ts    detection + composition + parseStatementTolerant — M5
 │   │       ├── adapters/       boa-deposit (self-validating), boa-card
-│   │       └── import/         M5: account/format compatibility, staging decisions
+│   │       ├── import/         M5: account/format compatibility, staging decisions
+│   │       └── classify/       M6: extractConfirmationToken, findQualifyingCounterpart —
+│   │                            ONE mechanism for transfers AND credit-card payments
 ├── tests/
-│   ├── unit/                    289 tests, NO Docker/database. Two Vitest projects:
+│   ├── unit/                    306 tests, NO Docker/database. Two Vitest projects:
 │   │                            *.test.ts -> node, *.test.tsx -> jsdom.
 │   ├── fixtures/finance/        10 REDACTED files from real exports. Consumed as
 │   │                            raw BYTES. Checksummed — update the digest in
 │   │                            fixture-guard.test.ts when one legitimately changes.
 │   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
-│   ├── integration/             106 tests. Testcontainers PG18. Own config.
+│   ├── integration/             119 tests. Testcontainers PG18. Own config.
 │   │   ├── entry-points.test.ts THE anti-silent-coverage-gap test
-│   │   └── finance-imports.test.ts   staging, Tier 2, the commit-time race +
-│   │                            override preservation, file-hash status — M5
-│   └── e2e/                     16 tests, SERIAL. Chrome virtual authenticator,
+│   │   ├── finance-imports.test.ts   staging, Tier 2, the commit-time race +
+│   │   │                        override preservation, file-hash status — M5
+│   │   └── finance-classify.test.ts   merchant memory, counterpart matching in
+│   │                            both import orders, the manual-decision guard — M6
+│   └── e2e/                     17 tests, SERIAL. Chrome virtual authenticator,
 │                                real Radix overlays under the real CSP.
-│                                import.spec.ts: golden path + re-upload idempotency.
+│                                import.spec.ts: golden path, re-upload idempotency,
+│                                merchant-memory pre-fill (M6).
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
 ├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
@@ -604,73 +612,50 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 6 — the exact next objective
+## 12. Milestone 7 — the exact next objective
 
-**Goal:** most transactions categorize themselves, and nothing is silently
-excluded from spending.
-**Depends on:** M5 (import pipeline). Complete.
+**Goal:** a queue for everything M6's automation left at `review_status =
+'needs_review'`, and the one thing M6 deliberately did not build: a way to
+manually assign or correct a transaction's type.
+**Depends on:** M6 (categorization & classification). Complete.
 
-### What M5 hands over
+### What M6 hands over
 
-- Every committed `finance_transactions` row carries `normalized_merchant`,
-  `dedupe_key`, and — only when the owner picked one during review —
-  `category_id` with `categorization_source = 'manual'` and
-  `review_status = 'confirmed'`. Everything else committed uncategorized is
-  `review_status = 'needs_review'`, which is M7's queue, not M6's.
-- `transaction_type` is `expense` or `income` by sign alone, `type_source =
-  'default'`, on every M5-committed row. **None of them have been classified as
-  `transfer`, `credit_card_payment` or `investment`** — M6 is what is allowed to
-  assign those, and only via a rule, a matched counterpart, or explicit
-  confirmation (invariant 5).
-- The confirmation-number linkage M4 found and preserved (`Confirmation# <token>`
-  on checking, `CONF#<token>` on the card, same token, opposite signs, ±1 day) is
-  still sitting in `original_description`, untouched, waiting for M6 to extract and
-  match it. See FINANCE.md "Confirmation numbers link both legs of a card
-  payment."
-- `finance_rules` and `finance_merchant_memory` exist in the schema (M1) and are
-  empty. Nothing has written to them yet.
-
-### Work (full definition in `IMPLEMENTATION_PLAN.md` §39)
-
-1. Rules CRUD with priority ordering.
-2. Merchant memory — promote a manually confirmed category to a standing rule
-   after repetition.
-3. Source-category mapping (BoA supplies none today; the field exists for a bank
-   that does).
-4. Confidence scoring, so a low-confidence guess still reads as a guess in the
-   UI, not a fact.
-5. Transfer / card-payment / investment detection, gated on a rule, a matched
-   counterpart (this batch **and** committed history, ±7 days), or explicit
-   confirmation — **never a bare heuristic**. Ambiguous counterpart candidates
-   produce a review item, not a silent pairing.
-6. Reporting exclusions through one shared SQL clause, so "what counts as
-   spending" is defined once.
+- Most transactions committed from here on already carry a category
+  (`categorization_source = 'merchant_memory'`, `review_status = 'auto'`) or a
+  correctly excluded type (`transaction_type` `transfer`/`credit_card_payment`,
+  `type_source = 'counterpart_match'`, `review_status = 'auto'`) with zero
+  owner interaction. What's left in `needs_review` is genuinely the residue —
+  a new merchant, an unmatched transfer leg, anything ambiguous.
+- `finance_transactions.type_source = 'default'` is the ENTIRE gate that keeps
+  M6's automation from touching a transaction again. M7's manual-correction UI
+  needs to set `type_source = 'manual_confirmation'` when the owner assigns or
+  changes a type — that one write is what permanently exempts it, verified
+  directly in M6's own integration suite. No change to M6's code is needed for
+  this to work; the guard already exists and already respects it.
+- Investment auto-classification was scoped out of M6 entirely (see
+  FINANCE.md). If M7's manual-correction UI is the natural place to mark a
+  transaction `investment` by hand in the meantime, that is a reasonable
+  reading — nothing in M6 depends on account type for anything.
+- `finance_rules` still exists in the schema (M1) and is still empty — M6
+  chose merchant memory over a rule-authoring UI. Revisit only if the residual
+  review tail after real usage shows a pattern merchant memory can't express.
 
 ### Non-negotiable for this milestone
 
 - **Invariant 5, still.** `transfer` / `credit_card_payment` / `investment` may
   only be assigned via a rule, a qualified counterpart match, or explicit review
-  confirmation. A suspicion produces a review item, never an exclusion.
+  confirmation — M7's manual-correction UI IS the explicit-confirmation path.
 - **Every Server Action begins with `await requireOwner()`.**
   `tests/integration/entry-points.test.ts` enumerates the filesystem and fails the
   suite otherwise.
-- `src/server/finance/` stays framework-free — the classifier's decision logic is
-  pure, testable without a database.
-
-### Definition of Done
-
-- A rule and merchant memory both categorize correctly, with priority resolved
-  deterministically.
-- A confirmation-number pair correctly excludes both legs as
-  `credit_card_payment`, and an unmatched leg (predates or postdates the import
-  window) stays a review item rather than a guess.
-- A bare heuristic, tested directly, never produces an exclusionary type.
-- `pnpm typecheck` / `lint` / `test` / `test:integration` / `test:e2e` / `build`
-  all green — **actually run**.
+- Setting `type_source = 'manual_confirmation'` must be the ONLY way M7 changes
+  a type — never reuse `'default'` or `'rule'` for an owner's manual pick, or
+  M6's automation could reclassify it later.
 
 ### Also outstanding
 
-**Manual real-device passkey verification**, carried from M2 through M5. The
+**Manual real-device passkey verification**, carried from M2 through M6. The
 automated ceremony passes against Chrome's virtual authenticator (real WebAuthn
 with a software key store), but no physical authenticator has been used. Two
 minutes: `pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then

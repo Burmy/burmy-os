@@ -221,6 +221,16 @@ These are verified, not folklore. Do not "fix" them back.
   for the action's own network response (`page.waitForResponse`, listener attached BEFORE the
   triggering interaction) before trusting a reload to reflect it. Reproduced 3 times in a row before
   the fix, gone in 3 consecutive full-suite runs after.
+- **An automated write that "only touches its own fields" can still silently strand a row.** M6's
+  retroactive counterpart-match update correctly left `category_id`/`categorization_source` alone on
+  the transaction it reclassified — but it ALSO left `review_status` alone, and a transaction with no
+  category has `review_status = 'needs_review'` from M5 regardless of whether it now needs a category
+  at all (an excluded transfer/card-payment doesn't). The fix is a SQL `CASE`, not a flat `set()`:
+  `needs_review → auto`, but an existing `confirmed` is left exactly as it was. The general lesson —
+  before shipping "this write only touches columns X and Y," check whether X/Y's CURRENT VALUE was
+  computed under an assumption (here: "no category yet decided" was baked into `needs_review`) that
+  the new write just falsified without updating the field that encoded it. Caught by an integration
+  test asserting the FULL row shape after a retroactive update, not by reviewing the update's own diff.
 
 ---
 

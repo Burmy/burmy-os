@@ -10,6 +10,7 @@ import {
   generateGrantToken,
   grantIdentifier,
 } from '../../scripts/auth-grant.mjs';
+import { normalizeMerchant } from '../../src/server/finance/merchant';
 
 /**
  * M5's golden path through a real browser: upload → preview → categorize →
@@ -122,6 +123,26 @@ async function selectAccount(page: Page, name: string): Promise<void> {
   await page.getByRole('option', { name }).click();
 }
 
+async function getOwnerId(): Promise<string> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ id: string }[]>`select "id" from "user" where "email" = ${OWNER_EMAIL.toLowerCase()}`;
+    const row = rows[0];
+    if (!row) throw new Error('owner not found');
+    return row.id;
+  });
+}
+
+async function getCategoryId(ownerId: string, name: string): Promise<string> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ id: string }[]>`
+      select "id" from "finance_categories" where "owner_id" = ${ownerId} and "name" = ${name}
+    `;
+    const row = rows[0];
+    if (!row) throw new Error(`category "${name}" not found`);
+    return row.id;
+  });
+}
+
 test.describe.configure({ mode: 'serial' });
 
 test.describe('import', () => {
@@ -191,6 +212,59 @@ test.describe('import', () => {
       return Number(rows[0]?.n ?? '0');
     });
     expect(totalCount).toBe(DEPOSIT_TRANSACTION_COUNT);
+  });
+
+  test('a merchant confirmed before pre-fills its category automatically', async ({ page }) => {
+    await signIntoApp(page);
+    await addAccount(page, 'BoA Checking');
+
+    await page.goto('/settings/categories');
+    await page.getByRole('button', { name: 'Add category' }).click();
+    const categoryDialog = page.getByRole('dialog');
+    await categoryDialog.getByLabel('Name').fill('Dining');
+    await categoryDialog.getByRole('button', { name: 'Save' }).click();
+    await expect(page.getByText('Dining')).toBeVisible();
+
+    // Seed the memory a real M6 commit would have written last month —
+    // computed via the real normalizer so the key matches exactly what
+    // staging will look up, not a guessed string.
+    const ownerId = await getOwnerId();
+    const categoryId = await getCategoryId(ownerId, 'Dining');
+    const { merchantKey } = normalizeMerchant("LARSEN'S #0366 2 05/26 PURCHASE SPRINGFIELD TX");
+    await withDb(async (sql) => {
+      await sql`
+        insert into "finance_merchant_memory" ("owner_id", "merchant_key", "category_id")
+        values (${ownerId}, ${merchantKey}, ${categoryId})
+      `;
+    });
+
+    await page.goto('/finance/import');
+    await selectAccount(page, 'BoA Checking');
+    await page.getByLabel('Statement (.csv)').setInputFiles(DEPOSIT_FIXTURE);
+    await page.getByRole('button', { name: 'Upload' }).click();
+
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
+
+    // Pre-filled — the owner never touches this row's category select.
+    const larsensRow = page.getByRole('row', { name: /LARSEN'S/ });
+    await expect(larsensRow.getByLabel(/^Category for/)).toHaveText('Dining');
+
+    await page
+      .getByRole('button', { name: `Import ${DEPOSIT_TRANSACTION_COUNT} transactions` })
+      .click();
+    await expect(page.getByText('Import complete.')).toBeVisible();
+    await expect(page.getByText(/categorized or classified automatically/)).toBeVisible();
+
+    const committed = await withDb(async (sql) => {
+      const rows = await sql<{ name: string | null; review_status: string }[]>`
+        select c."name", t."review_status" from "finance_transactions" t
+        join "finance_categories" c on c."id" = t."category_id"
+        where t."original_description" like '%LARSEN%'
+      `;
+      return rows[0];
+    });
+    expect(committed?.name).toBe('Dining');
+    expect(committed?.review_status).toBe('auto');
   });
 
   test('refuses to stage a credit card export against a checking account', async ({ page }) => {

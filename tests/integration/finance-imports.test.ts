@@ -92,6 +92,8 @@ function makeCandidateRow(
     decision: 'exclude',
     duplicateOfTransactionId: null,
     parseError: null,
+    suggestedCategoryId: null,
+    categorizationSource: null,
     ...overrides,
   };
 }
