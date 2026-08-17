@@ -138,6 +138,160 @@ export const user = pgTable('user', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BETTER AUTH OWNED TABLES
+ *
+ * These four (plus `user` above and `rateLimit` below) are Better Auth's
+ * schema, hand-written here rather than generated into a second file, because
+ * Drizzle must remain the single source of truth for migrations.
+ *
+ * The field list is transcribed from Better Auth 1.6.29's own
+ * `getAuthTables()` (`@better-auth/core/dist/db/get-tables.mjs`) and the
+ * passkey plugin's `src/schema.ts` — read from the installed package, not from
+ * documentation. If Better Auth is upgraded, re-read that source and diff.
+ *
+ * TS PROPERTY NAMES MUST STAY camelCase. Better Auth's Drizzle adapter looks
+ * columns up as `schemaModel[fieldName]` — by JS property key, never by SQL
+ * column name. So `emailVerified` is load-bearing; `email_verified` is free to
+ * follow this file's snake_case convention.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Server-side session store. This is what makes revocation INSTANT — deleting
+ * the row ends the session on the next request, with no window in which a
+ * signed stateless token remains valid.
+ */
+export const session = pgTable(
+  'session',
+  {
+    id: text('id').primaryKey(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    token: text('token').notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (t) => [index('session_user_idx').on(t.userId)],
+);
+
+/**
+ * Better Auth's core schema includes this table unconditionally, so it exists.
+ *
+ * Burmy writes NOTHING to it: there is no password authentication and no OAuth
+ * provider configured in Better Auth — Google is configured exactly once, in
+ * Cloudflare Access. An `account` row appearing here in production means
+ * someone added a credential provider, which is a review finding, not a
+ * feature. The `password` column must stay permanently null.
+ */
+export const account = pgTable(
+  'account',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at', { withTimezone: true }),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { withTimezone: true }),
+    scope: text('scope'),
+    password: text('password'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('account_user_idx').on(t.userId)],
+);
+
+/**
+ * Short-lived single-use values. Better Auth's `consumeVerificationValue()`
+ * reads and DELETES in one step, which is exactly single-use semantics.
+ *
+ * Three things share this table, deliberately, instead of each inventing its
+ * own token table and its own crypto:
+ *   1. the passkey plugin's WebAuthn challenges,
+ *   2. bootstrap enrollment tokens,
+ *   3. break-glass recovery tokens.
+ *
+ * `identifier` holds the token, `value` the JSON payload. See
+ * src/server/auth/recovery.ts.
+ */
+export const verification = pgTable(
+  'verification',
+  {
+    id: text('id').primaryKey(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('verification_identifier_idx').on(t.identifier)],
+);
+
+/**
+ * Registered WebAuthn credentials — FACTOR 2.
+ *
+ * `publicKey` is a public key: it authenticates, it does not decrypt, and it is
+ * not a secret. The private key never leaves the authenticator, which is the
+ * entire reason a passkey is a different factor from a Google password.
+ *
+ * At least TWO rows must exist before onboarding completes. One passkey is a
+ * single point of failure, and the recovery path is deliberately awkward.
+ */
+export const passkey = pgTable(
+  'passkey',
+  {
+    id: text('id').primaryKey(),
+    name: text('name'),
+    publicKey: text('public_key').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    credentialID: text('credential_id').notNull(),
+    counter: integer('counter').notNull(),
+    deviceType: text('device_type').notNull(),
+    backedUp: boolean('backed_up').notNull(),
+    transports: text('transports'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    aaguid: text('aaguid'),
+  },
+  (t) => [
+    index('passkey_user_idx').on(t.userId),
+    // Better Auth declares this `index: true`, not unique. It is made UNIQUE
+    // here on purpose: `verifyPasskeyAuthentication` looks a credential up by
+    // `credentialID` with `findOne`, so two rows sharing one credential id
+    // would make which passkey authenticates depend on row order. A WebAuthn
+    // credential id is globally unique by construction; enforcing that is free.
+    uniqueIndex('passkey_credential_id_idx').on(t.credentialID),
+  ],
+);
+
+/**
+ * Rate-limit counters, in the DATABASE rather than in memory.
+ *
+ * Better Auth's default limiter is per-process memory, which resets on every
+ * deploy and every container restart. The endpoint that most needs a limiter is
+ * break-glass recovery, and "redeploy to clear the lockout" is not a property a
+ * break-glass path should have. One small table buys a limiter that survives
+ * restarts. Cloudflare still rate-limits at the edge; this is the origin-side
+ * layer that works even if the origin is reached another way.
+ */
+export const rateLimit = pgTable('rate_limit', {
+  id: text('id').primaryKey(),
+  key: text('key').notNull().unique(),
+  count: integer('count').notNull(),
+  lastRequest: bigint('last_request', { mode: 'number' }).notNull(),
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Finance — accounts and categories
 // ─────────────────────────────────────────────────────────────────────────────

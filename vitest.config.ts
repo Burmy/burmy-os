@@ -16,8 +16,13 @@ export default defineConfig({
     // browser dependency. Component tests opt in with:
     //   // @vitest-environment jsdom
     environment: 'node',
-    include: ['tests/unit/**/*.test.{ts,tsx}', 'tests/integration/**/*.test.{ts,tsx}'],
-    exclude: ['tests/e2e/**'],
+    // UNIT ONLY, and deliberately so: `pnpm test` must run with no Docker
+    // daemon, no database and no network. It is the suite that runs on every
+    // save, and the moment it needs a container it stops being run that often.
+    // Integration tests live in `pnpm test:integration`
+    // (vitest.integration.config.ts).
+    include: ['tests/unit/**/*.test.{ts,tsx}'],
+    exclude: ['tests/e2e/**', 'tests/integration/**'],
     globals: false,
     restoreMocks: true,
     coverage: {

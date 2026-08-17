@@ -106,6 +106,26 @@ These are verified, not folklore. Do not "fix" them back.
 - **The deploy script never restores the database automatically.** On healthcheck failure it rolls
   back the *image* only and leaves Postgres untouched. A failed healthcheck usually means a bad build,
   not bad data, and the database may hold newer writes.
+- **Never `export NODE_ENV=development` before `pnpm build`.** Sourcing `.env` into the shell
+  (`set -a; . ./.env`) does exactly that, and `next build` then resolves the *development* React
+  build during prerender and dies with `TypeError: Cannot read properties of null (reading
+  'useContext')` on `/_global-error`. The error names a page you never wrote, so it reads like a
+  framework bug. Next reads `.env` itself — do not pre-export it. (Exporting it is fine for
+  `pnpm test:e2e`, which needs `DATABASE_URL` and `OWNER_EMAIL` at runtime.)
+- **A nonce can never satisfy `style-src-attr`, but that is NOT why a strict CSP reports style
+  violations here.** Under a nonce-only `style-src`, `/sign-in` reports ~33 `style-src-elem`
+  violations in **development only** — every one sourced from `_next/static/chunks/…next-devtools…`,
+  the dev overlay, which is absent from a production build. Do **not** add `'unsafe-inline'` or a
+  `style-src-attr` exception for it; the policy is correct and application code produces zero
+  violations. Diagnose CSP problems by capturing `securitypolicyviolation` DOM events
+  (`effectiveDirective` + `sourceFile`), not by reading console text — the console message names the
+  fallback directive and sends you after the wrong cause.
+- **Adding a migration requires rebuilding the migrator image — `--build` is not optional.** The
+  Dockerfile copies `drizzle/` *into* the image, so `docker compose run --rm migrate` against a stale
+  image prints **"Migrations complete." and applies nothing**. It is a silent no-op: exit 0, reassuring
+  output, schema unchanged. Always
+  `docker compose -f compose.dev.yml run --rm --build migrate` after `pnpm db:generate`, and verify by
+  counting tables rather than trusting the message. This cost real time during M2.
 - **`scripts/migrate.mjs` is plain ESM on purpose — do not convert it to TypeScript.** Applying
   migrations only needs to execute the generated SQL, so writing it in TS would drag
   tsx → esbuild → a platform-native binary into an image whose whole job is running a few
@@ -151,3 +171,13 @@ financial correctness verifiable — protect this boundary.
   If something fails, say so and show it.
 - Report honestly: what was implemented, files changed, what ran, known issues, next milestone.
 - No speculative abstractions. If a future requirement demands one, refactor when it is real.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

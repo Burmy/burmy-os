@@ -9,7 +9,7 @@ next. Never mark anything complete without having run the verification and seen 
 | | Milestone | Status |
 | --- | --- | --- |
 | **M1** | Foundation, domain core, protecting what is irreplaceable | ✅ Complete |
-| M2 | Authentication, bootstrap prototype, security baseline | ⚪ Not started |
+| **M2** | Authentication, bootstrap prototype, security baseline | ✅ Complete |
 | M3 | App shell, accounts, categories | ⚪ Not started |
 | M4 | Parsing & normalization core *(no UI)* | ⚪ Not started |
 | M5 | Import pipeline, preview, duplicates | ⚪ Not started |
@@ -114,38 +114,119 @@ CSV if needed, to verify the actual export schema before writing the adapters.
 
 ---
 
-## ▶ RESUME HERE — M2: Authentication, bootstrap prototype, security baseline
+## M2 — Authentication, bootstrap prototype, security baseline
+
+**Goal:** only the owner gets in — and can always get back in. **Met.**
+
+### Delivered
+
+- **Cloudflare Access JWT verification** (`src/server/auth/access.ts`) — JWKS with a cached remote key
+  set, signature / `aud` / `iss` / `exp`, zero clock tolerance, owner-email match. Bypassed **only**
+  when `NODE_ENV` is exactly `development`; anything else missing `CF_ACCESS_*` **refuses traffic**.
+- **`requireOwner()`** (`src/server/auth/owner.ts`) — enforces **both** factors itself rather than
+  trusting the proxy, so a route the matcher misses is still fully protected. Options for
+  `{ fresh }` (sensitive actions) and `{ allowOnboarding }` (the onboarding route only).
+- **Better Auth 1.6.29 + `@better-auth/passkey`** — passkeys only. `socialProviders: {}` and
+  `emailAndPassword.enabled: false` stated explicitly. No Google client, no signup route.
+- **Bootstrap and recovery**, both candidates prototyped and measured, then chosen. One single-use
+  10-minute grant mechanism serves both, minted only by `scripts/auth-grant.mjs` over SSH/Tailscale.
+  Full comparison in `docs/SECURITY.md`.
+- **Two-passkey onboarding gate**, the **last-passkey-cannot-be-deleted** rule, and
+  **re-authentication** for passkey removal — all enforced server-side.
+- **Nonce-based CSP** per request in `src/proxy.ts`, security headers, database-backed rate limiting,
+  `audit_events` wiring.
+- **5 new tables** (`session`, `account`, `verification`, `passkey`, `rate_limit`) —
+  `drizzle/0001_nappy_ultron.sql`. Purely additive; the M1 `user` table was **reconciled, not
+  duplicated**.
+
+### Verification actually run — M2
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck` | ✅ exit 0 |
+| `pnpm lint` | ✅ exit 0, no errors or warnings |
+| `pnpm test` (unit, **Docker-free**) | ✅ **144/144** in ~0.5s |
+| `pnpm test:integration` (Testcontainers PG18) | ✅ **64/64** |
+| `pnpm test:e2e` (Playwright, virtual authenticator) | ✅ **4/4** |
+| `pnpm build` | ✅ exit 0 — 8 routes, Proxy detected |
+| Migration applied in container | ✅ 19 tables, 2 migrations recorded |
+| Build with **no** runtime secrets | ✅ succeeds — auth is constructed lazily |
+| Strict CSP against the running app | ✅ all 18 script tags nonced, 0 unnonced, 0 script violations |
+| Entry-point guard test | ✅ **validated by deliberately adding an unguarded route** and watching it fail |
+| Grant single-use under concurrency | ✅ 5 parallel redemptions → exactly 1 session |
+
+### Bugs and traps found during M2
+
+Each cost real time; all are now recorded in `CLAUDE.md`.
+
+| Found by | Issue |
+| --- | --- |
+| Counting tables after migrating | **`docker compose run --rm migrate` against a stale image prints "Migrations complete." and applies nothing.** The Dockerfile copies `drizzle/` into the image. `--build` is mandatory after `pnpm db:generate`. |
+| `pnpm db:generate` failing | Testcontainers' transitive deps (`ssh2`, `cpu-features`, `protobufjs`) have blocked install scripts, and an un-acknowledged block makes **every** `pnpm <script>` fail its dependency check. Declined explicitly via `ignoredBuiltDependencies`. |
+| `next build` | `export const { GET, POST } = toNextJsHandler(auth.handler)` reads `auth.handler` at import, building the DB adapter at build time and making the build require `DATABASE_URL` + `BETTER_AUTH_SECRET`. Handlers now call `getAuth()` per request. |
+| `next build` warning | Better Auth falls back to a **built-in default secret** when `BETTER_AUTH_SECRET` is unset, and only warns. Production now refuses to start. |
+| Playwright | One virtual authenticator cannot enrol two passkeys — `excludeCredentials` correctly refuses — and Chrome permits only one `internal` authenticator, so device 2 is `usb`. Both are real WebAuthn behaviour and match what the onboarding copy tells the owner. |
+| Playwright + CSP events | 33 CSP violations traced to the **Next.js dev overlay**, not application code. A `style-src-attr 'unsafe-inline'` was added on a wrong hypothesis and **reverted**. |
+| `pnpm build` | Sourcing `.env` into the shell exports `NODE_ENV=development`, which makes `next build` resolve development React and die on `/_global-error` with a `useContext` null. |
+| `tsc` | Next augments `NodeJS.ProcessEnv` so `NODE_ENV` is required and readonly; the Access module takes a narrow `AccessEnv` instead — which is also what stops the edge bundler inlining `CF_ACCESS_*` at build time. |
+
+### Deliberate deviations from the plan
+
+| Plan said | Shipped | Why |
+| --- | --- | --- |
+| §39 "prototype both recovery approaches from §13" | §13 named only one recovery candidate; a second (an offline, HTTP-redeemable recovery code) was supplied so the choice was a real comparison | Rejected: a credential valid indefinitely and redeemable from anywhere is a permanent second door whose security rests on never mislaying a printout |
+| Integration tests via Testcontainers in the default suite | Split: `pnpm test` is unit-only and Docker-free; `pnpm test:integration` is the container suite | A fast suite that needs a Docker daemon stops being run on every save. CI runs both. |
+| CSP "no `unsafe-inline`, no `unsafe-eval`" | No `unsafe-inline` anywhere; `'unsafe-eval'` in **development only** | React Refresh cannot hot reload without it. The production policy is unchanged. |
+| `rateLimit` storage unspecified | Database-backed, adding a `rate_limit` table | An in-memory limiter resets on every deploy, and "redeploy to clear the lockout" is not a property the break-glass endpoint should have |
+
+### Known gaps, carried forward honestly
+
+- **Cloudflare Access has never been exercised against real Cloudflare.** Verification is covered by
+  unit tests against a locally generated ES256 key pair (the real code path, different key source) and
+  by fail-closed integration tests. The genuine end-to-end check — a second Google account refused at
+  the edge — is an M10 item because it needs the deployment.
+- **Manual real-device passkey verification is outstanding.** The automated ceremony runs against
+  Chrome's virtual authenticator, which is real WebAuthn with a software key store, but no physical
+  authenticator has been used yet.
+- **The proxy runs in the edge runtime.** Next.js 16.3 exposes no runtime option for `proxy.ts`, so
+  refusals there are logged rather than written to `audit_events` (the Node-side guard persists those).
+  Verified that `CF_ACCESS_*` are read at **runtime**, not inlined at build time, by inspecting the
+  compiled chunk.
+
+---
+
+## ▶ RESUME HERE — M3: App shell, accounts, categories
 
 **Get running again:**
 
 ```bash
 docker compose -f compose.dev.yml up -d postgres
-docker compose -f compose.dev.yml run --rm migrate
+docker compose -f compose.dev.yml run --rm --build migrate    # --build is NOT optional
 pnpm dev
 ```
 
-### M2 scope
+**First run against an empty database** — mint a bootstrap grant, then redeem it at `/recovery`:
 
-1. **Cloudflare Access JWT verification** in `src/proxy.ts` — JWKS, `aud`, `iss`, `exp`. Bypassed
-   when `NODE_ENV=development`.
-2. **`requireOwner()` at the top of every protected server entry point** — Server Actions *and*
-   Route Handlers. Unprotected allowlist is exactly `/api/health` and `/api/auth/*`.
-3. **Better Auth, passkey plugin only.** No Google client here — Google is configured once, in
-   Cloudflare Access. Owner identity comes from the verified Access `email` claim matched against
-   `OWNER_EMAIL`.
-4. **Prototype bootstrap AND recovery before locking either in.** Better Auth documents no recovery
-   path, so M2 must produce a working prototype of both, document observed behaviour, then choose.
-   Committed constraints: two passkeys minimum before onboarding completes, and recovery must not
-   depend on email.
-5. Nonce-based CSP in `src/proxy.ts`, rate limits, `audit_events` wiring.
+```bash
+node scripts/auth-grant.mjs bootstrap
+```
+
+### M3 scope
+
+1. `(private)` layout with `Finance` / `Settings` nav; responsive; theme; error and loading states.
+2. **Initialize shadcn/ui + Lucide** — approved in the plan, not yet installed.
+3. CRUD for `finance_accounts`.
+4. CRUD + archive + reorder for `finance_categories` with `kind`.
+5. Wire `@testing-library/jest-dom` to a Vitest setup file — the first component tests land here.
 
 ### Watch out for
 
-- Better Auth generates its own tables (`session`, `account`, `verification`, `passkey`). The `user`
-  table already exists from M1, shaped to match — **reconcile rather than duplicate**, and read the
-  generated migration before applying it.
-- Passkeys need a secure context. `localhost` qualifies, so `rpID='localhost'` works in dev;
-  production is `app.burmy.me`.
+- **Every Server Action must call `await requireOwner()`.** `tests/integration/entry-points.test.ts`
+  enumerates the filesystem and fails the suite otherwise — that is the test working, not a nuisance.
+- Pages under `(private)` should call `requireOwner()` directly too, because from M3 they need the
+  returned owner id to scope queries. The layout guard is for navigation, not for data.
+- Sensitive actions (bulk delete, full export, changing `OWNER_EMAIL`) use
+  `requireOwner({ fresh: true })`.
 - Do not bump `typescript` past 6 or `eslint` past 9 — see the pin table in `CLAUDE.md`.
 
 ### Ask the owner at M4 — not before
@@ -165,7 +246,9 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | --- | --- | --- |
 | BoA `source_transaction_id` verification (stability / uniqueness / coverage) | M4 | Requires real overlapping exports. No unique constraint until proven. |
 | BoA adapter written against a real redacted export | M4 | Column layout unverified from primary sources |
-| Passkey bootstrap + recovery design | M2 | Prototyped before being locked in — Better Auth documents no recovery path |
+| ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
+| Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
+| Manual real-device passkey verification | M3 | Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |

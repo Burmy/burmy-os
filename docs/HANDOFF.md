@@ -3,7 +3,7 @@
 **Read this file first.** It is written for a Claude Code session with **zero prior conversation
 context**. It assumes you have the repository and nothing else.
 
-Last updated: end of **Milestone 1**. Next milestone: **M2 — Authentication**.
+Last updated: end of **Milestone 2**. Next milestone: **M3 — App shell, accounts, categories**.
 
 > **Privacy note:** this document deliberately contains no secrets, no `.env` values, no tokens, no
 > account numbers, and no real financial data. It must stay that way.
@@ -270,25 +270,38 @@ Finance
   booleans and a version string only — no counts, no data, no error text, no environment detail) and
   `/api/auth/*` (authenticates by design).
 
-### Bootstrap and recovery are INTENTIONALLY UNRESOLVED
+### Bootstrap and recovery — RESOLVED in M2, by prototype
 
-Better Auth's passkey plugin **documents no recovery path**. This is not an oversight in the plan — it
-is a deliberate decision to **prototype before committing**.
+Better Auth's passkey plugin documents no recovery path and no bootstrap-without-a-session story.
+Both candidates were implemented and measured against a real PostgreSQL 18, then one was chosen and
+the other **deleted**. Canonical write-up with the evidence: [`docs/SECURITY.md`](./SECURITY.md).
 
-Two questions M2 must answer *with a working prototype*, not an assumption:
+**What shipped — one mechanism for both:**
 
-1. **Bootstrap** — how does the very first passkey get registered when there is no session and no
-   password? Candidates: Better Auth's passkey-first registration (`registration.requireSession:
-   false` with a signed context token) versus a one-time enrollment token minted by a server-side
-   script.
-2. **Recovery** — what happens when every enrolled passkey is lost? Candidate: a Tailscale-only
-   server-side script minting a short-lived, single-use login token, requiring Tailscale membership
-   **and** an SSH key **and** shell access, never exposed over HTTP.
+```
+node scripts/auth-grant.mjs <bootstrap|recovery>     on the host, over SSH/Tailscale
+   │  mints a 256-bit token, prints it ONCE, stores only sha256(token)
+   ▼
+POST /api/auth/burmy/redeem-grant   { token, kind }
+   │  verifies Cloudflare Access ITSELF · single-use (atomic consume) · 10-min TTL
+   │  kind must match · owner email must match · 5 attempts/hour (DB-backed)
+   │  recovery additionally revokes every existing session
+   ▼
+session  ->  /onboarding/passkeys  ->  two passkeys enrolled  ->  Finance
+```
 
-**Committed constraints regardless of outcome:**
-- **At least two passkeys enrolled** before onboarding is considered complete.
-- **Recovery must not casually create an email-based bypass.** An email path would be a permanent
-  phishable backdoor around the very factor the passkey exists to provide.
+**Why not Better Auth's passkey-first registration (`requireSession: false`):** it works, but it
+leaves `/passkey/generate-register-options` answering unauthenticated callers *permanently* for a
+once-ever operation, the grant could not be consumed at options time without burning it on a dismissed
+browser prompt (so one token yielded unlimited challenges for 10 minutes), and it created the owner
+row from an anonymous request. The session-first design also means **the recovery path is exercised on
+day one** instead of being cold code needed on the worst day.
+
+**Committed constraints — all met:**
+- **Two passkeys** before onboarding completes — enforced in `requireOwner()`, not in the UI.
+- **No email anywhere.** An email path would be a permanent phishable backdoor around the very factor
+  the passkey exists to provide.
+- **The last passkey cannot be deleted**, so a mis-click cannot force a break-glass recovery.
 
 ---
 
@@ -340,15 +353,28 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestone 1 COMPLETE
+## 9. Current status — Milestones 1 and 2 COMPLETE
+
+**M2 added authentication.** Full detail, including every trap hit along the way, is in
+[`docs/ROADMAP.md`](./ROADMAP.md). The short version:
+
+| | |
+| --- | --- |
+| Auth | Cloudflare Access JWT (factor 1) + Better Auth passkeys (factor 2), both enforced inside `requireOwner()` |
+| Bootstrap & recovery | One single-use 10-minute grant, minted only by `scripts/auth-grant.mjs` over SSH/Tailscale. Prototyped both candidates, chose, deleted the loser. |
+| Gates | Two passkeys before onboarding completes; last passkey undeletable; re-auth for passkey removal |
+| Schema | **19 tables**, 2 migrations. `session` / `account` / `verification` / `passkey` / `rate_limit` added; M1's `user` table reconciled, not duplicated |
+| Suites | `pnpm test` **144** unit (Docker-free, ~0.5s) · `pnpm test:integration` **64** (Testcontainers) · `pnpm test:e2e` **4** (Playwright virtual authenticator) |
+| **Pushed?** | **NO.** Commits are local only. |
+| Repository visibility | **Private** |
+
+### Milestone 1, for reference
 
 | | |
 | --- | --- |
 | Commit | **`9bb6a76`** — "Milestone 1: foundation, domain core, and database schema" |
 | Files | 41 changed, 14,321 insertions |
 | Working tree | Clean at time of the M1 report |
-| **Pushed?** | **NO.** The commit is local only. |
-| Repository visibility | **Private** |
 
 ### Verification actually executed
 
@@ -413,24 +439,60 @@ burmy-os/
 │   ├── BACKUP_RESTORE.md        Backup stages and the DR drill
 │   └── ROADMAP.md               Live milestone tracker + "RESUME HERE"
 ├── drizzle/                     Generated migrations (COMMITTED)
-│   └── 0000_wet_malcolm_colcord.sql
-├── scripts/migrate.mjs          Migration runner — plain ESM on purpose
+│   ├── 0000_wet_malcolm_colcord.sql   14 tables — M1
+│   └── 0001_nappy_ultron.sql          + 5 auth tables — M2, purely additive
+├── scripts/
+│   ├── migrate.mjs              Migration runner — plain ESM on purpose
+│   └── auth-grant.mjs           BREAK GLASS. Mints bootstrap/recovery grants.
+│                                Plain ESM for the same reason: it must run on a
+│                                host that may have just been rebuilt.
 ├── src/
-│   ├── proxy.ts                 Level with app/, NOT inside it
+│   ├── proxy.ts                 Level with app/, NOT inside it. Access JWT + CSP
+│   │                            nonce. EDGE runtime — keep it edge-safe.
 │   ├── app/
 │   │   ├── page.tsx             -> redirects to /finance/monthly
+│   │   ├── (auth)/sign-in/      passkey challenge
+│   │   ├── (auth)/recovery/     redeem a grant (cannot ISSUE one)
+│   │   ├── (onboarding)/onboarding/passkeys/   the two-passkey gate. Own route
+│   │   │                        group so it cannot redirect-loop with (private).
+│   │   ├── (private)/layout.tsx requireOwner() for navigation
 │   │   ├── (private)/finance/monthly/page.tsx   placeholder until M8
-│   │   ├── api/health/route.ts  unauthenticated; booleans + version ONLY
+│   │   ├── api/health/route.ts  UNAUTHENTICATED; booleans + version ONLY
+│   │   ├── api/auth/[...all]/   UNAUTHENTICATED by design; getAuth() per request
 │   │   ├── layout.tsx  globals.css
+│   ├── features/auth/           sign-in, enrolment, grant redemption (client)
+│   ├── lib/auth-client.ts       Better Auth browser client, passkey plugin only
 │   ├── server/
+│   │   ├── auth/
+│   │   │   ├── access.ts        FACTOR 1 — Cloudflare Access JWT, fail-closed
+│   │   │   ├── index.ts         FACTOR 2 — Better Auth. Lazily constructed.
+│   │   │   ├── owner.ts         requireOwner() — THE boundary
+│   │   │   ├── grants.ts        single-use token format (hashed at rest)
+│   │   │   ├── grant-plugin.ts  POST /api/auth/burmy/redeem-grant
+│   │   │   └── passkey-policy.ts  re-auth + last-passkey rule + audit
+│   │   ├── security/{csp,audit}.ts
 │   │   ├── db/{index,schema,seed}.ts
 │   │   └── finance/money.ts     THE DOMAIN CORE — framework-free
-├── tests/unit/money.test.ts     74 tests
+├── tests/
+│   ├── unit/                    144 tests. NO Docker, NO database, ~0.5s.
+│   ├── integration/             64 tests. Testcontainers PG18. Own config.
+│   │   └── entry-points.test.ts THE anti-silent-coverage-gap test
+│   └── e2e/passkey.spec.ts      4 tests. Chrome virtual authenticator.
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
-├── eslint.config.mjs  vitest.config.ts  playwright.config.ts  drizzle.config.ts
-├── pnpm-workspace.yaml          NOT a monorepo — pnpm 11 moved settings here
+├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
+├── playwright.config.ts  drizzle.config.ts
+├── pnpm-workspace.yaml          NOT a monorepo. onlyBuiltDependencies AND
+│                                ignoredBuiltDependencies both matter — see M2 notes.
 └── .env.example                 placeholders only
+```
+
+### Commands
+
+```bash
+pnpm test              # 144 unit tests. No Docker. Run this constantly.
+pnpm test:integration  # 64 tests against a real PG18 container.
+pnpm test:e2e          # 4 Playwright journeys. Needs a dev server + the dev DB.
 ```
 
 ### Which document wins if they conflict
@@ -498,52 +560,50 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 2 — the exact next objective
+## 12. Milestone 3 — the exact next objective
 
-**Goal:** only the owner gets in — and can always get back in.
-**Depends on:** M1 (complete).
+**Goal:** the owner's taxonomy exists and the app is navigable.
+**Depends on:** M2 (complete).
 
 ### Work
 
-1. **Cloudflare Access JWT verification** in `src/proxy.ts` — fetch and cache Cloudflare's JWKS,
-   verify signature, `aud`, `iss`, `exp`. Bypassed when `NODE_ENV=development`.
-2. **Better Auth with the passkey plugin only.** No Google client configured here. Owner identity
-   comes from the verified Access `email` claim matched against `OWNER_EMAIL`.
-3. **`requireOwner()` at the top of every protected server entry point** — Server Actions *and* Route
-   Handlers. Unprotected allowlist is exactly `/api/health` and `/api/auth/*`.
-4. **Prototype bootstrap AND recovery, then choose** (see §7). Document the behaviour actually
-   observed, not the behaviour assumed.
-5. **Security baseline:** nonce-based CSP in `src/proxy.ts` (needs per-request state that static
-   headers in `next.config.ts` cannot express), rate limits on auth routes, `audit_events` wiring.
+1. `(private)` layout with `Finance` / `Settings` nav; responsive; theme; error and loading states.
+2. **Initialize shadcn/ui + Lucide** — approved in the plan, installed in neither M1 nor M2.
+3. CRUD for `finance_accounts` (checking, savings, credit card, brokerage). `last_four` is optional and
+   is the only account-number fragment ever stored.
+4. CRUD + archive + reorder for `finance_categories`, with `kind` (spending | income | investment).
+   **Archive, never delete** — history must stay intact.
+5. Wire `@testing-library/jest-dom` to a Vitest setup file; the first component tests land here.
+6. Do the outstanding **manual real-device passkey check** (see §9 / ROADMAP "known gaps").
+
+### Non-negotiable, inherited from M2
+
+- **Every Server Action starts with `await requireOwner()`.**
+  `tests/integration/entry-points.test.ts` enumerates `src/app/**/route.ts` and every `'use server'`
+  file from the filesystem, and fails the suite if one is neither guarded nor on the two-item
+  allowlist. That test has been validated by deliberately adding an unguarded route and watching it
+  fail. It is doing its job, not being awkward.
+- **Pages under `(private)` should also call `requireOwner()` directly**, because from M3 they need the
+  returned owner id to scope their queries. The layout guard exists for navigation, not for data.
+- **Sensitive actions use `requireOwner({ fresh: true })`** — bulk delete, full export, changing
+  `OWNER_EMAIL`. Freshness is 15 minutes from session creation, and a rolling refresh does not reset
+  it, so it genuinely means "authenticated recently".
+- **Every Finance query goes through a data-access layer that takes an owner id** and injects the
+  `WHERE` clause. Routes and actions never build queries directly.
 
 ### Tests required
 
-- A non-owner identity is rejected.
-- Session revocation takes effect immediately.
-- Unauthenticated access to protected routes is blocked.
-- **Every Server Action and Route Handler rejects an unauthenticated invocation with the proxy
-  bypassed** — this is the test that catches the silent-coverage-gap hazard.
-- `/api/health` response body contains no counts, data, or environment detail.
-- The chosen bootstrap path works from an empty database.
-- The chosen recovery path mints a single-use, short-lived token.
+- Archiving a category preserves history and frees the name for reuse.
+- Duplicate category names are rejected case-insensitively among live rows only.
+- Accounts and categories are owner-scoped.
+- The new Server Actions reject unauthenticated invocation (the enumeration test does this
+  automatically once they exist).
 
 ### Definition of Done
 
-- Passkey sign-in works end to end.
-- **Bootstrap and recovery are documented from a working prototype, not assumed.**
-- A non-owner Google identity is refused.
-- `pnpm typecheck` / `lint` / `test` / `build` all green — **actually run**.
-
-### Intentionally unresolved — learn by prototype, do not assume
-
-| Question | Why it cannot be decided on paper |
-| --- | --- |
-| How the **first** passkey is registered with no session and no password | Better Auth's passkey-first flow needs to be exercised to see what it actually permits |
-| What **recovery** looks like when all passkeys are lost | Better Auth documents nothing here |
-| How Better Auth's generated tables reconcile with the **existing `user` table** | M1 created `user` shaped to match Better Auth's expected schema. Better Auth will also want `session`, `account`, `verification`, `passkey`. **Reconcile rather than duplicate, and read the generated migration before applying it.** |
-
-Passkeys need a secure context: `localhost` qualifies, so `rpID='localhost'` works in dev; production
-is `app.burmy.me`.
+- The owner's real category list can be entered.
+- The shell works on desktop and mobile.
+- `pnpm typecheck` / `lint` / `test` / `test:integration` / `build` all green — **actually run**.
 
 ---
 

@@ -17,3 +17,25 @@
 onlyBuiltDependencies:
   - esbuild
   - unrs-resolver
+
+# Dependencies whose install scripts are explicitly DECLINED.
+#
+# pnpm blocks these by default, but an un-acknowledged block makes every
+# `pnpm <script>` invocation fail its dependency-status check with
+# ERR_PNPM_IGNORED_BUILDS — which takes out typecheck, lint, test and build.
+# Listing them here records the decision instead of silencing a warning.
+#
+# All three arrive transitively under @testcontainers/postgresql (integration
+# tests only — they never reach the application bundle):
+#
+#   cpu-features - OPTIONAL native probe for ssh2. ssh2 runs pure-JS without it.
+#   ssh2         - ships prebuilt bindings; its script only compiles the
+#                  optional cpu-features accelerator above.
+#   protobufjs   - its postinstall merely regenerates a bundled .d.ts.
+#
+# Verified by actually starting a Testcontainers Postgres and running the
+# integration suite against it — see tests/integration/.
+ignoredBuiltDependencies:
+  - cpu-features
+  - protobufjs
+  - ssh2
