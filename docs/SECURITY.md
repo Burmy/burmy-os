@@ -17,6 +17,7 @@ if it were public — because it was, briefly, before the first commit.
 | Google account compromise | The single most likely path in | Passkey at the app layer — a genuinely different factor |
 | Stolen/borrowed device with a live session | Plausible | Cloudflare Access still gates; short session; re-auth for sensitive actions |
 | Malicious or malformed statement file | Certain, eventually — files come from outside | Treat every upload as hostile (below) |
+| A file reaching the pipeline that the owner never chose | Would require a watched folder | There is no watched folder. The only input is the browser-selected file — see "The filesystem is not an input". |
 | Formula injection into an export | Plausible — a merchant name is attacker-influenced text | Neutralized at the writer |
 | Secret committed to git | Common failure mode | Broad `.gitignore` committed first; secret scanning in CI |
 | Origin reached without passing Access | Requires a tunnel misconfiguration | Access JWT verified in `src/proxy.ts` |
@@ -142,6 +143,65 @@ proxy bypassed and assert rejection, and assert the health response contains no 
 **Data access** goes through a layer that takes an owner id and injects the `WHERE` clause. Routes and
 actions never build queries directly. Enforced by API shape and by integration tests asserting
 cross-owner isolation — deliberately *not* by a custom lint rule.
+
+---
+
+## The filesystem is not an input
+
+**The only file Burmy ever touches is the one the owner picks in the browser upload control.**
+
+No watched folders, no directory scanning, no "import from path", no filesystem polling, no configured
+statement directory — not as a convenience, not as a development shortcut, not behind a flag. The
+product workflow is manual and monthly: *select or drag a CSV → upload → parse → review → import*.
+
+Why it is a security property and not just a product preference:
+
+- A watched folder is an **implicit trust boundary**. Anything that can write to that directory —
+  another application, a sync client, a browser download, a second user on the machine — becomes an
+  input to the finance pipeline without the owner ever choosing it.
+- It turns a deliberate monthly act into an ambient one, which is exactly how a file nobody meant to
+  import ends up in a total nobody can explain.
+- It would make the application require read access to a user directory, widening what a compromised
+  process could reach far beyond the bytes of one statement.
+
+**Server-side scratch space is a different thing and is permitted.** Writing the bytes the owner just
+uploaded to a `0600` temp file outside the webroot, parsing it, and deleting it in a `finally` (§21 of
+the plan) is not filesystem *access* — nothing is read that the owner did not hand over. The
+distinction is direction: Burmy may write what it was given; it may never go looking.
+
+*Development is bound by the same rule.* No part of the build, test suite or tooling may depend on a
+local statement folder existing. The M4 parser fixtures are committed, redacted files under
+`tests/fixtures/finance/`; the raw exports they derive from are supplied out of band and never stored
+in the repository.
+
+---
+
+## Parser fixtures are redacted, not synthetic
+
+**Amended in M4.** The original rule read "test fixtures are synthetic only". Synthetic fixtures encode
+only the assumptions of whoever wrote them, which is precisely what a parser must not be tested
+against — BoA's real exports carry quirks (encodings, junk preamble rows, ragged columns, parenthesised
+negatives) that no invented file would contain. The parser corpus is therefore **redacted from real
+exports**, and redaction becomes the safety property that "synthetic" used to provide.
+
+**Preserved byte-for-byte** — these are what break parsers, so altering them would defeat the corpus:
+encoding and BOM · line endings · quoting style · delimiters · header text verbatim · preamble and
+trailer junk rows · date formats · amount formats (signs, parentheses, thousands separators, currency
+symbols, empty cells) · description *shapes* (`TST*` / `SQ *` prefixes, trailing store numbers,
+city/state, reference-number patterns) · every malformed or ragged row.
+
+**Substituted** — account numbers and last-four digits · merchant identities · amounts · dates · names,
+addresses, phone numbers, reference numbers. Substitutions keep the original shape, length and
+character class, so the parser faces the same problem: `TST* <REAL NAME> 04821 AUSTIN TX` becomes
+`TST* VELVET TACO 04821 AUSTIN TX`, never `merchant1`.
+
+**Never committed** — the raw exports, and the substitution mapping. Only redacted output enters the
+repository. What is recorded is which *classes* of value were changed, never the mapping itself.
+
+> `.gitignore` force-unignores `tests/fixtures/**/*.csv` so the corpus is committable, which means that
+> directory is the one place a real statement *would* be committed silently. Raw exports must never be
+> written there, and a fixture guard test asserts no committed fixture contains anything
+> account-number-shaped.
 
 ---
 

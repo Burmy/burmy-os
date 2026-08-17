@@ -31,8 +31,17 @@ Violating any of these is a correctness or security bug, not a style preference.
    confirmation — **never** a graded heuristic. A suspicion produces a review item, not an exclusion.
 6. **Raw uploaded statements are deleted immediately after parsing**, including on the failure path.
    Never write an upload to `public/` or any statically served path.
-7. **Never commit real financial data or secrets.** `.gitignore` is deliberately broad. Test fixtures
-   are synthetic only.
+7. **The only file Burmy ever touches is the one the owner picks in the browser upload control.**
+   No watched folders, no directory scanning, no "import from path", no filesystem polling, no
+   configured statement directory — not as a convenience, not as a dev shortcut, not behind a flag.
+   The product workflow is manual and monthly: *select or drag a CSV → upload → parse → review →
+   import*. Nothing about the app or the development workflow may depend on a local folder existing.
+   *(Server-side scratch space for bytes the owner just uploaded is a different thing and is
+   permitted — see §21 of the plan. Reading the owner's filesystem is not.)*
+8. **Never commit real financial data or secrets.** `.gitignore` is deliberately broad. Parser
+   fixtures under `tests/fixtures/finance/` are **redacted from real exports** (amended in M4 — the
+   original rule said "synthetic only"); the raw files and the substitution mapping are never
+   committed. See `docs/SECURITY.md` for what redaction must guarantee.
 
 ---
 
