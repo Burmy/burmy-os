@@ -231,6 +231,26 @@ These are verified, not folklore. Do not "fix" them back.
   computed under an assumption (here: "no category yet decided" was baked into `needs_review`) that
   the new write just falsified without updating the field that encoded it. Caught by an integration
   test asserting the FULL row shape after a retroactive update, not by reviewing the update's own diff.
+- **`exactOptionalPropertyTypes` loses precision when SEVERAL conditional spreads are merged into one
+  object literal.** The single-spread pattern (`...(cond ? { key } : {})`) documented above is fine on
+  its own, but combining four of them into one literal (M7's review filters, built from four
+  independently-optional URL params) made `tsc` infer `key: T | undefined` on the merged result anyway
+  — even though each spread individually excludes `undefined` correctly. Verified as a real inference
+  gap, not a one-off typo: swapping to a mutable local object built with plain `if (cond) obj.key = value`
+  statements (a non-`readonly` shape, since the target interface's fields are `readonly`) resolved it
+  immediately with no other change. Reach for that pattern directly once more than two or three optional
+  fields are being assembled at once — don't spend time trying to coax the merged-spread form into
+  typechecking.
+- **React's `react-hooks/set-state-in-effect` lint rule fires on the "resync local state from a prop
+  that can change underneath you" pattern** — e.g. a client component holding an editable local copy of
+  server-fetched rows, where a filter change or `router.refresh()` delivers a NEW array reference as
+  props and the local copy needs to follow it. `useEffect(() => setRows(transactions), [transactions])`
+  is exactly what the rule exists to catch (cascading renders). The fix is React's own documented
+  pattern for this — compare the incoming prop against a tracked "last synced from" value DURING RENDER
+  (not in an effect) and call `setState` directly in that branch: `if (transactions !== syncedFrom) {
+  setSyncedFrom(transactions); setRows(transactions); }`. This is a conditional `setState` call in the
+  component body, which React explicitly permits (it bails out of the in-progress render and restarts)
+  — the rule only objects to the SAME thing happening inside `useEffect`.
 
 ---
 

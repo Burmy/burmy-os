@@ -12,7 +12,7 @@ import {
   reconcileCounts,
   tierOneCandidateStability,
 } from '@/server/finance/dedupe';
-import { normalizeMerchant } from '@/server/finance/merchant';
+import { merchantKeyFrom, normalizeMerchant } from '@/server/finance/merchant';
 import { parseStatement } from '@/server/finance/parse';
 
 const FIXTURES = path.resolve(process.cwd(), 'tests/fixtures/finance');
@@ -390,5 +390,16 @@ describe('Tier 1 — observed, unverified, unused', () => {
       { accountId: 'a', transactionDate: '2026-05-25', amountCents: 866, originalDescription: 'SAME MERCHANT' },
     ];
     expect(groupByDedupeKey(rows).size).toBe(1);
+  });
+});
+
+describe('merchantKeyFrom — rederiving the key M7 needs but finance_transactions does not store', () => {
+  it('matches what normalizeMerchant computed internally for the same name', () => {
+    const { normalizedMerchant, merchantKey } = normalizeMerchant("LARSEN'S #0366 2 05/26 PURCHASE SPRINGFIELD TX");
+    expect(merchantKeyFrom(normalizedMerchant)).toBe(merchantKey);
+  });
+
+  it('strips everything but letters and digits', () => {
+    expect(merchantKeyFrom("LARSEN'S CAFE")).toBe('LARSENSCAFE');
   });
 });

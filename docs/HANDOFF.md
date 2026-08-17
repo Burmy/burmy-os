@@ -353,7 +353,7 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestones 1 through 6 COMPLETE
+## 9. Current status — Milestones 1 through 7 COMPLETE
 
 **M2 added authentication.** Full detail, including every trap hit along the way, is in
 [`docs/ROADMAP.md`](./ROADMAP.md). The short version:
@@ -371,8 +371,9 @@ single clause is the entire double-counting guarantee, and it is covered by test
 | Fixtures | `tests/fixtures/finance/` — 10 files **redacted from real exports** (invariant amended in M4), consumed as raw bytes, checksummed, with a guard test validated by a negative control. |
 | Dedupe | **Tier 2 count reconciliation is active**, at staging AND again inside `commitImport()`'s transaction against the current committed count — closing the race between two concurrently staged imports. An explicit owner override (`decision_overridden`) is exempt from the re-check. Tier 1 (`Reference Number`) remains captured, documented, and UNVERIFIED — no unique constraint. |
 | Import pipeline | `/finance/import` → `/finance/import/[id]`. Single file per import, in-memory only, never written to disk. Account/format compatibility checked before staging. One bad row stages as a reviewable "needs attention" row (`parseStatementTolerant`) instead of aborting the file. File-hash pre-check distinguishes `committed` ("already imported") from `review`/`discarded` (never called that). Category optional at commit. |
-| Classification | **Merchant memory** (`finance_merchant_memory`) pre-fills a category from confirmed history; owner override always wins going forward. **Counterpart matching** (`classify/counterpart.ts`) links transfer/credit-card-payment legs by BoA's shared confirmation token — exact match, ±7 days, exactly one candidate, or no classification at all. Every automated write gated on `type_source = 'default'`, so a future M7 manual confirmation can never be overwritten. Investment auto-classification and the `counterpart_transaction_id` FK were both explicitly deferred. |
-| Suites | `pnpm test` **306** (domain + components, Docker-free) · `pnpm test:integration` **119** (Testcontainers) · `pnpm test:e2e` **17** (Playwright) |
+| Classification | **Merchant memory** (`finance_merchant_memory`) pre-fills a category from confirmed history; owner override always wins going forward. **Counterpart matching** (`classify/counterpart.ts`) links transfer/credit-card-payment legs by BoA's shared confirmation token — exact match, ±7 days, exactly one candidate, or no classification at all. Every automated write gated on `type_source = 'default'`, so a manual confirmation (M7) can never be overwritten. Investment auto-classification and the `counterpart_transaction_id` FK were both explicitly deferred. |
+| Review queue | `/finance/review` — filterable by status/account/category/type. Assign/change category, correct type (`type_source = 'manual_confirmation'`), bulk-assign. **No confirmed-but-uncategorized spending**: a category is required for `confirmed` unless the type is exclusionary. Correcting a linked transaction's type **atomically unlinks both legs** — the corrected one becomes manual, the freed one reverts to its M5 default. Memory updates from a correction are **opt-in** (unchecked by default) — an exception fix should not silently retrain future imports. Nav carries a live needs-review count. |
+| Suites | `pnpm test` **316** (domain + components, Docker-free) · `pnpm test:integration` **140** (Testcontainers) · `pnpm test:e2e` **19** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -469,6 +470,7 @@ burmy-os/
 │   │   ├── (private)/finance/monthly/page.tsx   placeholder until M8
 │   │   ├── (private)/finance/import/page.tsx    upload + in-progress list — M5
 │   │   ├── (private)/finance/import/[importId]/page.tsx   preview/review/commit — M5
+│   │   ├── (private)/finance/review/page.tsx    needs-attention queue — M7
 │   │   ├── api/health/route.ts  UNAUTHENTICATED; booleans + version ONLY
 │   │   ├── api/auth/[...all]/   UNAUTHENTICATED by design; getAuth() per request
 │   │   ├── layout.tsx  globals.css
@@ -480,6 +482,7 @@ burmy-os/
 │   ├── features/shell/          nav, theme toggle, sign-out, StyleNonce
 │   ├── features/finance/settings/  accounts, categories, passkeys managers + actions
 │   ├── features/finance/import/    upload form, review table, actions — M5
+│   ├── features/finance/review/    queue, filters, corrections, bulk actions — M7
 │   ├── lib/auth-client.ts       Better Auth browser client, passkey plugin only
 │   ├── lib/utils.ts             cn()
 │   ├── server/
@@ -497,7 +500,9 @@ burmy-os/
 │   │   │   ├── finance/imports.ts   staging, review reads, decisions, commit — M5.
 │   │   │   │                    The advisory-lock commit-time Tier 2 re-check AND
 │   │   │   │                    M6's counterpart-match/merchant-memory-write live here.
-│   │   │   └── finance/merchant-memory.ts   READ side of learned category mappings — M6
+│   │   │   ├── finance/merchant-memory.ts   READ side of learned category mappings — M6
+│   │   │   └── finance/transactions.ts   M7: review-queue reads, category/type
+│   │   │                        corrections, the counterpart unlink, bulk assignment
 │   │   └── finance/            THE DOMAIN CORE — framework-free, DB-free
 │   │       ├── money.ts        Cents + ALL arithmetic
 │   │       ├── taxonomy.ts     names, slugs, last_four guard, reorder
@@ -511,25 +516,33 @@ burmy-os/
 │   │       │   └── index.ts    detection + composition + parseStatementTolerant — M5
 │   │       ├── adapters/       boa-deposit (self-validating), boa-card
 │   │       ├── import/         M5: account/format compatibility, staging decisions
-│   │       └── classify/       M6: extractConfirmationToken, findQualifyingCounterpart —
-│   │                            ONE mechanism for transfers AND credit-card payments
+│   │       └── classify/
+│   │           ├── counterpart.ts  M6: extractConfirmationToken, findQualifyingCounterpart —
+│   │           │                ONE mechanism for transfers AND credit-card payments
+│   │           └── manual.ts   M7: reviewStatusForCorrection (the no-confirmed-but-
+│   │                            uncategorized rule), MANUAL_TRANSACTION_TYPES (7 of 8
+│   │                            real enum values — no raw 'adjustment' in the UI)
 ├── tests/
-│   ├── unit/                    306 tests, NO Docker/database. Two Vitest projects:
+│   ├── unit/                    316 tests, NO Docker/database. Two Vitest projects:
 │   │                            *.test.ts -> node, *.test.tsx -> jsdom.
 │   ├── fixtures/finance/        10 REDACTED files from real exports. Consumed as
 │   │                            raw BYTES. Checksummed — update the digest in
 │   │                            fixture-guard.test.ts when one legitimately changes.
 │   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
-│   ├── integration/             119 tests. Testcontainers PG18. Own config.
+│   ├── integration/             140 tests. Testcontainers PG18. Own config.
 │   │   ├── entry-points.test.ts THE anti-silent-coverage-gap test
 │   │   ├── finance-imports.test.ts   staging, Tier 2, the commit-time race +
 │   │   │                        override preservation, file-hash status — M5
-│   │   └── finance-classify.test.ts   merchant memory, counterpart matching in
-│   │                            both import orders, the manual-decision guard — M6
-│   └── e2e/                     17 tests, SERIAL. Chrome virtual authenticator,
+│   │   ├── finance-classify.test.ts   merchant memory, counterpart matching in
+│   │   │                        both import orders, the manual-decision guard — M6
+│   │   └── finance-review.test.ts   filters, the confirmed/needs_review rule, the
+│   │                            counterpart unlink (both legs, both directions),
+│   │                            remember-checkbox, bulk assignment — M7
+│   └── e2e/                     19 tests, SERIAL. Chrome virtual authenticator,
 │                                real Radix overlays under the real CSP.
 │                                import.spec.ts: golden path, re-upload idempotency,
-│                                merchant-memory pre-fill (M6).
+│                                merchant-memory pre-fill (M6). review.spec.ts:
+│                                resolve a needs_review row, correct a linked pair (M7).
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
 ├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
@@ -612,50 +625,49 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 7 — the exact next objective
+## 12. Milestone 8 — the exact next objective
 
-**Goal:** a queue for everything M6's automation left at `review_status =
-'needs_review'`, and the one thing M6 deliberately did not build: a way to
-manually assign or correct a transaction's type.
-**Depends on:** M6 (categorization & classification). Complete.
+**Goal:** *the product.* The category × month grid at `/finance/monthly`,
+reading `finance_transactions` and computing every total at query time — the
+entire reason "never store a total" has been an invariant since M1.
+**Depends on:** M5 (import), M6 (classification), M7 (review). All complete.
 
-### What M6 hands over
+### What M5–M7 hand over
 
-- Most transactions committed from here on already carry a category
-  (`categorization_source = 'merchant_memory'`, `review_status = 'auto'`) or a
-  correctly excluded type (`transaction_type` `transfer`/`credit_card_payment`,
-  `type_source = 'counterpart_match'`, `review_status = 'auto'`) with zero
-  owner interaction. What's left in `needs_review` is genuinely the residue —
-  a new merchant, an unmatched transfer leg, anything ambiguous.
-- `finance_transactions.type_source = 'default'` is the ENTIRE gate that keeps
-  M6's automation from touching a transaction again. M7's manual-correction UI
-  needs to set `type_source = 'manual_confirmation'` when the owner assigns or
-  changes a type — that one write is what permanently exempts it, verified
-  directly in M6's own integration suite. No change to M6's code is needed for
-  this to work; the guard already exists and already respects it.
-- Investment auto-classification was scoped out of M6 entirely (see
-  FINANCE.md). If M7's manual-correction UI is the natural place to mark a
-  transaction `investment` by hand in the meantime, that is a reasonable
-  reading — nothing in M6 depends on account type for anything.
-- `finance_rules` still exists in the schema (M1) and is still empty — M6
-  chose merchant memory over a rule-authoring UI. Revisit only if the residual
-  review tail after real usage shows a pattern merchant memory can't express.
+- **The invariant M8 depends on is now real, not aspirational:** a
+  `finance_transactions` row with `review_status = 'confirmed'` is guaranteed
+  to either carry a `category_id`, or be one of the three exclusionary types
+  (which the grid must exclude from spending entirely). M7 enforced this on
+  every write path; there is no code path left that produces a confirmed,
+  uncategorized, non-exclusionary row. The grid can trust `confirmed` rows
+  without a defensive "what if there's no category" branch.
+- `needs_review` rows exist and are expected — M8's grid should almost
+  certainly exclude them from totals (an uncategorized transaction has no row
+  to belong to) rather than inventing an "Uncategorized" bucket no milestone
+  has designed. `/finance/review` is where they get resolved, not the grid.
+- `transaction_type` correctly distinguishes spending from the three
+  exclusionary types on every transaction that has gone through import +
+  classification + (if needed) review. The "one shared SQL clause" for what
+  counts as spending, mentioned since the original plan, can finally be
+  written against real, trustworthy data.
+- `finance_categories.kind` (`spending`/`income`/`investment`) already exists
+  from M1 and already sections the placeholder monthly page — M8 turns that
+  same taxonomy into real, computed rows instead of a static list.
 
 ### Non-negotiable for this milestone
 
-- **Invariant 5, still.** `transfer` / `credit_card_payment` / `investment` may
-  only be assigned via a rule, a qualified counterpart match, or explicit review
-  confirmation — M7's manual-correction UI IS the explicit-confirmation path.
-- **Every Server Action begins with `await requireOwner()`.**
-  `tests/integration/entry-points.test.ts` enumerates the filesystem and fails the
-  suite otherwise.
-- Setting `type_source = 'manual_confirmation'` must be the ONLY way M7 changes
-  a type — never reuse `'default'` or `'rule'` for an owner's manual pick, or
-  M6's automation could reclassify it later.
+- **Never store a total.** Every number the grid shows is a live SQL
+  aggregate over `finance_transactions`, computed at read time — CLAUDE.md
+  invariant 1, unchanged since M1.
+- **Every Server Action / page begins with `await requireOwner()`.**
+  `tests/integration/entry-points.test.ts` enumerates the filesystem and fails
+  the suite otherwise.
+- Money math goes through `src/server/finance/money.ts`. Nothing else does
+  arithmetic on `Cents`.
 
 ### Also outstanding
 
-**Manual real-device passkey verification**, carried from M2 through M6. The
+**Manual real-device passkey verification**, carried from M2 through M7. The
 automated ceremony passes against Chrome's virtual authenticator (real WebAuthn
 with a software key store), but no physical authenticator has been used. Two
 minutes: `pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then
@@ -670,9 +682,9 @@ check Settings → Passkeys.
 | ~~M2~~ | ~~Authentication & security baseline~~ | **Complete.** Access JWT verification, Better Auth passkeys, `requireOwner()`, bootstrap/recovery settled by prototype, CSP, audit events |
 | ~~M3~~ | ~~App shell, accounts, categories~~ **Complete.** | `Finance` / `Settings` nav, `/` → `/finance/monthly`, shadcn/ui init, CRUD for accounts and categories (archive never delete) |
 | ~~M4~~ | ~~Parsing & normalization core~~ **Complete.** | **Starts by reading one real redacted BoA export.** Header-signature detection, BoA deposit + card adapters, generic mapper, merchant normalization, dedupe. **Also verifies whether `source_transaction_id` earns a unique constraint.** |
-| **M5** | Import pipeline, preview, duplicates | Multi-file batch upload, sanitized staging, 60-day expiry, preview, count-based dedupe, atomic commit |
-| **M6** | Categorization & classification | Rules, merchant memory, history, source-category mapping; transfer / card-payment / investment detection with deterministic evidence only |
-| **M7** | Review queue | Keyboard-first, bulk actions, merchant grouping, "remember merchant", separate duplicate and transfer passes |
+| ~~M5~~ | ~~Import pipeline, preview, duplicates~~ **Complete.** | Single-file upload, in-memory staging, preview, count-based dedupe, atomic commit |
+| ~~M6~~ | ~~Categorization & classification~~ **Complete.** | Merchant memory, transfer / card-payment counterpart matching with deterministic evidence only; investment auto-classification deferred |
+| ~~M7~~ | ~~Review queue~~ **Complete.** | Filterable queue, category/type correction, the counterpart unlink, bulk assignment, opt-in "remember merchant" |
 | **M8** | **Monthly grid & drill-down** | *The product.* SQL pivot, Spending + Income sections, subtotals and Net, cell drill-down replacing Excel comments |
 | **M9** | Transactions table, Excel reconciliation, export | TanStack Table + Virtual, **ExcelJS dependency/security review gate**, `finance_expected_totals`, reconciliation deltas, formula-injection-safe export |
 | **M10** | Backup, deployment, hardening, launch | Harden the M1 image for production, Oracle/VPS + Cloudflare Tunnel + Access + Tailscale, backup automation and a **verified restore**, full DR drill — **then** the first real production import |

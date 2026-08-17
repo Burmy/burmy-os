@@ -1,0 +1,373 @@
+'use client';
+
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useState, useTransition } from 'react';
+
+import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { toast } from '@/components/ui/toast';
+import type { FinanceAccount } from '@/server/db/finance/accounts';
+import type { FinanceCategory } from '@/server/db/finance/categories';
+import type { ReviewFilters, ReviewTransaction } from '@/server/db/finance/transactions';
+import { MANUAL_TRANSACTION_TYPES, type ManualTransactionType } from '@/server/finance/classify/manual';
+import { cents, format } from '@/server/finance/money';
+import {
+  bulkUpdateCategoryAction,
+  updateTransactionCategoryAction,
+  updateTransactionTypeAction,
+} from './actions';
+
+const TYPE_LABELS: Record<string, string> = {
+  expense: 'Expense',
+  refund: 'Refund',
+  fee: 'Fee',
+  income: 'Income',
+  transfer: 'Transfer',
+  credit_card_payment: 'Credit Card Payment',
+  investment: 'Investment',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  needs_review: 'Needs review',
+  auto: 'Auto-classified',
+  confirmed: 'Confirmed',
+  all: 'All',
+};
+
+/**
+ * Today this only ever says one thing for `needs_review` — a category is the
+ * only reason M5/M6 ever produce it — but it is written as a per-row
+ * explanation rather than a hardcoded string so a future second reason does
+ * not need a UI redesign, only another branch.
+ */
+function explainReview(row: ReviewTransaction): string {
+  if (row.reviewStatus === 'needs_review') return 'No category assigned';
+  if (row.reviewStatus === 'auto' && row.typeSource === 'counterpart_match') {
+    return `Matched as ${TYPE_LABELS[row.transactionType] ?? row.transactionType}`;
+  }
+  if (row.reviewStatus === 'auto') return 'Categorized from history';
+  return 'Confirmed';
+}
+
+export function ReviewQueue({
+  transactions,
+  accounts,
+  categories,
+  filters,
+}: {
+  readonly transactions: readonly ReviewTransaction[];
+  readonly accounts: readonly FinanceAccount[];
+  readonly categories: readonly FinanceCategory[];
+  readonly filters: ReviewFilters;
+}): React.ReactElement {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [rows, setRows] = useState(transactions);
+  // Tracks the last `transactions` prop reference `rows` was synced from, so
+  // the sync below runs DURING render (React's own recommended pattern for
+  // "adjust state when a prop changes") rather than in a useEffect, which
+  // would need a synchronous setState-in-effect the lint rule flags for
+  // exactly the cascading-render reason.
+  const [syncedFrom, setSyncedFrom] = useState(transactions);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [remember, setRemember] = useState<Record<string, boolean>>({});
+  const [bulkCategoryId, setBulkCategoryId] = useState<string>('');
+  const [pending, startTransition] = useTransition();
+
+  // A filter change (URL navigation) or a `router.refresh()` after a mutation
+  // both deliver a NEW `transactions` array reference here.
+  if (transactions !== syncedFrom) {
+    setSyncedFrom(transactions);
+    setRows(transactions);
+    setSelected(new Set());
+  }
+
+  function setFilter(key: string, value: string | undefined): void {
+    const params = new URLSearchParams(searchParams.toString());
+    if (!value || value === 'all') params.delete(key);
+    else params.set(key, value);
+    router.push(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
+  }
+
+  function changeCategory(row: ReviewTransaction, categoryId: string | null): void {
+    const previous = row.categoryId;
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, categoryId } : r)));
+
+    startTransition(async () => {
+      const result = await updateTransactionCategoryAction(row.id, categoryId, remember[row.id] ?? false);
+      if (!result.ok) {
+        toast.error(result.error);
+        setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, categoryId: previous } : r)));
+        return;
+      }
+      toast.success('Updated');
+      router.refresh();
+    });
+  }
+
+  function changeType(row: ReviewTransaction, transactionType: ManualTransactionType): void {
+    const previous = row.transactionType;
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, transactionType } : r)));
+
+    startTransition(async () => {
+      const result = await updateTransactionTypeAction(row.id, transactionType);
+      if (!result.ok) {
+        toast.error(result.error);
+        setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, transactionType: previous } : r)));
+        return;
+      }
+      toast.success(
+        row.counterpartAccountName
+          ? 'Updated — the linked transaction was unlinked and reset too'
+          : 'Updated',
+      );
+      router.refresh();
+    });
+  }
+
+  function applyBulk(): void {
+    if (!bulkCategoryId || selected.size === 0) return;
+    const ids = [...selected];
+
+    startTransition(async () => {
+      const result = await bulkUpdateCategoryAction(ids, bulkCategoryId);
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      toast.success(`${result.updatedCount} transaction${result.updatedCount === 1 ? '' : 's'} updated`);
+      setSelected(new Set());
+      setBulkCategoryId('');
+      router.refresh();
+    });
+  }
+
+  function toggleSelected(id: string, checked: boolean): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  return (
+    <div className="mt-8 space-y-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <FilterSelect
+          label="Status"
+          value={filters.status ?? 'needs_review'}
+          onChange={(value) => setFilter('status', value)}
+          options={[
+            ['needs_review', STATUS_LABELS.needs_review!],
+            ['auto', STATUS_LABELS.auto!],
+            ['confirmed', STATUS_LABELS.confirmed!],
+            ['all', STATUS_LABELS.all!],
+          ]}
+        />
+        <FilterSelect
+          label="Account"
+          value={filters.accountId ?? 'all'}
+          onChange={(value) => setFilter('account', value === 'all' ? undefined : value)}
+          options={[['all', 'All accounts'], ...accounts.map((a) => [a.id, a.name] as [string, string])]}
+        />
+        <FilterSelect
+          label="Category"
+          value={filters.categoryId ?? 'all'}
+          onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
+          options={[
+            ['all', 'All categories'],
+            ['uncategorized', 'Uncategorized'],
+            ...categories.map((c) => [c.id, c.name] as [string, string]),
+          ]}
+        />
+        <FilterSelect
+          label="Type"
+          value={filters.transactionType ?? 'all'}
+          onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
+          options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
+        />
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-muted-foreground mt-8 text-sm">Nothing here. You&apos;re caught up.</p>
+      ) : (
+        <>
+          {selected.size > 0 ? (
+            <div className="bg-muted/50 flex items-center gap-2 rounded-md border p-3 text-sm">
+              <span>{selected.size} selected</span>
+              <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
+                <SelectTrigger aria-label="Category for selected transactions" className="h-8 w-48">
+                  <SelectValue placeholder="Choose a category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((category) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" disabled={!bulkCategoryId || pending} onClick={applyBulk}>
+                Set category for {selected.size}
+              </Button>
+            </div>
+          ) : null}
+
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={selected.size === rows.length}
+                    onChange={(event) =>
+                      setSelected(event.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                    }
+                  />
+                </TableHead>
+                <TableHead>Date</TableHead>
+                <TableHead>Account</TableHead>
+                <TableHead>Merchant</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+                <TableHead>Category</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Why</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((row) => {
+                const rowName = row.normalizedMerchant ?? row.originalDescription;
+                return (
+                  <TableRow key={row.id}>
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${rowName}`}
+                        checked={selected.has(row.id)}
+                        onChange={(event) => toggleSelected(row.id, event.target.checked)}
+                      />
+                    </TableCell>
+                    <TableCell className="text-muted-foreground whitespace-nowrap">
+                      {row.transactionDate}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">{row.accountName}</TableCell>
+                    <TableCell>
+                      <div className="font-medium">{row.normalizedMerchant}</div>
+                      <div className="text-muted-foreground text-xs">{row.originalDescription}</div>
+                    </TableCell>
+                    <TableCell className="tabular text-right whitespace-nowrap">
+                      {format(cents(row.amountCents), { signed: true })}
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Select
+                          value={row.categoryId ?? 'none'}
+                          onValueChange={(value) => changeCategory(row, value === 'none' ? null : value)}
+                        >
+                          <SelectTrigger aria-label={`Category for ${rowName}`} className="h-8 w-40">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Uncategorized</SelectItem>
+                            {categories.map((category) => (
+                              <SelectItem key={category.id} value={category.id}>
+                                {category.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <label className="text-muted-foreground flex items-center gap-1 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={remember[row.id] ?? false}
+                            onChange={(event) =>
+                              setRemember((prev) => ({ ...prev, [row.id]: event.target.checked }))
+                            }
+                          />
+                          Remember for future imports
+                        </label>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="space-y-1">
+                        <Select
+                          value={row.transactionType}
+                          onValueChange={(value) => changeType(row, value as ManualTransactionType)}
+                        >
+                          <SelectTrigger aria-label={`Type for ${rowName}`} className="h-8 w-44">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MANUAL_TRANSACTION_TYPES.map((type) => (
+                              <SelectItem key={type} value={type}>
+                                {TYPE_LABELS[type]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {row.counterpartAccountName ? (
+                          <p className="text-muted-foreground text-xs">
+                            Linked to {row.counterpartAccountName} — changing the type will unlink both.
+                          </p>
+                        ) : null}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">{explainReview(row)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </>
+      )}
+    </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly options: readonly [string, string][];
+}): React.ReactElement {
+  return (
+    <div className="space-y-1">
+      <span className="text-muted-foreground block text-xs">{label}</span>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger aria-label={label} className="h-8 w-44">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(([optionValue, optionLabel]) => (
+            <SelectItem key={optionValue} value={optionValue}>
+              {optionLabel}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}

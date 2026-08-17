@@ -229,7 +229,17 @@ export function normalizeMerchant(
   if (working === '') working = collapse(rawDescription);
 
   const normalizedMerchant = working.toUpperCase();
-  const merchantKey = normalizedMerchant.replace(/[^A-Z0-9]/g, '');
 
-  return { normalizedMerchant, merchantKey };
+  return { normalizedMerchant, merchantKey: merchantKeyFrom(normalizedMerchant) };
+}
+
+/**
+ * The matching key from an ALREADY-normalized merchant name — extracted so M7
+ * can rederive it from `finance_transactions.normalized_merchant` (which is
+ * persisted; `merchant_key` itself is not) when the owner opts to remember a
+ * category correction. Same rule `normalizeMerchant` uses internally: strip
+ * everything but letters and digits.
+ */
+export function merchantKeyFrom(normalizedMerchant: string): string {
+  return normalizedMerchant.replace(/[^A-Z0-9]/g, '');
 }

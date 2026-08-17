@@ -14,7 +14,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M4** | Parsing & normalization core *(no UI)* | ✅ Complete |
 | **M5** | Import pipeline, preview, duplicates | ✅ Complete |
 | **M6** | Categorization & classification | ✅ Complete |
-| M7 | Review queue | ⚪ Not started |
+| **M7** | Review queue | ✅ Complete |
 | M8 | Monthly grid & drill-down *(the product)* | ⚪ Not started |
 | M9 | Transactions table, Excel reconciliation, export | ⚪ Not started |
 | M10 | Backup automation, deployment, hardening, launch | ⚪ Not started |
@@ -541,7 +541,71 @@ than a guessed key.
 **DoD:** `pnpm typecheck` / `lint` / `test` (306) / `test:integration` (119) /
 `test:e2e` (17, two consecutive full runs) / `build` all green — actually run.
 
-## ▶ RESUME HERE — M7: Review queue
+## M7 — Review queue
+
+**Goal:** `needs attention → fix it → confirmed`. A practical cleanup screen,
+not a second classification subsystem — M7 adds no automatic classification
+of its own; every write it makes is the owner acting.
+
+**`/finance/review`**, filterable by status/account/category/type (URL search
+params, so a filtered view is shareable and survives a refresh). Three owner
+actions: assign/change a category, correct a transaction's type, bulk-assign
+a category to several selected rows. Zero schema changes — every field M7
+needed (`review_status`, `categorization_source`, `type_source`,
+`counterpart_transaction_id`) was already sitting in M1's schema, unused
+until now.
+
+**One change made during review, before implementation:** no
+confirmed-but-uncategorized spending. `reviewStatusForCorrection()`
+(`classify/manual.ts`) requires a category before `confirmed`, unless the
+type is one of the three exclusionary ones (which never need a spending
+category at all). This removed the originally-proposed generic "mark
+reviewed without categorizing" action entirely — once the rule applies
+consistently, there was no concrete case left needing it. Income was
+deliberately NOT carved out as an exception, on the reasoning that M8 doesn't
+exist yet to say whether its total needs per-category breakdown; applying one
+uniform rule now and narrowing it later if warranted was judged safer than
+guessing.
+
+**The counterpart unlink**, exactly as proposed: correcting the type of a
+linked transaction atomically breaks the pair on BOTH sides in one
+transaction — the corrected leg becomes `manual_confirmation`, the freed leg
+reverts to its plain M5 sign-based default with `type_source = 'default'` and
+its own `review_status` recomputed via M6's `reviewStatusFor` (reverting, not
+being corrected). No stale, one-way, or contradictory link is left in any
+test scenario, including both import orders and an id-ownership check.
+
+**Merchant memory from a correction is opt-in**, per the approved design: a
+per-row "Remember for future imports" checkbox, unchecked by default, next to
+the category picker — a review-queue fix is plausibly a one-off exception, and
+should not silently retrain future imports unless the owner says so
+explicitly. Bulk assignment never writes to memory at all, regardless.
+
+**The manual type picker exposes 7 of the 8 real `transaction_type` values** —
+`adjustment` excluded as a raw enum value with no clear owner-facing meaning,
+per instruction not to expose one "merely because it exists." The same list
+drives both the Select's options and the Server Action's Zod validation.
+
+**The needs-review nav badge** — approved as a single `count(*)` — now marks
+`/finance/review` in the Finance sub-nav ("Review (3)"), so there is a
+visible, no-click answer to "is there anything to do."
+
+**Tests:** unit — `isExclusionaryType`, `reviewStatusForCorrection` (including
+the exclusionary-type-needs-no-category case), `merchantKeyFrom` rederiving
+exactly what `normalizeMerchant` computed internally. Integration — every
+filter combination, the confirmed/needs_review transition in both directions
+(assigning AND clearing a category), the remember-checkbox both states, the
+counterpart unlink verified on both legs with a category-bearing freed leg
+kept at its own correct status, a bystander transaction proven untouched,
+cross-owner isolation on every action. E2E — resolving a needs_review row
+through the real UI and watching it leave the queue; correcting one leg of a
+seeded matched pair through the real Type selector and confirming the unlink
+in the database.
+
+**DoD:** `pnpm typecheck` / `lint` / `test` (316) / `test:integration` (140) /
+`test:e2e` (19, two consecutive full runs) / `build` all green — actually run.
+
+## ▶ RESUME HERE — M8: Monthly grid & drill-down (the product)
 
 **Get running again:**
 
@@ -553,16 +617,14 @@ pnpm db:seed
 pnpm dev
 ```
 
-M6 leaves every `needs_review` transaction exactly that — no page shows them
-anywhere yet. M7 is that page: a queue of `review_status = 'needs_review'`
-transactions (plus, per M6's design, wherever a wrong auto-classification needs
-correcting) with a way to assign a category and — the piece M6 deliberately did
-not build — mark a transaction's type as Transfer / Credit Card Payment /
-Investment by explicit confirmation, setting `type_source = 'manual_confirmation'`.
-That column value is what permanently exempts a transaction from M6's automatic
-reclassification, verified in M6's own test suite; M7 does not need to add any
-guard on the automation side, only the UI that sets it. Full scope in
-`IMPLEMENTATION_PLAN.md` §39.
+Every prior milestone has been building toward this one: M5 imports
+transactions, M6 classifies most of them automatically, M7 lets the owner
+resolve the rest — and as of M7, the invariant "a `confirmed` transaction is
+ready to appear in a category total" is real and enforced, not aspirational.
+M8 is the category × month grid at `/finance/monthly` (currently a taxonomy
+placeholder from M3) that actually reads `finance_transactions` and computes
+totals — the ENTIRE point of the "never store a total, compute at read time"
+invariant. Full scope in `IMPLEMENTATION_PLAN.md` §39.
 
 ## Carried forward
 
@@ -574,7 +636,7 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~BoA adapter written against a real export~~ | ~~M4~~ | **Done.** Two real exports read; three of the plan's assumptions about the layout were wrong. See `docs/FINANCE.md`. |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
-| Manual real-device passkey verification | **M6** | Still outstanding after M5. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| Manual real-device passkey verification | **M8** | Still outstanding after M7. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
 | ~~Categories-reorder e2e test intermittently failed when run after `import.spec.ts`~~ | ~~M5~~ | **Done — root cause was not shared database state.** `shell.spec.ts`'s reorder test asserted `toBeDisabled()` (true instantly via `useOptimistic`, before the Server Action round-trips) and then called `page.reload()` with no wait for the mutation to actually persist. Under a quiet dev server the write reliably landed first by coincidence; the heavier `import.spec.ts` running immediately before added just enough latency to the shared dev-server process to flip that coincidence, and the reload fetched the PRE-reorder order (confirmed by screenshot: "Mortgage, Gas" instead of "Gas, Mortgage"). Fixed by making the test wait for the reorder Server Action's response before reloading — a missing synchronization point the test always had, now closed, not a data-isolation problem. `resetAll()` in both e2e files also now lists the M5 import tables explicitly, matching `tests/integration/harness.ts`'s existing discipline, as defense in depth. Confirmed with three consecutive full-suite runs, 16/16 green each time. |
 | **E2E suite shares one database; `workers: 1` remains a real architectural simplification** | M8 or when the suite slows further | Not urgent — the specific flake above is fixed, not papered over. But a shared dev-server process across all specs means a heavy spec can still shift timing enough to expose a genuinely un-synchronized test elsewhere, which is what happened here. Real fix, if the suite outgrows this: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |

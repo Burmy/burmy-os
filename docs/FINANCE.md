@@ -719,3 +719,111 @@ one-sided.
   and applied only at commit, same as Tier 2 duplicate reconciliation's own
   staging-preview-vs-commit-authoritative split from M5. A cheap scope cut,
   not a limitation of the mechanism.
+
+## Review queue (M7)
+
+`/finance/review`: `needs attention → fix it → confirmed`. Reads and corrects
+already-committed `finance_transactions`; it does not touch the import
+pipeline, and it adds no automatic classification of its own — every
+correction here is the owner acting, never the system guessing.
+
+### No confirmed-but-uncategorized spending — the rule that shapes everything else
+
+M6 let a transaction reach `needs_review` for exactly one reason (no category)
+and `confirmed` in a few ways, none of them requiring a category explicitly —
+M7 tightens this on owner instruction, because `finance_categories` is M8's
+grid row axis, and a `confirmed` expense with no category has nowhere
+trustworthy to appear in it.
+
+`reviewStatusForCorrection(categoryId, transactionType)` (`classify/manual.ts`)
+is the one rule every M7 write goes through:
+
+```
+confirmed   <-  categoryId is set,  OR  transactionType is exclusionary
+needs_review <- otherwise
+```
+
+Exclusionary types (`transfer`, `credit_card_payment`, `investment`) are
+exempt because they never appear in a spending category total in the first
+place — requiring a category from them would serve nothing. This rule is
+**not** the same function as M6's `reviewStatusFor` (which distinguishes
+`confirmed` from `auto` by *who* categorized something) — that one still
+governs a transaction *reverting* to its default type when a counterpart pair
+is unlinked (below), because reverting restores a prior state rather than
+correcting one, and its status should reflect whatever categorization already
+existed, not this rule.
+
+**Consequence:** the generic "mark reviewed without categorizing" action from
+the original proposal was cut. There is no concrete case left needing it —
+assigning a category resolves an ordinary transaction, and correcting the type
+to an exclusionary one resolves the rest, via the same rule either way.
+**Income is deliberately NOT special-cased for V1** — the proposal raised the
+possibility that an income total might not need per-category breakdown the
+way spending does, but M8 does not exist yet to say so with any confidence.
+Applying the identical rule to both keeps the invariant simple and consistent;
+carving out income is a narrow, easy follow-up once M8's actual design is
+known, not a guess worth making now.
+
+### The counterpart unlink — atomic, both sides, every time
+
+Manually correcting the type of a transaction that is currently linked
+(`counterpart_transaction_id` set, always by M6's own matching) breaks the
+pair entirely rather than leaving one side pointing at a partner that no
+longer agrees with it:
+
+```
+THIS transaction  -> the new type, type_source = 'manual_confirmation',
+                      counterpart_transaction_id cleared.
+THE OTHER leg      -> reverts to the plain M5 default (expense/income by
+                      sign), type_source = 'default', counterpart_transaction_id
+                      cleared, review_status recomputed via M6's
+                      reviewStatusFor (it is reverting, not being corrected).
+```
+
+Both writes happen in one transaction (`updateTransactionType` in
+`db/finance/transactions.ts`). No confirmation modal — the review row shows
+"Linked to {account} — changing the type will unlink both" before the action
+runs, so it is visible rather than a surprise, but unlinking itself is not
+optional once the type actually changes. Verified directly: correcting one
+leg leaves the other with `counterpart_transaction_id = null` on BOTH sides,
+never a one-way stale reference.
+
+### Merchant memory from a review-queue correction — opt-in, not automatic
+
+M6's import-time rule (any committed category unconditionally updates memory)
+is deliberately **not** reused here. A review-queue correction is plausibly a
+one-off exception ("this one Amazon order was a gift, not Shopping") rather
+than a signal that the standing mapping is wrong — applying it unconditionally
+would let one exception silently retrain every future import from that
+merchant.
+
+**Behavior:** a per-row "Remember for future imports" checkbox next to the
+category picker, **unchecked by default**. Checked, a category change upserts
+`finance_merchant_memory` exactly as `commitImport()` does. Unchecked (the
+default), only that one transaction changes. Since `finance_transactions`
+stores `normalized_merchant` but not `merchant_key`, the key is rederived via
+`merchantKeyFrom()` — a small function extracted from `merchant.ts`'s
+existing internal derivation, not a new rule.
+
+Bulk category assignment never writes to merchant memory, unconditionally —
+a bulk selection is the common case where several unrelated merchants are
+involved, and a per-row remember decision inside a bulk action would defeat
+the "stays simple" bar it was built to.
+
+### The manual type picker shows 7 of the 8 real values
+
+`MANUAL_TRANSACTION_TYPES` (`classify/manual.ts`) excludes `adjustment` on
+purpose — it reads as an internal bookkeeping concept (a balance correction)
+rather than a "kind of transaction" an owner would intentionally hand-pick,
+unlike the other seven. The database column still accepts it; this milestone
+neither produces nor requires it. The same list drives both the Select's
+options and the Server Action's Zod validation, so the UI and the accepted
+values can never drift apart.
+
+### What was deferred
+
+New automatic classification heuristics, LLM/AI, a rule-builder UI, fuzzy
+matching, other banks, M8 grid work, analytics/reporting — all explicitly out
+of scope by owner instruction. Also not built: deleting a transaction (never
+asked for, and a meaningfully different risk than anything else here),
+pagination beyond a 500-row safety cap, a confirmation modal for the unlink.
