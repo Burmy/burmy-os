@@ -66,3 +66,21 @@ export function reviewStatusForCorrection(
 ): 'confirmed' | 'needs_review' {
   return categoryId !== null || isExclusionaryType(transactionType) ? 'confirmed' : 'needs_review';
 }
+
+/**
+ * All 8 real `transaction_type` values, for DISPLAY — unlike
+ * `MANUAL_TRANSACTION_TYPES`, which deliberately excludes `adjustment` from
+ * what an owner can newly PICK. M8's drill-down can show a transaction of any
+ * real type (an old `adjustment` row included), so it needs a label for all
+ * of them, not just the pickable seven.
+ */
+export const TRANSACTION_TYPE_LABELS: Readonly<Record<string, string>> = {
+  expense: 'Expense',
+  refund: 'Refund',
+  fee: 'Fee',
+  adjustment: 'Adjustment',
+  income: 'Income',
+  transfer: 'Transfer',
+  credit_card_payment: 'Credit Card Payment',
+  investment: 'Investment',
+};

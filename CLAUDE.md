@@ -251,6 +251,16 @@ These are verified, not folklore. Do not "fix" them back.
   setSyncedFrom(transactions); setRows(transactions); }`. This is a conditional `setState` call in the
   component body, which React explicitly permits (it bails out of the in-progress render and restarts)
   — the rule only objects to the SAME thing happening inside `useEffect`.
+- **Negative zero recurs whenever money math happens outside `Cents`.** `src/server/finance/grid.ts`
+  (M8) deliberately works in plain `number` — it combines already-SQL-summed groups, not raw
+  transaction amounts, so routing it through the branded `Cents` type would misrepresent what kind of
+  arithmetic it does. `const incomeCents = -incomeCentsRaw` produces `-0` via unary negation whenever a
+  month has zero income, the exact class of bug `money.ts` normalizes for at M1 (`wrap()` after every
+  operation). A plain-number module gets none of that protection for free. Caught by a unit test
+  (`expected -0 to be +0`), not by typecheck or lint — `-0 === 0` is `true`, so only `Object.is` or a
+  test asserting the exact serialized/rendered value catches it. Fix at the source with an explicit
+  `value === 0 ? 0 : -value` normalization; do not assume `Cents`-free code is exempt from this class of
+  bug just because `money.ts` already solved it once.
 
 ---
 

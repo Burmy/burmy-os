@@ -827,3 +827,113 @@ matching, other banks, M8 grid work, analytics/reporting — all explicitly out
 of scope by owner instruction. Also not built: deleting a transaction (never
 asked for, and a meaningfully different risk than anything else here),
 pagination beyond a 500-row safety cap, a confirmation modal for the unlink.
+
+## Monthly grid & drill-down (M8)
+
+`/finance/monthly` — the landing route, and the actual product: the useful
+part of the owner's spreadsheet, recreated. Every number is a live SQL
+aggregate over `finance_transactions`; nothing is ever stored (invariant 1).
+This section documents what shipped; it **supersedes the earlier "The monthly
+grid" mockup above** in two ways the owner explicitly chose during proposal
+review — see "Where this differs from the original mockup" below.
+
+### The base filter — one function, used twice
+
+`gridBaseConditions(ownerId, year)` (`db/finance/grid.ts`) is the entire
+double-counting and under/over-counting guarantee, and it is not duplicated
+anywhere:
+
+```
+owner_id = $1
+review_status IN ('confirmed', 'auto')            -- needs_review excluded from every number
+transaction_type NOT IN ('transfer', 'credit_card_payment')  -- excluded even if categorized
+transaction_date BETWEEN {year}-01-01 AND {year}-12-31
+```
+
+`investment` is deliberately **not** excluded — it gets its own category
+column and counts toward Total Expenditure, same as the "Transaction types"
+table above always specified. Both `getMonthlyGridAggregates` (the grid's one
+`GROUP BY month, category_id, transaction_type` query) and
+`getCellTransactions` (drill-down) build their `WHERE` from this exact same
+function — not two copies of an equivalent filter. That sharing, not
+diligence, is why a drill-down total structurally cannot disagree with the
+cell it came from. `tests/integration/finance-grid.test.ts` proves it
+directly: it runs both queries for the same scope and asserts the sums are
+bit-for-bit equal, for a category cell, Total Expenditure, Income, and the
+year-Total (`month: null`) case.
+
+### The three summary columns
+
+- **Total Expenditure** — `SUM(amount_cents)` over every non-`income` row in
+  scope (`expense`, `refund`, `fee`, `adjustment`, `investment`). A refund
+  nets against its category through the same `SUM`, no special case. Renamed
+  from the mockup's "Total Outflow"; identical formula.
+- **Income** — the negated `SUM` of `income`-typed rows. Stored negative
+  (money arriving, under the outflow-positive convention), sign-flipped **for
+  display only**, exactly as the mockup above already specified. A month with
+  zero income normalizes to `+0`, not `-0` — see the M1-precedent gotcha in
+  `CLAUDE.md`.
+- **Gross Savings** — `Income − Total Expenditure`, can go negative. Renamed
+  from the mockup's "Net"; identical formula. Not independently drillable —
+  a difference isn't "produced by" one coherent transaction list, so its
+  amount opens a breakdown dialog showing Income and Total Expenditure as two
+  separately-drillable line items instead (an approved judgment call).
+
+### Column order is authoritative — owner instruction, overriding the original mockup
+
+Columns render in the owner's configured `sort_order`, flat, **never**
+regrouped into Spending/Investment/Income blocks. `category.kind` shows as a
+small non-reordering label under the column name, for context only. Live
+categories always get a column, even with zero activity all year. An archived
+category earns a column only if it has at least one transaction in the
+selected year, appended after the live columns in `sort_order`/name order —
+archived history is visible without disturbing where a live category sits.
+A category whose transactions net to exactly zero still gets a `$0.00`
+button, not `—`; `—` means zero contributing transactions, not zero net
+amount, because a zero-net cell (e.g. fully refunded) is still something the
+owner may want to inspect.
+
+### The invariant-violation (unreconciled) warning
+
+A `confirmed`/`auto`, non-exclusionary transaction with no category should be
+impossible under M7's invariant. If one exists anyway (old data, a future
+bug), its money is never dropped — it is already counted in Total
+Expenditure/Income by the same type-grouped `SUM`, independent of category —
+but it appears in no column, since there is no column to place it in. Rather
+than let the totals and the visible columns silently disagree, the page shows
+a small banner: count, amount, and a link to Review. It costs no extra query
+— it is the aggregate query's own `category_id IS NULL` groups, rolled up.
+
+### Drill-down
+
+Every cell with a contributing transaction is a button. It opens a dialog
+that fetches through `getCellDrillDownAction` (a `requireOwner()`-gated
+Server Action), which calls the exact `getCellTransactions` sharing the base
+filter above. Each row shows `transaction_date`, account, `normalized_merchant`
+alongside the raw `original_description`, category (or "Uncategorized"),
+type (via `TRANSACTION_TYPE_LABELS`), and the signed amount — capped at 500
+rows, ordered by date. The dialog footer states the total, computed
+server-side from the same rows returned, so a rendering bug can never make
+the displayed total drift from the displayed rows either.
+
+### Where this differs from the original mockup above
+
+Two changes the owner made explicitly when approving the M8 proposal, kept
+here rather than edited into the older text so the decision trail stays
+visible:
+
+1. **No Spending/Investment/Income column grouping, no collapsible Income
+   section.** The mockup above shows blocked sections with subtotals; V1
+   ships one flat table in `sort_order` instead — simpler, and it avoids a
+   second ordering system alongside the owner's own category order.
+2. **Naming**: "Total Outflow" → "Total Expenditure", "Net" → "Gross
+   Savings". Formulas unchanged.
+
+### What was deferred
+
+Charts, budgets, trends, forecasting, AI insights, custom dashboards, a
+report builder — all explicitly out of scope by owner instruction. The
+Excel-comparison "Reconciliation" feature described earlier in this document
+(`finance_expected_totals`) is a separate, still-unbuilt feature, not part of
+M8 — cell drill-down is what currently replaces manually checking a
+spreadsheet, the same role the mockup above assigned to it.

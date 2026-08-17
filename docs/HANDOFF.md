@@ -84,8 +84,8 @@ These came from a structured interview with the owner and are **settled**. Do no
 | **Historical CSVs** | The owner still has all original exports and retains/backs them up personally. |
 | **Usage cadence** | **Monthly**, not daily. One long sitting per month. This drives several design decisions (see §5). |
 | **Cash spending** | **Not tracked.** No cash-entry flow in V1. |
-| **Income** | Tracked, with its own monthly grid section. |
-| **Investments** | Tracked. Appear in the grid (e.g. a `Stocks` row) and in Total Outflow, but **not** in Expenses. |
+| **Income** | Tracked, with its own Income column in the grid (M8: flat column order, not a separate section — see §8). |
+| **Investments** | Tracked. Appear in the grid (e.g. a `Stocks` column) and in Total Expenditure, but **not** counted as an ordinary Expense. |
 | **Savings / brokerage balances** | **Manual monthly snapshots.** Never derived from transfer flows — once interest or market movement is involved, a derived balance drifts from reality permanently and silently. |
 | **Reimbursements** | **Reduce their original category.** A $60 dinner reimbursed $30 shows **$30 under Food** — not $60 expense plus $30 income. |
 | **AI** | **Not in V1.** The app must pass its entire test suite with no API key present. |
@@ -309,14 +309,17 @@ day one** instead of being cold code needed on the worst day.
 
 Canonical detail: [`docs/FINANCE.md`](./FINANCE.md).
 
-| Type | In grid? | In Expenses? | In Total Outflow? |
+| Type | In grid? | In category columns? | In Total Expenditure? |
 | --- | --- | --- | --- |
-| `expense`, `fee`, `adjustment` | Yes (Spending) | Yes | Yes |
-| `refund` | Yes (Spending) — negative, reduces its category | Yes, net | Yes, net |
-| `investment` | Yes (Spending, e.g. `Stocks`) | **No** | **Yes** |
-| `income` | Yes (**Income section**) | No | No |
+| `expense`, `fee`, `adjustment` | Yes | Yes | Yes |
+| `refund` | Yes — negative, reduces its category | Yes, net | Yes, net |
+| `investment` | Yes, its own category column (e.g. `Stocks`) | Yes | Yes |
+| `income` | Yes, its own Income column | No | No |
 | `transfer` | **No** | No | No |
 | `credit_card_payment` | **No** | No | No |
+
+As of M8, columns render flat in the owner's category `sort_order` — **not** grouped into Spending vs.
+Income blocks. `kind` shows only as a small label under the column name; it never reorders columns.
 
 **Credit-card payments must not double-count.** Card purchases ($20 + $100 + $80) are `expense`. The
 checking-side $200 payment is `credit_card_payment`. The card-side "PAYMENT THANK YOU" credit is
@@ -326,13 +329,15 @@ not $400, not $0.
 **Refunds are not income.** A refund carries the *same category* as the purchase and nets it down.
 
 **Income display.** Income is *stored* negative (money arriving, per the outflow-positive convention)
-but the Income section **flips the sign for display only** — a paycheck must read `$6,400`, not
+but the Income column **flips the sign for display only** — a paycheck must read `$6,400`, not
 `-$6,400`. The stored value is never touched.
 
-**`Net` = Total Income − Total Outflow.** The only row that mixes the two sections.
+**`Gross Savings` = Income − Total Expenditure.** The only figure that mixes both.
 
-**The exclusion of `transfer` and `credit_card_payment` lives in exactly one SQL `IN` clause.** That
-single clause is the entire double-counting guarantee, and it is covered by tests.
+**The exclusion of `transfer` and `credit_card_payment` lives in exactly one shared filter function**
+(`gridBaseConditions()`, M8) — used verbatim by both the aggregate query and the drill-down query, so a
+drill-down total cannot structurally disagree with its cell. Covered by tests, including a direct
+sum-equality proof.
 
 ### Duplicate detection
 
@@ -353,7 +358,7 @@ single clause is the entire double-counting guarantee, and it is covered by test
 
 ---
 
-## 9. Current status — Milestones 1 through 7 COMPLETE
+## 9. Current status — Milestones 1 through 8 COMPLETE
 
 **M2 added authentication.** Full detail, including every trap hit along the way, is in
 [`docs/ROADMAP.md`](./ROADMAP.md). The short version:
@@ -373,7 +378,8 @@ single clause is the entire double-counting guarantee, and it is covered by test
 | Import pipeline | `/finance/import` → `/finance/import/[id]`. Single file per import, in-memory only, never written to disk. Account/format compatibility checked before staging. One bad row stages as a reviewable "needs attention" row (`parseStatementTolerant`) instead of aborting the file. File-hash pre-check distinguishes `committed` ("already imported") from `review`/`discarded` (never called that). Category optional at commit. |
 | Classification | **Merchant memory** (`finance_merchant_memory`) pre-fills a category from confirmed history; owner override always wins going forward. **Counterpart matching** (`classify/counterpart.ts`) links transfer/credit-card-payment legs by BoA's shared confirmation token — exact match, ±7 days, exactly one candidate, or no classification at all. Every automated write gated on `type_source = 'default'`, so a manual confirmation (M7) can never be overwritten. Investment auto-classification and the `counterpart_transaction_id` FK were both explicitly deferred. |
 | Review queue | `/finance/review` — filterable by status/account/category/type. Assign/change category, correct type (`type_source = 'manual_confirmation'`), bulk-assign. **No confirmed-but-uncategorized spending**: a category is required for `confirmed` unless the type is exclusionary. Correcting a linked transaction's type **atomically unlinks both legs** — the corrected one becomes manual, the freed one reverts to its M5 default. Memory updates from a correction are **opt-in** (unchecked by default) — an exception fix should not silently retrain future imports. Nav carries a live needs-review count. |
-| Suites | `pnpm test` **316** (domain + components, Docker-free) · `pnpm test:integration` **140** (Testcontainers) · `pnpm test:e2e` **19** (Playwright) |
+| Monthly grid | `/finance/monthly` — the landing route and the actual product. Month × category totals, Total Expenditure, Income, Gross Savings, all computed live from `finance_transactions` (never stored). Columns in the owner's `sort_order`, flat — never regrouped by `kind`. Every cell with a transaction drills down to the exact rows, through the same `gridBaseConditions()` the aggregate query uses, so a drill-down total structurally cannot disagree with its cell (proven in the integration suite). A `confirmed`/`auto` transaction with no category (should be impossible after M7) is still counted, and now also surfaces a dedicated reconciliation banner. |
+| Suites | `pnpm test` **332** (domain + components, Docker-free) · `pnpm test:integration` **155** (Testcontainers) · `pnpm test:e2e` **21** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -467,7 +473,8 @@ burmy-os/
 │   │   │                        group so it cannot redirect-loop with (private).
 │   │   ├── (private)/layout.tsx requireOwner() for navigation
 │   │   ├── (private)/finance/layout.tsx   Monthly / Import sub-nav — M5
-│   │   ├── (private)/finance/monthly/page.tsx   placeholder until M8
+│   │   ├── (private)/finance/monthly/page.tsx   THE PRODUCT — month x category
+│   │   │                        grid, live SQL aggregates, drill-down — M8
 │   │   ├── (private)/finance/import/page.tsx    upload + in-progress list — M5
 │   │   ├── (private)/finance/import/[importId]/page.tsx   preview/review/commit — M5
 │   │   ├── (private)/finance/review/page.tsx    needs-attention queue — M7
@@ -483,6 +490,7 @@ burmy-os/
 │   ├── features/finance/settings/  accounts, categories, passkeys managers + actions
 │   ├── features/finance/import/    upload form, review table, actions — M5
 │   ├── features/finance/review/    queue, filters, corrections, bulk actions — M7
+│   ├── features/finance/monthly/   grid table (client), drill-down Server Action — M8
 │   ├── lib/auth-client.ts       Better Auth browser client, passkey plugin only
 │   ├── lib/utils.ts             cn()
 │   ├── server/
@@ -501,10 +509,16 @@ burmy-os/
 │   │   │   │                    The advisory-lock commit-time Tier 2 re-check AND
 │   │   │   │                    M6's counterpart-match/merchant-memory-write live here.
 │   │   │   ├── finance/merchant-memory.ts   READ side of learned category mappings — M6
-│   │   │   └── finance/transactions.ts   M7: review-queue reads, category/type
-│   │   │                        corrections, the counterpart unlink, bulk assignment
+│   │   │   ├── finance/transactions.ts   M7: review-queue reads, category/type
+│   │   │   │                    corrections, the counterpart unlink, bulk assignment
+│   │   │   └── finance/grid.ts   M8: getMonthlyGridAggregates, getCellTransactions,
+│   │   │                        listTransactionYears — gridBaseConditions() is the
+│   │   │                        ONE filter shared by the aggregate and drill-down queries
 │   │   └── finance/            THE DOMAIN CORE — framework-free, DB-free
 │   │       ├── money.ts        Cents + ALL arithmetic
+│   │       ├── grid.ts         M8: buildMonthlyGrid() — pure pivot of pre-summed SQL
+│   │       │                    rows into the grid's cells + Total Expenditure/Income/
+│   │       │                    Gross Savings/unreconciled bucket
 │   │       ├── taxonomy.ts     names, slugs, last_four guard, reorder
 │   │       ├── merchant.ts     display + matching names. NOT identity.
 │   │       ├── dedupe.ts       frozen dedupeKey + Tier 2 reconciliation
@@ -521,28 +535,36 @@ burmy-os/
 │   │           │                ONE mechanism for transfers AND credit-card payments
 │   │           └── manual.ts   M7: reviewStatusForCorrection (the no-confirmed-but-
 │   │                            uncategorized rule), MANUAL_TRANSACTION_TYPES (7 of 8
-│   │                            real enum values — no raw 'adjustment' in the UI)
+│   │                            real enum values — no raw 'adjustment' in the UI).
+│   │                            M8 adds TRANSACTION_TYPE_LABELS (all 8, drill-down display)
 ├── tests/
-│   ├── unit/                    316 tests, NO Docker/database. Two Vitest projects:
-│   │                            *.test.ts -> node, *.test.tsx -> jsdom.
+│   ├── unit/                    332 tests, NO Docker/database. Two Vitest projects:
+│   │                            *.test.ts -> node, *.test.tsx -> jsdom. grid.test.ts:
+│   │                            buildMonthlyGrid() cells, column order, formulas — M8
 │   ├── fixtures/finance/        10 REDACTED files from real exports. Consumed as
 │   │                            raw BYTES. Checksummed — update the digest in
 │   │                            fixture-guard.test.ts when one legitimately changes.
 │   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
-│   ├── integration/             140 tests. Testcontainers PG18. Own config.
+│   ├── integration/             155 tests. Testcontainers PG18. Own config.
 │   │   ├── entry-points.test.ts THE anti-silent-coverage-gap test
 │   │   ├── finance-imports.test.ts   staging, Tier 2, the commit-time race +
 │   │   │                        override preservation, file-hash status — M5
 │   │   ├── finance-classify.test.ts   merchant memory, counterpart matching in
 │   │   │                        both import orders, the manual-decision guard — M6
-│   │   └── finance-review.test.ts   filters, the confirmed/needs_review rule, the
-│   │                            counterpart unlink (both legs, both directions),
-│   │                            remember-checkbox, bulk assignment — M7
-│   └── e2e/                     19 tests, SERIAL. Chrome virtual authenticator,
+│   │   ├── finance-review.test.ts   filters, the confirmed/needs_review rule, the
+│   │   │                        counterpart unlink (both legs, both directions),
+│   │   │                        remember-checkbox, bulk assignment — M7
+│   │   └── finance-grid.test.ts   the base filter's exact exclusions, the year
+│   │                        boundary, refund netting, and — the core M8 guarantee —
+│   │                        drill-down sums proven bit-for-bit equal to the
+│   │                        aggregate for 4 scopes (category/expenditure/income/year)
+│   └── e2e/                     21 tests, SERIAL. Chrome virtual authenticator,
 │                                real Radix overlays under the real CSP.
 │                                import.spec.ts: golden path, re-upload idempotency,
 │                                merchant-memory pre-fill (M6). review.spec.ts:
 │                                resolve a needs_review row, correct a linked pair (M7).
+│                                monthly.spec.ts: a grid cell's total matching its
+│                                drill-down dialog exactly, the reconciliation banner (M8).
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
 ├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
@@ -625,49 +647,53 @@ Cloudflare and Tailscale are **not** needed locally and are absent by design.
 
 ---
 
-## 12. Milestone 8 — the exact next objective
+## 12. Milestone 9 — the exact next objective
 
-**Goal:** *the product.* The category × month grid at `/finance/monthly`,
-reading `finance_transactions` and computing every total at query time — the
-entire reason "never store a total" has been an invariant since M1.
-**Depends on:** M5 (import), M6 (classification), M7 (review). All complete.
+**Goal:** the transactions table, the Excel-comparison reconciliation feature,
+and export. M8 made `/finance/monthly` compute every total live; M9 is the
+remaining pieces the owner's spreadsheet still does that the grid
+deliberately doesn't — the grid's own drill-down is scoped to one cell and
+capped at 500 rows by design, not a general browser.
+**Depends on:** M8 (monthly grid). Complete.
 
-### What M5–M7 hand over
+### What M8 hands over
 
-- **The invariant M8 depends on is now real, not aspirational:** a
-  `finance_transactions` row with `review_status = 'confirmed'` is guaranteed
-  to either carry a `category_id`, or be one of the three exclusionary types
-  (which the grid must exclude from spending entirely). M7 enforced this on
-  every write path; there is no code path left that produces a confirmed,
-  uncategorized, non-exclusionary row. The grid can trust `confirmed` rows
-  without a defensive "what if there's no category" branch.
-- `needs_review` rows exist and are expected — M8's grid should almost
-  certainly exclude them from totals (an uncategorized transaction has no row
-  to belong to) rather than inventing an "Uncategorized" bucket no milestone
-  has designed. `/finance/review` is where they get resolved, not the grid.
-- `transaction_type` correctly distinguishes spending from the three
-  exclusionary types on every transaction that has gone through import +
-  classification + (if needed) review. The "one shared SQL clause" for what
-  counts as spending, mentioned since the original plan, can finally be
-  written against real, trustworthy data.
-- `finance_categories.kind` (`spending`/`income`/`investment`) already exists
-  from M1 and already sections the placeholder monthly page — M8 turns that
-  same taxonomy into real, computed rows instead of a static list.
+- **The base-filter pattern is proven and reusable.** `gridBaseConditions()`
+  (`db/finance/grid.ts`) is the template for "one shared filter function used
+  by every query that must agree with another" — M9's transactions table and
+  its filters should follow the same shape rather than reintroducing a
+  parallel `WHERE` clause.
+- **`finance_expected_totals`** (built in M1, still unused) is exactly what
+  M9's reconciliation feature reads from — see `docs/FINANCE.md`'s
+  "Reconciliation" section for the design already written, and the "Monthly
+  grid & drill-down (M8)" section for what the grid computes it should be
+  compared against.
+- **`TRANSACTION_TYPE_LABELS`** (`classify/manual.ts`, added in M8) already
+  maps all 8 real `transaction_type` values to display labels for the grid's
+  drill-down dialog — the transactions table needs the identical mapping, not
+  a second one.
 
 ### Non-negotiable for this milestone
 
-- **Never store a total.** Every number the grid shows is a live SQL
-  aggregate over `finance_transactions`, computed at read time — CLAUDE.md
-  invariant 1, unchanged since M1.
+- **Never store a total.** Reconciliation compares a live-computed total
+  against `finance_expected_totals`; it does not cache the computed side —
+  CLAUDE.md invariant 1, unchanged since M1.
 - **Every Server Action / page begins with `await requireOwner()`.**
   `tests/integration/entry-points.test.ts` enumerates the filesystem and fails
   the suite otherwise.
+- **Export must be formula-injection-safe** — a cell value starting with
+  `=`, `+`, `-`, or `@` opened in Excel/Sheets can execute as a formula.
+  Already flagged in the plan; do not ship a naive CSV/XLSX writer.
 - Money math goes through `src/server/finance/money.ts`. Nothing else does
   arithmetic on `Cents`.
+- **ExcelJS dependency/security review gates any XLSX work** — do this first,
+  before writing an XLSX export or reconciliation import path. Never
+  `pnpm add xlsx` (the SheetJS package is abandoned with unfixed advisories —
+  see `CLAUDE.md`).
 
 ### Also outstanding
 
-**Manual real-device passkey verification**, carried from M2 through M7. The
+**Manual real-device passkey verification**, carried from M2 through M8. The
 automated ceremony passes against Chrome's virtual authenticator (real WebAuthn
 with a software key store), but no physical authenticator has been used. Two
 minutes: `pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then
@@ -685,7 +711,7 @@ check Settings → Passkeys.
 | ~~M5~~ | ~~Import pipeline, preview, duplicates~~ **Complete.** | Single-file upload, in-memory staging, preview, count-based dedupe, atomic commit |
 | ~~M6~~ | ~~Categorization & classification~~ **Complete.** | Merchant memory, transfer / card-payment counterpart matching with deterministic evidence only; investment auto-classification deferred |
 | ~~M7~~ | ~~Review queue~~ **Complete.** | Filterable queue, category/type correction, the counterpart unlink, bulk assignment, opt-in "remember merchant" |
-| **M8** | **Monthly grid & drill-down** | *The product.* SQL pivot, Spending + Income sections, subtotals and Net, cell drill-down replacing Excel comments |
+| ~~M8~~ | ~~Monthly grid & drill-down~~ **Complete.** | *The product.* SQL pivot in the owner's `sort_order`, Total Expenditure/Income/Gross Savings, cell drill-down sharing the aggregate's own filter, the unreconciled-transaction warning |
 | **M9** | Transactions table, Excel reconciliation, export | TanStack Table + Virtual, **ExcelJS dependency/security review gate**, `finance_expected_totals`, reconciliation deltas, formula-injection-safe export |
 | **M10** | Backup, deployment, hardening, launch | Harden the M1 image for production, Oracle/VPS + Cloudflare Tunnel + Access + Tailscale, backup automation and a **verified restore**, full DR drill — **then** the first real production import |
 

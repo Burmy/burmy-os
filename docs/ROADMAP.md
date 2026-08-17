@@ -15,7 +15,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M5** | Import pipeline, preview, duplicates | ✅ Complete |
 | **M6** | Categorization & classification | ✅ Complete |
 | **M7** | Review queue | ✅ Complete |
-| M8 | Monthly grid & drill-down *(the product)* | ⚪ Not started |
+| **M8** | Monthly grid & drill-down *(the product)* | ✅ Complete |
 | M9 | Transactions table, Excel reconciliation, export | ⚪ Not started |
 | M10 | Backup automation, deployment, hardening, launch | ⚪ Not started |
 
@@ -605,7 +605,59 @@ in the database.
 **DoD:** `pnpm typecheck` / `lint` / `test` (316) / `test:integration` (140) /
 `test:e2e` (19, two consecutive full runs) / `build` all green — actually run.
 
-## ▶ RESUME HERE — M8: Monthly grid & drill-down (the product)
+## M8 — Monthly grid & drill-down (the product)
+
+**Goal:** recreate the useful part of the owner's spreadsheet inside Burmy —
+month × category totals, Total Expenditure, Income, Gross Savings, every
+number clickable to the exact transactions behind it. `/finance/monthly`
+replaces the M3 taxonomy placeholder and becomes the app's landing route.
+
+**Two changes made during proposal review, before implementation**, both by
+explicit owner instruction: (1) **column order is authoritative** — the grid
+renders categories in the owner's `sort_order`, flat, never regrouped into
+Spending/Investment/Income blocks (the original FINANCE.md mockup's blocked,
+collapsible layout was overturned in favor of one simple table); `kind`
+appears only as a small non-reordering label. (2) **the invariant-violation
+case is surfaced, not just theoretically included** — a `confirmed`/`auto`
+transaction with no category (should be impossible after M7, but not
+provably so for old or future-buggy data) is still counted in Total
+Expenditure/Income, and now also triggers a dedicated reconciliation banner
+(count, amount, link to Review) rather than relying on Total Expenditure's
+own drill-down to make it discoverable.
+
+**The whole guarantee is one shared function.** `gridBaseConditions()`
+(`db/finance/grid.ts`) builds the `WHERE` for both the aggregate query and
+the drill-down query — not two copies of an equivalent filter — so a
+drill-down total cannot structurally disagree with the grid cell that opened
+it. Proven directly, not just by code inspection: the integration suite runs
+both queries for the same scope and asserts the sums are bit-for-bit equal,
+for a category cell, Total Expenditure, Income, and the year-Total row.
+
+**A real `-0` bug, caught by the unit suite before it ever reached a
+database.** `computeRowTotals()` (`server/finance/grid.ts`) works in plain
+`number`, not the branded `Cents` type — `-incomeCentsRaw` produces negative
+zero when a month has no income at all, the same failure class `money.ts`
+was built to prevent in M1. Fixed by normalizing at the source
+(`incomeCentsRaw === 0 ? 0 : -incomeCentsRaw`). Now a documented gotcha in
+`CLAUDE.md` so it isn't rediscovered a third time.
+
+**Tests:** unit — `buildMonthlyGrid()`'s cell summing, column ordering
+(direct proof `sort_order` survives interleaved kinds), archived-with/without
+-history column inclusion, the three summary formulas including negative
+Gross Savings, the unreconciled bucket, and the year-Total row reconciling
+exactly against its twelve months. Integration, against real Postgres — the
+base filter's exact exclusions, the year-boundary edge (Dec 31 vs the next
+Jan 1), refund netting, cross-owner isolation, and the drill-down/aggregate
+equality proof above for four distinct scopes. E2E — a category cell's total
+matching its drill-down dialog exactly (with a `needs_review` sibling row
+confirmed absent from both), and the reconciliation banner appearing and
+linking to a categoryless charge's own drill-down.
+
+**DoD:** `pnpm typecheck` / `lint` / `test` (332) / `test:integration` (155)
+/ `test:e2e` (21, two consecutive full runs) / `build` all green — actually
+run.
+
+## ▶ RESUME HERE — M9: Transactions table, Excel reconciliation, export
 
 **Get running again:**
 
@@ -617,14 +669,15 @@ pnpm db:seed
 pnpm dev
 ```
 
-Every prior milestone has been building toward this one: M5 imports
-transactions, M6 classifies most of them automatically, M7 lets the owner
-resolve the rest — and as of M7, the invariant "a `confirmed` transaction is
-ready to appear in a category total" is real and enforced, not aspirational.
-M8 is the category × month grid at `/finance/monthly` (currently a taxonomy
-placeholder from M3) that actually reads `finance_transactions` and computes
-totals — the ENTIRE point of the "never store a total, compute at read time"
-invariant. Full scope in `IMPLEMENTATION_PLAN.md` §39.
+M8 made `/finance/monthly` the real product surface: every total is computed
+live from `finance_transactions`, and any number can be clicked down to its
+exact rows. M9 is the remaining pieces the owner's spreadsheet still does
+that the grid doesn't: a full searchable/filterable transactions table (the
+grid's drill-down dialog is scoped and capped at 500 rows by design, not a
+general-purpose browser), the Excel-comparison reconciliation feature already
+described in `docs/FINANCE.md`'s "Reconciliation" section
+(`finance_expected_totals`, built in M1, unused until now), and data export.
+Full scope in `IMPLEMENTATION_PLAN.md` §39.
 
 ## Carried forward
 
@@ -636,9 +689,9 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~BoA adapter written against a real export~~ | ~~M4~~ | **Done.** Two real exports read; three of the plan's assumptions about the layout were wrong. See `docs/FINANCE.md`. |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
-| Manual real-device passkey verification | **M8** | Still outstanding after M7. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| Manual real-device passkey verification | **M9** | Still outstanding after M8. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
 | ~~Categories-reorder e2e test intermittently failed when run after `import.spec.ts`~~ | ~~M5~~ | **Done — root cause was not shared database state.** `shell.spec.ts`'s reorder test asserted `toBeDisabled()` (true instantly via `useOptimistic`, before the Server Action round-trips) and then called `page.reload()` with no wait for the mutation to actually persist. Under a quiet dev server the write reliably landed first by coincidence; the heavier `import.spec.ts` running immediately before added just enough latency to the shared dev-server process to flip that coincidence, and the reload fetched the PRE-reorder order (confirmed by screenshot: "Mortgage, Gas" instead of "Gas, Mortgage"). Fixed by making the test wait for the reorder Server Action's response before reloading — a missing synchronization point the test always had, now closed, not a data-isolation problem. `resetAll()` in both e2e files also now lists the M5 import tables explicitly, matching `tests/integration/harness.ts`'s existing discipline, as defense in depth. Confirmed with three consecutive full-suite runs, 16/16 green each time. |
-| **E2E suite shares one database; `workers: 1` remains a real architectural simplification** | M8 or when the suite slows further | Not urgent — the specific flake above is fixed, not papered over. But a shared dev-server process across all specs means a heavy spec can still shift timing enough to expose a genuinely un-synchronized test elsewhere, which is what happened here. Real fix, if the suite outgrows this: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
+| **E2E suite shares one database; `workers: 1` remains a real architectural simplification** | M9 or when the suite slows further | Not urgent — the specific flake above is fixed, not papered over. But a shared dev-server process across all specs means a heavy spec can still shift timing enough to expose a genuinely un-synchronized test elsewhere, which is what happened here. Real fix, if the suite outgrows this: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |
