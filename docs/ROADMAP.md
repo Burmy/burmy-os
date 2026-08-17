@@ -319,6 +319,7 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
 | Manual real-device passkey verification | **M4** | Still outstanding after M3. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| **E2E suite shares one database; `workers: 1` is a workaround** | M5 or when the suite slows | All Playwright specs truncate the same development database, so parallel runs wipe each other's sessions mid-test. Serial execution is a **bill not yet due**, not a design decision. Real fix: a database per worker (the integration suite already does this with Testcontainers) plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. Acceptable at 14 tests / ~35s; revisit when M5 and M8 add journeys. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
 | Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |
