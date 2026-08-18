@@ -302,6 +302,13 @@ place, always current rather than hand-maintained.
 
 ## Reconciliation
 
+> **Status: this specific Excel-diff design remains UNBUILT, by owner decision at M9.** `finance_expected_totals`
+> (below) still exists, still unused. M9 shipped a lighter alternative instead — see "Transactions
+> ledger & export (M9)" further down — on the reasoning that M4's checksum validation, M5's Tier 2
+> dedupe reconciliation, and M8's aggregate/drill-down equality proof already substantiate most of what
+> this feature would exist to prove. Revisit this design if a concrete need for the full category×month
+> delta view shows up later; the schema is ready for it.
+
 The owner's Excel sheets are **hand-verified ground truth** for what each category×month total should
 be. They import into `finance_expected_totals` and are compared against computed totals.
 
@@ -937,3 +944,94 @@ Excel-comparison "Reconciliation" feature described earlier in this document
 (`finance_expected_totals`) is a separate, still-unbuilt feature, not part of
 M8 — cell drill-down is what currently replaces manually checking a
 spreadsheet, the same role the mockup above assigned to it.
+
+## Transactions ledger & export (M9)
+
+`/finance/transactions` — a Finance subpage (not a third sidebar
+destination), reached from a secondary button next to "Import statement" on
+`/finance/monthly`. The complete historical ledger: every committed
+transaction, searchable and filterable, newest-first, paginated at 100 rows.
+
+**Deliberately NOT `gridBaseConditions()`.** Monthly's base filter excludes
+`needs_review`, `transfer` and `credit_card_payment` by design — that is
+exactly what a full ledger must **not** do by default. A single new
+condition-builder, `ledgerConditions()` (`db/finance/transactions.ts`), is
+reused unmodified by the paginated listing, the reconciliation summary, and
+the CSV export, so "the current filter" cannot structurally mean three
+different things in three places — the same discipline
+`gridBaseConditions()` established for the aggregate/drill-down pair in M8.
+
+### Editing history, not a second correction system
+
+Category and type corrections reuse M7's `updateTransactionCategory` /
+`updateTransactionType` **completely unmodified** — no parallel business
+logic. That means, unchanged from M7: the counterpart unlink is atomic and
+hits both legs every time; a manual type correction always sets
+`type_source = 'manual_confirmation'`; `reviewStatusForCorrection` decides
+`confirmed` vs `needs_review` the same way regardless of which page made the
+edit; merchant memory is written only when the owner explicitly checks
+"remember," never automatically. Because Monthly computes every total live
+from `finance_transactions` with nothing cached, an edit made from
+Transactions is visible on Monthly's very next load — no invalidation logic
+needed anywhere.
+
+### Reconciliation, kept intentionally small
+
+Three counts, computed from `ledgerConditions()` for whatever filter is
+currently on screen: the transaction count, the needs-review count, and the
+`transfer`/`credit_card_payment` count **and amount** excluded from every
+Monthly total. No overall signed dollar total is shown — summing income,
+expense, refunds and transfers into one number is not a meaningful figure
+and risked reading as competing with Monthly's own totals.
+
+The excluded amount sums `ABS(amount_cents)`, not a plain signed `SUM`. A
+credit-card-payment pair is two rows with **opposite signs** (the
+checking-side outflow, the card-side "payment thank you" inflow) — the same
+real dollars, moving once. A signed sum across both legs cancels toward
+zero exactly when both are in scope (no account filter applied), silently
+hiding the figure this strip exists to surface. Summing magnitude reports
+"how much moved through excluded rows" honestly regardless of how many legs
+the current filter happens to include.
+
+This strip is additive to, not a replacement for, the correctness
+guarantees that already exist: M4's BoA checksum, M5's Tier 2 count
+reconciliation, and M8's aggregate/drill-down equality proof. See the note
+under "Reconciliation" above for why the `finance_expected_totals`
+Excel-diff design was not built as part of this.
+
+### Export
+
+CSV only — Papa Parse is already a dependency and CSV opens natively in
+Excel/Sheets, so ExcelJS's M9 dependency-security gate was never triggered.
+Always reflects the **exact current filter**, ignoring on-screen
+pagination; clearing every filter is the full-ledger export. Bounded at
+20,000 rows (`LEDGER_EXPORT_ROW_LIMIT`) — exceeding it **fails visibly**
+(HTTP 413 with an explanatory message), never a silently truncated file.
+
+Columns: Transaction Date, Account, Institution, Normalized Merchant, Raw
+Description, Amount, Category, Transaction Type, Review Status,
+Categorization Source, Type Source. Internal ids, `dedupe_key`,
+`source_transaction_id`, `posted_date` and `last_four` are never exported.
+
+**Sign convention: positive = outflow, identical to everywhere else in the
+app.** The Amount column header itself states this
+(`Amount (USD, + = outflow)`), so the file is self-documenting without a
+comment row.
+
+**Formula-injection guard.** Any free-text cell sourced from a bank
+statement or the owner's own typing (merchant, raw description, account
+name, institution, category name) that starts with `=`, `+`, `-` or `@`
+gets a leading `'`. The Amount column is deliberately **exempt** — it is
+produced entirely by `toDecimalString()`, never by statement or owner text,
+and blanket-sanitizing it would prefix every negative amount and break the
+column as a number in the exact file this feature exists to produce.
+`src/server/finance/export/csv.ts` is pure and framework-free, matching the
+rest of `src/server/finance/`.
+
+### What was deferred
+
+The `finance_expected_totals` Excel-diff reconciliation UI (see above),
+XLSX import/export, bulk category/type edit from Transactions, deleting a
+transaction, a `pg_trgm`/GIN search index (plain `ILIKE` is sufficient at
+personal-ledger scale) — all explicitly out of scope. No new
+categorization/classification work: M6 and M7's mechanisms are untouched.

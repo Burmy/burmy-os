@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+import { Button } from '@/components/ui/button';
 import { ImportSheet } from '@/features/finance/import/import-sheet';
 import { MonthlyGridTable } from '@/features/finance/monthly/monthly-grid-table';
 import { requireOwner } from '@/server/auth/owner';
@@ -64,7 +65,12 @@ export default async function MonthlyPage({
     <div>
       <div className="flex items-start justify-between gap-4">
         <h1 className="text-xl font-semibold">Finance</h1>
-        <ImportSheet accounts={accounts} categories={liveCategories} inProgressImports={inProgressImports} />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/finance/transactions">Transactions</Link>
+          </Button>
+          <ImportSheet accounts={accounts} categories={liveCategories} inProgressImports={inProgressImports} />
+        </div>
       </div>
 
       {needsReviewCount > 0 ? (

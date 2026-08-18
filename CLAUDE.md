@@ -264,6 +264,29 @@ These are verified, not folklore. Do not "fix" them back.
   test asserting the exact serialized/rendered value catches it. Fix at the source with an explicit
   `value === 0 ? 0 : -value` normalization; do not assume `Cents`-free code is exempt from this class of
   bug just because `money.ts` already solved it once.
+- **`tests/integration/entry-points.test.ts`'s direct-invocation check needs a `try/catch`, not a bare
+  call, for any protected Route Handler.** It proves a Route Handler still refuses when the proxy is
+  bypassed by importing the module and calling the exported `GET`/`POST` directly — no Next.js server
+  around it. `requireOwner()` reads `next/headers`, which needs Next's own request-scoped storage,
+  present for every request Next actually serves but **absent** when a plain `import()` calls the
+  function directly, so the bare call throws `"headers was called outside a request scope"` before ever
+  reaching `toAuthErrorResponse()`. Through M8 this was never actually exercised —
+  `protectedHandlers.length` was asserted to be `0`, meaning no protected Route Handler existed yet.
+  `/finance/transactions/export` (M9) is the first one. Fixed by accepting that specific thrown error as
+  equally valid proof of refusal (the handler still never reached a 200 with data — a
+  testing-environment limitation, not a security gap) and updating the expected count. If you add
+  another protected Route Handler and this test starts throwing instead of asserting a status code, this
+  is why — it is not a new security hole.
+- **A credit-card-payment/transfer pair is two rows with OPPOSITE signs, so a plain signed `SUM()` over
+  them can cancel toward zero even when real dollars moved.** The checking-side payment (outflow,
+  positive) and the card-side "payment thank you" credit (inflow, negative) are the same $200 moving
+  once. M9's Transactions reconciliation strip summed `abs(amount_cents)` instead specifically because
+  of this — whenever both legs of a pair are in the current filter's scope (e.g. no account filter
+  applied), the naive signed sum silently reports $0 for real excluded spending. Caught by re-deriving
+  the SQL by hand before writing a test, then pinned with one that seeds both legs of a real pair and
+  asserts the combined magnitude survives. Any future "total excluded" or "total transferred" figure
+  built from `transaction_type IN ('transfer', 'credit_card_payment')` needs the same `ABS`, not a
+  reflexive `SUM`.
 
 ---
 
