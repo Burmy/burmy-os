@@ -141,9 +141,7 @@ Playwright on pull requests.
 | Variable | Purpose |
 | --- | --- |
 | `DATABASE_URL` | Postgres connection (internal `dbnet` hostname) |
-| `OWNER_EMAIL` | The single allowlisted identity |
-| `BETTER_AUTH_SECRET` | Session signing |
-| `BETTER_AUTH_URL` | `https://app.burmy.me` |
+| `OWNER_EMAIL` | The single allowlisted identity — checked against the verified Cloudflare Access JWT on every request |
 | `CF_ACCESS_TEAM_DOMAIN` | For JWKS lookup |
 | `CF_ACCESS_AUD` | Access application audience tag |
 | `TUNNEL_TOKEN` | `cloudflared` |

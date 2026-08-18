@@ -28,12 +28,18 @@ import { harness, resetDatabase } from './harness';
 const APP_DIR = path.resolve(process.cwd(), 'src/app');
 
 /**
- * The complete unprotected surface. Exactly two entries.
+ * The complete unprotected surface. Exactly one entry.
+ *
+ * `/api/auth/[...all]` was the second entry through M8 — Better Auth's own
+ * endpoints, which authenticated by design. It no longer exists: Cloudflare
+ * Access with Google is the sole authentication mechanism, verified entirely
+ * outside this application (src/proxy.ts, src/server/auth/access.ts), so there
+ * is no in-app endpoint left that has to be reachable without a session.
  *
  * Growing this list is a security decision, and it should require editing this
  * constant in a reviewed diff — never happen as a side effect.
  */
-const UNPROTECTED_ALLOWLIST = ['/api/health', '/api/auth/[...all]'] as const;
+const UNPROTECTED_ALLOWLIST = ['/api/health'] as const;
 
 interface EntryPoint {
   /** Route path, e.g. `/api/health`. */
@@ -117,10 +123,10 @@ function callsGuard(source: string): boolean {
 }
 
 describe('the unprotected allowlist', () => {
-  it('is exactly two entries', () => {
+  it('is exactly one entry', () => {
     // If this fails, someone widened the unauthenticated surface. That may be
     // correct — but it must be deliberate, and it must be reviewed.
-    expect([...UNPROTECTED_ALLOWLIST]).toEqual(['/api/health', '/api/auth/[...all]']);
+    expect([...UNPROTECTED_ALLOWLIST]).toEqual(['/api/health']);
   });
 
   it('matches the routes that actually exist', () => {
@@ -129,7 +135,6 @@ describe('the unprotected allowlist', () => {
     // nothing would make every assertion below vacuously true.
     expect(discovered.length).toBeGreaterThan(0);
     expect(discovered).toContain('/api/health');
-    expect(discovered).toContain('/api/auth/[...all]');
   });
 });
 

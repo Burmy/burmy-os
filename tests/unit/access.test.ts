@@ -316,4 +316,75 @@ describe('requireAccessIdentity', () => {
 
     await expect(requireAccessIdentity(new Headers())).rejects.toThrow(AccessMisconfiguredError);
   });
+
+  /**
+   * The full enforced path — real signature verification, real owner-email
+   * check — against the injected local key pair rather than a live Cloudflare
+   * JWKS. This is the exact function `requireOwner()` (src/server/auth/owner.ts)
+   * calls on every single request; `requireOwner()` itself has no keyResolver
+   * seam of its own (production must never be reachable with one), so these
+   * scenarios are proven here rather than through an integration test that
+   * would otherwise have to hit real network to reach the same code path.
+   */
+  describe('the enforced path, against a real signature', () => {
+    it('succeeds for a validly signed assertion belonging to the owner', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('OWNER_EMAIL', OWNER);
+      vi.stubEnv('CF_ACCESS_TEAM_DOMAIN', TEAM);
+      vi.stubEnv('CF_ACCESS_AUD', AUD);
+
+      const headers = new Headers({ [ACCESS_JWT_HEADER]: await mintToken() });
+      const identity = await requireAccessIdentity(headers, process.env, publicKey);
+      expect(identity.email).toBe(OWNER);
+    });
+
+    it('rejects a validly signed assertion for a different Google account', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('OWNER_EMAIL', OWNER);
+      vi.stubEnv('CF_ACCESS_TEAM_DOMAIN', TEAM);
+      vi.stubEnv('CF_ACCESS_AUD', AUD);
+
+      const headers = new Headers({
+        [ACCESS_JWT_HEADER]: await mintToken({ email: 'someone-else@elsewhere.test' }),
+      });
+      await expect(requireAccessIdentity(headers, process.env, publicKey)).rejects.toThrow(
+        AccessDeniedError,
+      );
+    });
+
+    it('rejects a forged signature', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('OWNER_EMAIL', OWNER);
+      vi.stubEnv('CF_ACCESS_TEAM_DOMAIN', TEAM);
+      vi.stubEnv('CF_ACCESS_AUD', AUD);
+
+      const headers = new Headers({ [ACCESS_JWT_HEADER]: await mintToken({ signWith: 'attacker' }) });
+      await expect(requireAccessIdentity(headers, process.env, publicKey)).rejects.toThrow(
+        AccessDeniedError,
+      );
+    });
+
+    it('rejects an expired assertion', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('OWNER_EMAIL', OWNER);
+      vi.stubEnv('CF_ACCESS_TEAM_DOMAIN', TEAM);
+      vi.stubEnv('CF_ACCESS_AUD', AUD);
+
+      const headers = new Headers({ [ACCESS_JWT_HEADER]: await mintToken({ expiresIn: '-1s' }) });
+      await expect(requireAccessIdentity(headers, process.env, publicKey)).rejects.toThrow(
+        AccessDeniedError,
+      );
+    });
+
+    it('rejects a request carrying no assertion at all', async () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      vi.stubEnv('OWNER_EMAIL', OWNER);
+      vi.stubEnv('CF_ACCESS_TEAM_DOMAIN', TEAM);
+      vi.stubEnv('CF_ACCESS_AUD', AUD);
+
+      await expect(requireAccessIdentity(new Headers(), process.env, publicKey)).rejects.toThrow(
+        AccessDeniedError,
+      );
+    });
+  });
 });

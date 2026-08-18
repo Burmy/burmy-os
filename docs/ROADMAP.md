@@ -657,6 +657,51 @@ linking to a categoryless charge's own drill-down.
 / `test:e2e` (21, two consecutive full runs) / `build` all green — actually
 run.
 
+## Post-M8, out of band — authentication simplified to Cloudflare Access + Google only
+
+Not a numbered milestone: a deliberate product/security-model change the owner
+requested directly, between accepting M8 and starting M9, after using the app
+with real statements for the first time (see "M8 usage checkpoint" below).
+
+**What changed:** Burmy's M2-era two-factor design (Cloudflare Access + an
+in-app Better Auth passkey) was replaced with Cloudflare Access alone —
+
+```
+app.burmy.me → Cloudflare Access / Google → Burmy application
+```
+
+Removed entirely: `better-auth` and `@better-auth/passkey` (dependencies and
+all code — `server/auth/{index,grant-plugin,passkey-policy,grants}.ts`,
+`/api/auth/[...all]`, `/sign-in`, `/recovery`, `/onboarding/passkeys`,
+`/settings/passkeys`, `scripts/auth-grant.mjs`, the passkey/grant test suites).
+`requireOwner()` (`src/server/auth/owner.ts`) is now a thin wrapper: verify the
+Access JWT via `requireAccessIdentity()` (unchanged — this already confirmed
+the verified email matched `OWNER_EMAIL`), then **resolve** (never create) the
+matching `user` row. A new `scripts/provision-owner.mjs` is the one-time,
+out-of-band operator step that used to be "redeem a bootstrap grant." Full
+detail: `docs/SECURITY.md`, "Authentication" and "Former design: Cloudflare
+Access + passkey (removed)".
+
+**The `session`/`account`/`verification`/`passkey`/`rate_limit` tables were
+kept, not dropped** — no destructive migration for tidiness alone, per
+CLAUDE.md. They are unused; `src/server/db/schema.ts` documents this in place.
+
+**Tests:** `tests/unit/access.test.ts` gained the crypto-level proofs
+`requireOwner()` used to need an integration test for — wrong Google email,
+forged signature, expired token — all against the real ES256 verification path
+via `requireAccessIdentity`'s new test-only `keyResolver` parameter, the same
+injection seam `verifyAccessToken` already had. `tests/integration/
+owner-guard.test.ts` was rewritten around dev-bypass, "resolve never create,"
+and fail-closed. `tests/e2e/passkey.spec.ts` was replaced by `auth.spec.ts`
+(a provisioned owner reaches `/finance/monthly` directly, no sign-in step; an
+unprovisioned owner sees `/access-denied`, not a passkey prompt) and
+`csp.spec.ts` (the CSP proofs that used to live in the same file, which are
+about `src/proxy.ts` and apply regardless of how authentication works — kept
+intact, not lost, just relocated).
+
+**DoD:** `pnpm typecheck` / `lint` / `test` (319) / `test:integration` (109) /
+`test:e2e` (21, two consecutive full runs) / `build` all green — actually run.
+
 ## ▶ RESUME HERE — M9: Transactions table, Excel reconciliation, export
 
 **Get running again:**
@@ -664,7 +709,7 @@ run.
 ```bash
 docker compose -f compose.dev.yml up -d postgres
 docker compose -f compose.dev.yml run --rm --build migrate    # --build is NOT optional
-node scripts/auth-grant.mjs bootstrap    # only if the owner row is absent
+node scripts/provision-owner.mjs    # only if the owner row is absent
 pnpm db:seed
 pnpm dev
 ```
@@ -689,7 +734,7 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~BoA adapter written against a real export~~ | ~~M4~~ | **Done.** Two real exports read; three of the plan's assumptions about the layout were wrong. See `docs/FINANCE.md`. |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
 | Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
-| Manual real-device passkey verification | **M9** | Still outstanding after M8. Automated ceremony passes against Chrome's virtual authenticator; no physical authenticator used yet. |
+| ~~Manual real-device passkey verification~~ | ~~M9~~ | **Moot.** The passkey plugin this item was tracking was removed entirely in the post-M8 Cloudflare-Access-only auth change — see that section above. There is no passkey ceremony left to verify on a real device. |
 | ~~Categories-reorder e2e test intermittently failed when run after `import.spec.ts`~~ | ~~M5~~ | **Done — root cause was not shared database state.** `shell.spec.ts`'s reorder test asserted `toBeDisabled()` (true instantly via `useOptimistic`, before the Server Action round-trips) and then called `page.reload()` with no wait for the mutation to actually persist. Under a quiet dev server the write reliably landed first by coincidence; the heavier `import.spec.ts` running immediately before added just enough latency to the shared dev-server process to flip that coincidence, and the reload fetched the PRE-reorder order (confirmed by screenshot: "Mortgage, Gas" instead of "Gas, Mortgage"). Fixed by making the test wait for the reorder Server Action's response before reloading — a missing synchronization point the test always had, now closed, not a data-isolation problem. `resetAll()` in both e2e files also now lists the M5 import tables explicitly, matching `tests/integration/harness.ts`'s existing discipline, as defense in depth. Confirmed with three consecutive full-suite runs, 16/16 green each time. |
 | **E2E suite shares one database; `workers: 1` remains a real architectural simplification** | M9 or when the suite slows further | Not urgent — the specific flake above is fixed, not papered over. But a shared dev-server process across all specs means a heavy spec can still shift timing enough to expose a genuinely un-synchronized test elsewhere, which is what happened here. Real fix, if the suite outgrows this: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
 | ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |

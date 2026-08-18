@@ -242,16 +242,23 @@ export function isOwnerEmail(email: string, env: AccessEnv = process.env): boole
 }
 
 /**
- * Verify factor 1 for a request and return the asserted owner identity.
+ * Verify Access for a request and return the asserted owner identity.
  *
  * In development this returns the configured `OWNER_EMAIL` without a network
  * call, because Cloudflare is absent locally by design.
+ *
+ * `keyResolver` is injectable for the same reason as `verifyAccessToken`'s own
+ * parameter: it lets tests exercise this exact function — including the
+ * `enforced` branch and the owner-email check below — against a locally
+ * generated key pair instead of Cloudflare's live JWKS. Production never
+ * passes it, so the resolver is always the real remote JWKS there.
  *
  * @throws AccessMisconfiguredError · AccessDeniedError
  */
 export async function requireAccessIdentity(
   headers: Headers,
   env: AccessEnv = process.env,
+  keyResolver?: JWTVerifyGetKey | KeyObject | CryptoKey | Uint8Array,
 ): Promise<AccessIdentity> {
   const mode = resolveAccessMode(env);
 
@@ -259,7 +266,7 @@ export async function requireAccessIdentity(
     return { email: ownerEmail(env), subject: null };
   }
 
-  const identity = await verifyAccessToken(readAccessToken(headers), mode.config);
+  const identity = await verifyAccessToken(readAccessToken(headers), mode.config, keyResolver);
 
   if (!isOwnerEmail(identity.email, env)) {
     // A *verified* identity that is not the owner: Access let through an

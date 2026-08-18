@@ -3,7 +3,6 @@ import { SubNav } from '@/features/shell/nav';
 const LINKS = [
   { href: '/settings/accounts', label: 'Accounts' },
   { href: '/settings/categories', label: 'Categories' },
-  { href: '/settings/passkeys', label: 'Passkeys' },
 ] as const;
 
 export default function SettingsLayout({

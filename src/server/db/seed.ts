@@ -10,19 +10,16 @@
  * ─────────────────────────────────────────────────────────────────────────────
  * THIS SCRIPT NEVER CREATES OR CLAIMS AN AUTH USER.
  *
- * It used to. It inserted `user` with a hardcoded id of `dev-owner` and the
- * configured `OWNER_EMAIL`, which broke the moment M2 introduced real
- * authentication — in both directions, and quietly:
+ * It used to, with a hardcoded id of `dev-owner`, which broke the moment M2
+ * introduced real authentication: whichever of seeding or owner-provisioning
+ * ran second collided with the `email` unique constraint the other had
+ * already claimed.
  *
- *   · Seed AFTER bootstrap: the real owner already holds that email, `email` is
- *     UNIQUE, so `onConflictDoNothing()` swallowed the insert. No `dev-owner`
- *     row existed, and the accounts insert then died on a foreign key.
- *   · Seed BEFORE bootstrap: `dev-owner` took the email, and bootstrap's own
- *     `createUser` hit the unique constraint instead. Seeding locked you out.
- *
- * The owner row belongs to Better Auth. This script only ever RESOLVES it, by
- * email, and refuses to run if it is absent. Owning identity in two places is
- * how the two disagree.
+ * `scripts/provision-owner.mjs` owns creating the row now (see
+ * `requireOwner()` in `src/server/auth/owner.ts`, which only ever RESOLVES it
+ * by email and never inserts one). This script only ever RESOLVES it too, and
+ * refuses to run if it is absent. Owning identity in two places is how the two
+ * disagree.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -70,14 +67,11 @@ function explainMissingOwner(email: string): void {
   console.error(`  No owner row found for OWNER_EMAIL=${email}.`);
   console.error('');
   console.error('  Burmy has no signup route, and this script will not invent an');
-  console.error('  identity. Enrol the owner first:');
+  console.error('  identity. Provision the owner first:');
   console.error('');
-  console.error('    node scripts/auth-grant.mjs bootstrap');
+  console.error('    node scripts/provision-owner.mjs');
   console.error('');
-  console.error('  then redeem the printed token at http://localhost:3000/recovery');
-  console.error('  and enrol two passkeys. Re-run `pnpm db:seed` afterwards.');
-  console.error('');
-  console.error('  If every passkey is lost, use `recovery` instead of `bootstrap`.');
+  console.error('  then re-run `pnpm db:seed`.');
   console.error('');
 }
 
@@ -98,7 +92,7 @@ async function main(): Promise<void> {
   const db = drizzle(client, { schema });
 
   try {
-    // RESOLVE, never create. Better Auth owns this row.
+    // RESOLVE, never create. scripts/provision-owner.mjs owns this row.
     const owners = await db
       .select({ id: schema.user.id })
       .from(schema.user)

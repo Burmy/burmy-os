@@ -52,7 +52,7 @@ Violating any of these is a correctness or security bug, not a style preference.
 | Framework | Next.js 16.3 (App Router), React 19, TypeScript strict |
 | Runtime | Node 24 LTS, pnpm 11 (corepack, pinned in `packageManager`) |
 | Database | PostgreSQL 18 + Drizzle ORM 0.45 |
-| Auth | Better Auth — **passkey plugin only**. Google is configured *once*, in Cloudflare Access. |
+| Auth | Cloudflare Access with Google is the **sole** authentication mechanism. No in-app auth library, no session of Burmy's own, no second factor. |
 | UI | Tailwind, shadcn/ui, Lucide |
 | Grids | TanStack Table + Virtual. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
 | Parsing | Papa Parse (CSV), ExcelJS (XLSX, provisional) |
@@ -111,7 +111,9 @@ These are verified, not folklore. Do not "fix" them back.
 - **Every protected server entry point calls `await requireOwner()` itself** — Server Actions and
   Route Handlers alike. Next.js documents that Server Functions are POSTs to their host route, so a
   `matcher` change can silently drop proxy coverage. `src/proxy.ts` is defense-in-depth, not the
-  boundary. Unprotected endpoints are an explicit allowlist: `/api/health`, `/api/auth/*`.
+  boundary. Unprotected endpoints are an explicit allowlist, exactly one entry: `/api/health`.
+  `requireOwner()` verifies the Cloudflare Access JWT and RESOLVES the owner row by verified email —
+  it never creates one. See "Owner provisioning" in `docs/SECURITY.md`.
 - **The deploy script never restores the database automatically.** On healthcheck failure it rolls
   back the *image* only and leaves Postgres untouched. A failed healthcheck usually means a bad build,
   not bad data, and the database may hold newer writes.
@@ -156,7 +158,8 @@ These are verified, not folklore. Do not "fix" them back.
   reject both.
 - **Playwright runs SERIAL (`fullyParallel: false`, `workers: 1`) and must stay that way.** Every spec
   drives one dev server against one development database and truncates tables to get a known state.
-  In parallel, one spec wipes another's session mid-test and it looks like a flaky passkey ceremony.
+  In parallel, one spec truncating `user` mid-test wipes another spec's owner row and it looks like a
+  flaky, unexplained bounce to `/access-denied` rather than the isolation bug it is.
 - **A new dependency with an install script breaks EVERY `pnpm <script>`, not just `pnpm install`.**
   pnpm runs a dependency-status check before each script, so an un-acknowledged
   `ERR_PNPM_IGNORED_BUILDS` takes out typecheck, lint, test and build at once — with a stack trace

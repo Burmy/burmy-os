@@ -19,9 +19,9 @@ export default defineConfig({
    * ───────────────────────────────────────────────────────────────────────────
    * Every spec drives one dev server against ONE development database, and each
    * truncates the auth and finance tables to reach a known starting state. Run in
-   * parallel, one spec wipes another's session mid-test and the failure presents
-   * as a flaky passkey ceremony rather than as the isolation bug it is. Learned
-   * the hard way in M3.
+   * parallel, one spec truncating `user` mid-test wipes another spec's owner row
+   * and the failure presents as an unexplained bounce to /access-denied rather
+   * than as the isolation bug it is. Learned the hard way in M3.
    *
    * `workers: 1` is a WORKAROUND, not the intended end state. It is acceptable
    * while the suite is small (14 tests, ~35s), and it stops being acceptable when

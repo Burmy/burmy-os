@@ -10,56 +10,44 @@
  * failure, and no failing test. The proxy is a second layer; it is not the
  * boundary. Anything server-invocable begins with `await requireOwner()`.
  *
- * WHY IT CHECKS BOTH FACTORS AND NOT JUST THE SESSION
+ * WHAT THIS DOES, IN FULL
  *
- * If this only validated the Better Auth session, then a route the matcher
- * missed would be defended by factor 2 alone — the proxy's silent-gap hazard
- * would still cost us something, just less. Verifying the Access assertion here
- * too means each entry point independently enforces BOTH factors, and the gap
- * costs nothing. Verification is a signature check against cached public keys,
- * so the price is negligible.
+ * Cloudflare Access — verified against Cloudflare's JWKS, fail-closed — is the
+ * SOLE interactive authentication mechanism (see docs/SECURITY.md). This
+ * function verifies that assertion via `requireAccessIdentity()`, which
+ * already confirms the verified email is the configured `OWNER_EMAIL`, then
+ * RESOLVES (never creates) the matching row in `user`. There is no session,
+ * no passkey, no second factor: the Access JWT is re-verified on every single
+ * request, so there is nothing here to revoke or expire independently — an
+ * owner who is removed from the Cloudflare Access policy loses access on
+ * their very next request.
  *
- * THE UNPROTECTED ALLOWLIST IS EXACTLY TWO ENTRIES
+ * "Resolve, never create" is deliberate: the owner row is provisioned once,
+ * out of band, by `scripts/provision-owner.mjs` — a request authenticating as
+ * the owner's Google account must never be able to conjure a database row
+ * into existence on its own. If the row is missing, that is a provisioning
+ * gap, not something this function fixes silently.
+ *
+ * THE UNPROTECTED ALLOWLIST IS EXACTLY ONE ENTRY
  *
  *   /api/health    booleans and a version string only
- *   /api/auth/*    Better Auth's own flows, which authenticate by design
  *
  * Anything else that does not call this function is a bug, and
  * tests/integration/entry-points.test.ts enumerates the filesystem to prove it.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { count, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { headers as nextHeaders } from 'next/headers';
 
 import { getDb } from '@/server/db';
-import { passkey as passkeyTable } from '@/server/db/schema';
-import { AUDIT_EVENT, fingerprintEmail, recordAuditEvent } from '@/server/security/audit';
-import {
-  AccessDeniedError,
-  AccessMisconfiguredError,
-  isOwnerEmail,
-  requireAccessIdentity,
-} from './access';
-import { auth } from './index';
-
-/**
- * Two passkeys minimum before onboarding is complete.
- *
- * One passkey is a single point of failure whose recovery path deliberately
- * requires SSH, Tailscale membership and a terminal. Enrolling a second one
- * takes twenty seconds at a moment when the owner is already authenticated, and
- * it is the difference between "lost a phone" and "invoke break-glass".
- */
-export const MIN_PASSKEYS = 2;
+import { user as userTable } from '@/server/db/schema';
+import { AUDIT_EVENT, recordAuditEvent } from '@/server/security/audit';
+import { AccessDeniedError, AccessMisconfiguredError, requireAccessIdentity } from './access';
 
 export interface OwnerContext {
   readonly userId: string;
   readonly email: string;
-  readonly sessionId: string;
-  readonly sessionCreatedAt: Date;
-  readonly passkeyCount: number;
-  readonly onboardingComplete: boolean;
 }
 
 export class UnauthorizedError extends Error {
@@ -69,23 +57,7 @@ export class UnauthorizedError extends Error {
   }
 }
 
-/** Authenticated, but fewer than `MIN_PASSKEYS` enrolled. */
-export class OnboardingIncompleteError extends Error {
-  constructor(readonly passkeyCount: number) {
-    super('Passkey onboarding incomplete');
-    this.name = 'OnboardingIncompleteError';
-  }
-}
-
-/** Authenticated, but the session is too old for a sensitive action. */
-export class ReauthRequiredError extends Error {
-  constructor() {
-    super('Re-authentication required');
-    this.name = 'ReauthRequiredError';
-  }
-}
-
-/** The deployment cannot verify factor 1. Refuse, never fall through. */
+/** The deployment cannot verify Cloudflare Access. Refuse, never fall through. */
 export class SecurityUnavailableError extends Error {
   constructor() {
     super('Security configuration unavailable');
@@ -93,42 +65,18 @@ export class SecurityUnavailableError extends Error {
   }
 }
 
-export interface RequireOwnerOptions {
-  /**
-   * Require a session created within `session.freshAge` (15 minutes).
-   * For sensitive actions: passkey removal, bulk deletion, full export,
-   * changing `OWNER_EMAIL`.
-   */
-  readonly fresh?: boolean;
-  /**
-   * Permit a session that has not finished passkey onboarding. ONLY the
-   * onboarding route and its own actions may set this.
-   */
-  readonly allowOnboarding?: boolean;
-}
-
-/** 15 minutes, matching `session.freshAge` in the Better Auth options. */
-const FRESH_AGE_MS = 60 * 15 * 1000;
-
-async function countPasskeys(userId: string): Promise<number> {
-  const rows = await getDb()
-    .select({ value: count() })
-    .from(passkeyTable)
-    .where(eq(passkeyTable.userId, userId));
-  return rows[0]?.value ?? 0;
-}
-
 /**
- * Authenticate and authorize the owner.
+ * Authenticate the owner via Cloudflare Access and resolve their row.
  *
- * @throws SecurityUnavailableError · UnauthorizedError · OnboardingIncompleteError · ReauthRequiredError
+ * @throws SecurityUnavailableError · UnauthorizedError
  */
-export async function requireOwner(options: RequireOwnerOptions = {}): Promise<OwnerContext> {
+export async function requireOwner(): Promise<OwnerContext> {
   const requestHeaders = await nextHeaders();
 
-  // ── Factor 1: Cloudflare Access ───────────────────────────────────────────
+  // ── Cloudflare Access: verify the JWT, confirm it is the owner ────────────
+  let email: string;
   try {
-    await requireAccessIdentity(requestHeaders);
+    ({ email } = await requireAccessIdentity(requestHeaders));
   } catch (cause) {
     if (cause instanceof AccessMisconfiguredError) {
       await recordAuditEvent({
@@ -148,58 +96,28 @@ export async function requireOwner(options: RequireOwnerOptions = {}): Promise<O
     throw cause;
   }
 
-  // ── Factor 2: Better Auth passkey session ─────────────────────────────────
-  const result = await auth.api.getSession({ headers: requestHeaders });
+  // ── Resolve the owner row — RESOLVE ONLY, never insert one ────────────────
+  // By this point `email` is guaranteed to equal the configured `OWNER_EMAIL`
+  // (requireAccessIdentity() already checked it). A missing row here means the
+  // owner has never been provisioned — see scripts/provision-owner.mjs — not
+  // that the visitor is untrusted.
+  const rows = await getDb()
+    .select({ id: userTable.id, email: userTable.email })
+    .from(userTable)
+    .where(eq(userTable.email, email))
+    .limit(1);
 
-  if (!result?.session || !result.user) {
+  const row = rows[0];
+  if (!row) {
     await recordAuditEvent({
       eventType: AUDIT_EVENT.ENTRY_POINT_UNAUTHENTICATED,
-      subjectType: 'session',
-      metadata: { reason: 'no_session' },
+      subjectType: 'access',
+      metadata: { reason: 'owner_not_provisioned' },
     });
     throw new UnauthorizedError();
   }
 
-  // Checked again at every request, not only at session creation. A session row
-  // that somehow belongs to another address stops working immediately, which is
-  // what makes changing `OWNER_EMAIL` a safe operation.
-  if (!isOwnerEmail(result.user.email)) {
-    await recordAuditEvent({
-      eventType: AUDIT_EVENT.ACCESS_NON_OWNER,
-      subjectType: 'session',
-      subjectId: result.session.id,
-      metadata: { emailFingerprint: fingerprintEmail(result.user.email) },
-    });
-    throw new UnauthorizedError();
-  }
-
-  const sessionCreatedAt = new Date(result.session.createdAt);
-
-  if (options.fresh === true && Date.now() - sessionCreatedAt.getTime() >= FRESH_AGE_MS) {
-    await recordAuditEvent({
-      eventType: AUDIT_EVENT.REAUTH_FAILURE,
-      ownerId: result.user.id,
-      subjectType: 'session',
-      subjectId: result.session.id,
-    });
-    throw new ReauthRequiredError();
-  }
-
-  const passkeyCount = await countPasskeys(result.user.id);
-  const onboardingComplete = passkeyCount >= MIN_PASSKEYS;
-
-  if (!onboardingComplete && options.allowOnboarding !== true) {
-    throw new OnboardingIncompleteError(passkeyCount);
-  }
-
-  return {
-    userId: result.user.id,
-    email: result.user.email,
-    sessionId: result.session.id,
-    sessionCreatedAt,
-    passkeyCount,
-    onboardingComplete,
-  };
+  return { userId: row.id, email: row.email };
 }
 
 /**
@@ -216,12 +134,6 @@ export function toAuthErrorResponse(error: unknown): Response | null {
   }
   if (error instanceof UnauthorizedError) {
     return new Response(null, { status: 401 });
-  }
-  if (error instanceof ReauthRequiredError) {
-    return new Response(null, { status: 403 });
-  }
-  if (error instanceof OnboardingIncompleteError) {
-    return new Response(null, { status: 403 });
   }
   return null;
 }

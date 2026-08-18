@@ -1,15 +1,8 @@
 import { redirect } from 'next/navigation';
 
 import { Nav } from '@/features/shell/nav';
-import { SignOutButton } from '@/features/shell/sign-out-button';
 import { ThemeToggle } from '@/features/shell/theme-toggle';
-import {
-  OnboardingIncompleteError,
-  ReauthRequiredError,
-  SecurityUnavailableError,
-  UnauthorizedError,
-  requireOwner,
-} from '@/server/auth/owner';
+import { SecurityUnavailableError, UnauthorizedError, requireOwner } from '@/server/auth/owner';
 import { readTheme } from '@/server/security/theme';
 
 /**
@@ -38,12 +31,11 @@ export default async function PrivateLayout({
   try {
     await requireOwner();
   } catch (error) {
-    if (error instanceof UnauthorizedError) destination = '/sign-in';
-    else if (error instanceof OnboardingIncompleteError) destination = '/onboarding/passkeys';
-    else if (error instanceof ReauthRequiredError) destination = '/sign-in';
+    if (error instanceof UnauthorizedError) destination = '/access-denied';
     else if (error instanceof SecurityUnavailableError) {
-      // Deliberately NOT a redirect. The deployment cannot verify factor 1, and
-      // sending the owner to a sign-in page would imply signing in could help.
+      // Deliberately NOT a redirect. The deployment cannot verify Cloudflare
+      // Access, and sending the owner to an "access denied" page would imply
+      // there is something to do about it — there isn't; it's an outage.
       throw error;
     } else throw error;
   }
@@ -60,7 +52,6 @@ export default async function PrivateLayout({
           <Nav />
           <div className="ml-auto flex items-center gap-1">
             <ThemeToggle current={theme} />
-            <SignOutButton />
           </div>
         </div>
       </header>

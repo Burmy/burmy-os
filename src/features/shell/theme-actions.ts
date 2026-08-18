@@ -14,11 +14,10 @@ import { THEME_COOKIE, type Theme, isTheme, themeCookieOptions } from '@/server/
  * server entry point authenticates itself — the value of that rule is that it has
  * no exceptions to reason about, and
  * `tests/integration/entry-points.test.ts` enforces it by enumerating the
- * filesystem. `{ allowOnboarding: true }` because the toggle is reachable from
- * the onboarding screen, before two passkeys exist.
+ * filesystem.
  */
 export async function setTheme(theme: Theme): Promise<void> {
-  await requireOwner({ allowOnboarding: true });
+  await requireOwner();
 
   // Validate even though the parameter is typed: a Server Action is an HTTP
   // endpoint, and the type annotation is erased at runtime. Anything can POST

@@ -3,13 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { type Page, expect, test } from '@playwright/test';
 import postgres from 'postgres';
 
-import {
-  GRANT_TTL_SECONDS,
-  encodeGrantPayload,
-  generateGrantToken,
-  grantIdentifier,
-} from '../../scripts/auth-grant.mjs';
-
 /**
  * M8's /finance/monthly grid through a real browser: a category cell's
  * displayed total, clicking it open, and the drill-down dialog's transaction
@@ -46,56 +39,27 @@ async function resetAll(): Promise<void> {
   });
 }
 
+/**
+ * Provision the owner row directly — the test-time equivalent of
+ * `node scripts/provision-owner.mjs` — and land in the app.
+ *
+ * There is no sign-in ceremony to drive anymore: Cloudflare Access with Google
+ * is the sole authentication mechanism, verified entirely outside this
+ * application, and `pnpm dev` runs with `NODE_ENV=development`, which is
+ * exactly the dev-bypass production also has (see
+ * `src/server/auth/access.ts`'s `resolveAccessMode`). Once the owner row
+ * exists, navigating anywhere private lands directly on `/finance/monthly`.
+ */
 async function signIntoApp(page: Page): Promise<void> {
-  const client = await page.context().newCDPSession(page);
-  await client.send('WebAuthn.enable', { enableUI: false });
-
-  const addDevice = async (transport: 'internal' | 'usb'): Promise<void> => {
-    await client.send('WebAuthn.addVirtualAuthenticator', {
-      options: {
-        protocol: 'ctap2',
-        transport,
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
-      },
-    });
-  };
-
-  const token = generateGrantToken();
   await withDb(async (sql) => {
+    const email = OWNER_EMAIL.toLowerCase();
     await sql`
-      insert into "verification" ("id", "identifier", "value", "expires_at")
-      values (
-        ${randomUUID()},
-        ${grantIdentifier(token)},
-        ${encodeGrantPayload({
-          kind: 'bootstrap',
-          email: OWNER_EMAIL.toLowerCase(),
-          issuedAt: new Date().toISOString(),
-        })},
-        ${new Date(Date.now() + GRANT_TTL_SECONDS * 1000)}
-      )
+      insert into "user" ("id", "name", "email", "email_verified")
+      values (${randomUUID()}, ${email}, ${email}, true)
     `;
   });
 
-  await addDevice('internal');
-
-  await page.goto('/recovery');
-  await page.getByRole('radio', { name: 'bootstrap' }).check();
-  await page.getByLabel('Token').fill(token);
-  await page.getByRole('button', { name: 'Redeem' }).click();
-  await expect(page).toHaveURL(/\/onboarding\/passkeys$/);
-
-  await page.getByRole('button', { name: 'Add a passkey' }).click();
-  await expect(page.getByText('1 of 2 enrolled')).toBeVisible();
-
-  await addDevice('usb');
-  await page.getByRole('button', { name: 'Add a passkey' }).click();
-  await expect(page.getByText('2 of 2 enrolled')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Continue to Burmy' }).click();
+  await page.goto('/');
   await expect(page).toHaveURL(/\/finance\/monthly$/);
 }
 

@@ -121,12 +121,21 @@ export const ruleOperatorEnum = pgEnum('rule_operator', [
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Core user table, shaped to match Better Auth's expected schema so it can be
- * adopted rather than duplicated in M2. Better Auth adds session, account,
- * verification and passkey tables alongside it.
+ * The single owner row. Provisioned once, out of band, by
+ * `scripts/provision-owner.mjs` — `requireOwner()`
+ * (`src/server/auth/owner.ts`) only ever RESOLVES it by the email Cloudflare
+ * Access verifies, never creates one.
  *
  * There is exactly one row. There is no signup route — not hidden, not
  * disabled: not registered at all.
+ *
+ * Shaped the way it is (rather than a narrower, Burmy-specific shape) because
+ * this table was originally adopted from Better Auth's schema in M2. Better
+ * Auth and its passkey plugin have since been removed entirely — Cloudflare
+ * Access with Google is now the sole authentication mechanism — but `id` /
+ * `name` / `email` / `emailVerified` remain exactly as they were, since every
+ * finance table's `owner_id` foreign key points at `user.id` and there is no
+ * reason to touch a working, referenced column shape.
  */
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -140,21 +149,23 @@ export const user = pgTable('user', {
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * BETTER AUTH OWNED TABLES
+ * FORMER BETTER AUTH TABLES — RETAINED, UNUSED, NOT DEAD DATA
  *
- * These four (plus `user` above and `rateLimit` below) are Better Auth's
- * schema, hand-written here rather than generated into a second file, because
- * Drizzle must remain the single source of truth for migrations.
+ * Better Auth and its passkey plugin were removed as part of the switch to
+ * Cloudflare Access + Google as the sole authentication mechanism (see
+ * docs/SECURITY.md, "Authentication"). Nothing in the application writes to
+ * `session`, `account`, `verification`, `passkey` or `rateLimit` anymore.
  *
- * The field list is transcribed from Better Auth 1.6.29's own
+ * They are kept rather than dropped because removing them would require a
+ * destructive migration for no concrete benefit — CLAUDE.md's standing rule is
+ * that unused tables stay unless there is a real reason to drop them. If a
+ * later milestone genuinely needs the space or the names, drop them then, in
+ * their own reviewed migration.
+ *
+ * The field list below is transcribed from Better Auth 1.6.29's own
  * `getAuthTables()` (`@better-auth/core/dist/db/get-tables.mjs`) and the
- * passkey plugin's `src/schema.ts` — read from the installed package, not from
- * documentation. If Better Auth is upgraded, re-read that source and diff.
- *
- * TS PROPERTY NAMES MUST STAY camelCase. Better Auth's Drizzle adapter looks
- * columns up as `schemaModel[fieldName]` — by JS property key, never by SQL
- * column name. So `emailVerified` is load-bearing; `email_verified` is free to
- * follow this file's snake_case convention.
+ * passkey plugin's `src/schema.ts`, from when they were still in use. It is
+ * historical record now, not a contract with a live adapter.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -212,17 +223,10 @@ export const account = pgTable(
 );
 
 /**
- * Short-lived single-use values. Better Auth's `consumeVerificationValue()`
- * reads and DELETES in one step, which is exactly single-use semantics.
- *
- * Three things share this table, deliberately, instead of each inventing its
- * own token table and its own crypto:
- *   1. the passkey plugin's WebAuthn challenges,
- *   2. bootstrap enrollment tokens,
- *   3. break-glass recovery tokens.
- *
- * `identifier` holds the token, `value` the JSON payload. See
- * src/server/auth/recovery.ts.
+ * Formerly held short-lived single-use values: Better Auth's own WebAuthn
+ * challenges, plus Burmy's bootstrap-enrollment and break-glass recovery
+ * tokens (`identifier` the token, `value` the JSON payload). See the group
+ * comment above — unused now that Cloudflare Access is the sole mechanism.
  */
 export const verification = pgTable(
   'verification',

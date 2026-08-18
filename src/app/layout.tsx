@@ -26,7 +26,7 @@ export const viewport: Viewport = {
  * and no flash of the wrong theme. See src/server/security/theme.ts.
  *
  * Reading a cookie makes every route dynamic, which is already true here: the
- * only static routes are /sign-in and /recovery, and both are trivial.
+ * only static route is /access-denied, and it is trivial.
  */
 export default async function RootLayout({
   children,

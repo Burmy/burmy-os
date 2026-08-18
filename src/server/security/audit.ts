@@ -12,11 +12,12 @@
  * accumulates the exact data the rest of the application is careful with. So:
  *
  *   - No raw statement rows, descriptions, or amounts. Ever.
- *   - No tokens, no cookies, no session tokens, no Access assertions.
- *   - A REJECTED third party's email address is stored as a short hash, not as
- *     an address. Correlating repeated attempts does not require retaining
- *     somebody's identity — and a non-owner email is someone else's PII sitting
- *     in a personal finance database.
+ *   - No tokens, no cookies, no Access assertions.
+ *   - A rejected request's email is never captured at all, not even as a hash:
+ *     `requireAccessIdentity()` in `server/auth/access.ts` rejects a
+ *     non-owner identity before returning it to any caller, so there is no
+ *     candidate email available here to record in the first place. A non-owner
+ *     email would be someone else's PII sitting in a personal finance database.
  *   - The owner's own email is not stored either. There is exactly one owner and
  *     `OWNER_EMAIL` already names them; a copy per row buys nothing.
  *
@@ -31,8 +32,6 @@
  * refusal.
  */
 
-import { createHash } from 'node:crypto';
-
 import { auditEvents } from '@/server/db/schema';
 import { getDb } from '@/server/db';
 
@@ -41,24 +40,15 @@ import { getDb } from '@/server/db';
  * so a typo cannot create a phantom event type that no query will ever find.
  */
 export const AUDIT_EVENT = {
-  SIGN_IN_SUCCESS: 'auth.sign_in.success',
-  SIGN_IN_FAILURE: 'auth.sign_in.failure',
-  /** A cryptographically VALID Access identity that is not the owner. */
-  ACCESS_NON_OWNER: 'auth.access.non_owner',
-  /** A request that reached a protected entry point without a valid session. */
+  /**
+   * A request reached a protected entry point without a valid, owner-matched
+   * Access identity — `metadata.reason` distinguishes "no/invalid assertion"
+   * (`access_denied`, from Cloudflare Access itself) from "verified as the
+   * owner, but no database row exists yet" (`owner_not_provisioned`).
+   */
   ENTRY_POINT_UNAUTHENTICATED: 'auth.entry_point.unauthenticated',
+  /** The deployment cannot verify Cloudflare Access — missing/invalid config. */
   ACCESS_MISCONFIGURED: 'auth.access.misconfigured',
-  PASSKEY_ADDED: 'auth.passkey.added',
-  PASSKEY_REMOVED: 'auth.passkey.removed',
-  BOOTSTRAP_TOKEN_ISSUED: 'auth.bootstrap.token_issued',
-  BOOTSTRAP_TOKEN_REDEEMED: 'auth.bootstrap.token_redeemed',
-  BOOTSTRAP_TOKEN_REJECTED: 'auth.bootstrap.token_rejected',
-  RECOVERY_TOKEN_ISSUED: 'auth.recovery.token_issued',
-  RECOVERY_TOKEN_REDEEMED: 'auth.recovery.token_redeemed',
-  RECOVERY_TOKEN_REJECTED: 'auth.recovery.token_rejected',
-  SESSION_REVOKED: 'auth.session.revoked',
-  REAUTH_SUCCESS: 'auth.reauth.success',
-  REAUTH_FAILURE: 'auth.reauth.failure',
 } as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT)[keyof typeof AUDIT_EVENT];
@@ -75,18 +65,6 @@ export interface AuditEventInput {
   readonly subjectType?: string | null;
   readonly subjectId?: string | null;
   readonly metadata?: AuditMetadata;
-}
-
-/**
- * A short, salt-free digest of an email address, for correlation only.
- *
- * Salt-free is intentional: the point is that two attempts by the same address
- * produce the same value. It is not a secrecy mechanism — the address space of
- * plausible emails is trivially searchable — it is a way to avoid *storing* an
- * address while still being able to say "the same one, eleven times".
- */
-export function fingerprintEmail(email: string): string {
-  return createHash('sha256').update(email.trim().toLowerCase()).digest('hex').slice(0, 16);
 }
 
 /**

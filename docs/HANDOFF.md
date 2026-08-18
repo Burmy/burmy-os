@@ -108,8 +108,8 @@ These came from a structured interview with the owner and are **settled**. Do no
 | Package manager | **pnpm 11** via corepack, pinned in `packageManager` | |
 | Database | **PostgreSQL 18** | |
 | ORM | **Drizzle ORM** 0.45 | Pinned exactly (0.x versioning) |
-| Auth | **Better Auth — passkey + local session ONLY** | See §7 |
-| Identity provider | **Google, configured once, in Cloudflare Access** | **Not** a second time inside Better Auth |
+| Auth | **Cloudflare Access with Google — the SOLE mechanism.** No in-app auth library, no session of Burmy's own | See §7 |
+| Identity provider | **Google, configured once, in Cloudflare Access** | There is nowhere else it could be configured a second time |
 | Styling | Tailwind 4 (installed). **shadcn/ui + Lucide are approved but NOT yet initialized** — that lands with the app shell in M3 | |
 | CSV parsing | Papa Parse | Not yet installed; arrives M4 |
 | Grids | **TanStack Table + TanStack Virtual** | **Not AG Grid** — its row grouping and pivoting are Enterprise ($999/dev/yr), and the monthly view *looks* like a pivot. Ours is computed in SQL. |
@@ -238,70 +238,57 @@ migrator image build with `--prod --ignore-scripts`. Smaller image, tighter supp
 
 ## 7. Security and authentication architecture
 
-**Two factors with different failure modes.** The point is not "two logins" — it is that compromising
-one does not compromise the other.
+**Cloudflare Access with Google is the SOLE authentication mechanism.** There is no in-app credential,
+no session of Burmy's own, and no second factor. This replaced an earlier M2-era two-factor design
+(Cloudflare Access plus an in-app Better Auth passkey) — see "Former design" below.
 
 ```
 Browser -> app.burmy.me
    |
    v
-CLOUDFLARE ACCESS        <- FACTOR 1: Google identity, allowlisted to OWNER_EMAIL
+CLOUDFLARE ACCESS        <- Google identity, allowlisted to OWNER_EMAIL
    |                        (TLS terminates at Cloudflare's edge)
    |  outbound-only tunnel, no inbound ports on the origin
    v
 src/proxy.ts             <- verifies the Access JWT against Cloudflare's JWKS
    |                        (signature, aud, iss, exp). DEFENSE-IN-DEPTH ONLY.
    v
-BETTER AUTH              <- FACTOR 2: passkey (WebAuthn) + local session
-   |                        NO Google client configured here.
-   v
 requireOwner() in every protected Server Action and Route Handler
-   |
+   |  re-verifies the SAME Access JWT independently (src/server/auth/access.ts),
+   |  then RESOLVES (never creates) the matching row in `user` by verified email
    v
 Finance
 ```
 
-- **Google is configured exactly once — in Cloudflare Access.** Not a second time in Better Auth. One
-  fewer place for the allowlist to drift out of sync.
-- Owner identity comes from the **verified Access `email` claim**, matched against `OWNER_EMAIL`.
-- Session cookie: `httpOnly`, `Secure`, `SameSite=Lax`, **host-only — never `Domain=.burmy.me`**,
-  server-side store in Postgres for instant revocation.
-- **Unprotected endpoints are an explicit allowlist**, currently exactly two: `/api/health` (returns
-  booleans and a version string only — no counts, no data, no error text, no environment detail) and
-  `/api/auth/*` (authenticates by design).
+- **Google is configured exactly once — in Cloudflare Access.** There is no auth library installed
+  that has a second slot for it.
+- Owner identity comes from the **verified Access `email` claim**, matched against `OWNER_EMAIL`, on
+  **every single request** — there is no session in between two checks that could go stale.
+- **Fail closed, always.** Missing/invalid `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD` in production
+  refuses every request with `503`. The dev-bypass fires **only** when `NODE_ENV` is exactly
+  `development` — never on `!== 'production'` (see the `CLAUDE.md` gotcha).
+- **`requireOwner()` never creates the owner row — only resolves it.** The first row comes from
+  `node scripts/provision-owner.mjs`, run once, out of band, by whoever controls the host and the
+  database. An authenticated request must never be able to conjure a database row into existence on
+  its own.
+- **Unprotected endpoints are an explicit allowlist**, exactly **one** entry: `/api/health` (returns
+  booleans and a version string only — no counts, no data, no error text, no environment detail).
+- Unauthenticated navigation lands on `/access-denied` — a static page, not a sign-in screen, because
+  there is no in-app action that could fix a rejected identity or a missing owner row.
 
-### Bootstrap and recovery — RESOLVED in M2, by prototype
+### Former design: Cloudflare Access + passkey (removed post-M8)
 
-Better Auth's passkey plugin documents no recovery path and no bootstrap-without-a-session story.
-Both candidates were implemented and measured against a real PostgreSQL 18, then one was chosen and
-the other **deleted**. Canonical write-up with the evidence: [`docs/SECURITY.md`](./SECURITY.md).
+Through Milestone 8, Burmy additionally required an in-app Better Auth passkey as a second factor,
+with its own session, an out-of-band bootstrap/recovery grant system minted over SSH through
+Tailscale, and a two-passkey-minimum onboarding gate. Both bootstrap candidates considered at the time
+— passkey-first registration versus session-first grant redemption — were implemented and measured
+against a real Postgres before the session-first design shipped.
 
-**What shipped — one mechanism for both:**
-
-```
-node scripts/auth-grant.mjs <bootstrap|recovery>     on the host, over SSH/Tailscale
-   │  mints a 256-bit token, prints it ONCE, stores only sha256(token)
-   ▼
-POST /api/auth/burmy/redeem-grant   { token, kind }
-   │  verifies Cloudflare Access ITSELF · single-use (atomic consume) · 10-min TTL
-   │  kind must match · owner email must match · 5 attempts/hour (DB-backed)
-   │  recovery additionally revokes every existing session
-   ▼
-session  ->  /onboarding/passkeys  ->  two passkeys enrolled  ->  Finance
-```
-
-**Why not Better Auth's passkey-first registration (`requireSession: false`):** it works, but it
-leaves `/passkey/generate-register-options` answering unauthenticated callers *permanently* for a
-once-ever operation, the grant could not be consumed at options time without burning it on a dismissed
-browser prompt (so one token yielded unlimited challenges for 10 minutes), and it created the owner
-row from an anonymous request. The session-first design also means **the recovery path is exercised on
-day one** instead of being cold code needed on the worst day.
-
-**Committed constraints — all met:**
-- **Two passkeys** before onboarding completes — enforced in `requireOwner()`, not in the UI.
-- **No email anywhere.** An email path would be a permanent phishable backdoor around the very factor
-  the passkey exists to provide.
-- **The last passkey cannot be deleted**, so a mis-click cannot force a break-glass recovery.
+That entire mechanism was removed by deliberate owner decision, between accepting M8 and starting M9:
+Cloudflare Access with Google is now the sole interactive authentication mechanism. The full
+comparison and the M2 prototyping evidence remain in git history; canonical current-state detail is
+[`docs/SECURITY.md`](./SECURITY.md), "Authentication" and "Former design: Cloudflare Access + passkey
+(removed)".
 
 ---
 
@@ -365,10 +352,9 @@ sum-equality proof.
 
 | | |
 | --- | --- |
-| Auth | Cloudflare Access JWT (factor 1) + Better Auth passkeys (factor 2), both enforced inside `requireOwner()` |
-| Bootstrap & recovery | One single-use 10-minute grant, minted only by `scripts/auth-grant.mjs` over SSH/Tailscale. Prototyped both candidates, chose, deleted the loser. |
-| Gates | Two passkeys before onboarding completes; last passkey undeletable; re-auth for passkey removal |
-| Schema | **19 tables**, 2 migrations. `session` / `account` / `verification` / `passkey` / `rate_limit` added; M1's `user` table reconciled, not duplicated |
+| Auth | **Cloudflare Access with Google — the sole mechanism**, post-M8 (originally shipped as two factors in M2; see §7). JWT re-verified inside `requireOwner()`, not merely trusted from the proxy. |
+| Owner provisioning | `node scripts/provision-owner.mjs`, run once, out of band. `requireOwner()` only ever RESOLVES the row by verified email — never creates one. |
+| Schema | **19 tables**, 2 migrations from M2. `session` / `account` / `verification` / `passkey` / `rate_limit`, added when M2 shipped Better Auth, are now **unused but retained** — no destructive migration for tidiness alone. M1's `user` table is still the one live identity table. |
 | Shell | `Finance` / `Settings` nav, cookie-based theme (three states, no inline script), error/loading/not-found boundaries with a correlation id |
 | Taxonomy | Accounts CRUD (deactivate, never delete; `last_four` rejects longer input) and categories CRUD + archive + up/down reorder |
 | Data access | `src/server/db/finance/` — `ownerId` first on every function, injected into every `WHERE`. `src/server/finance/` stays DB-free. |
@@ -379,7 +365,7 @@ sum-equality proof.
 | Classification | **Merchant memory** (`finance_merchant_memory`) pre-fills a category from confirmed history; owner override always wins going forward. **Counterpart matching** (`classify/counterpart.ts`) links transfer/credit-card-payment legs by BoA's shared confirmation token — exact match, ±7 days, exactly one candidate, or no classification at all. Every automated write gated on `type_source = 'default'`, so a manual confirmation (M7) can never be overwritten. Investment auto-classification and the `counterpart_transaction_id` FK were both explicitly deferred. |
 | Review queue | `/finance/review` — filterable by status/account/category/type. Assign/change category, correct type (`type_source = 'manual_confirmation'`), bulk-assign. **No confirmed-but-uncategorized spending**: a category is required for `confirmed` unless the type is exclusionary. Correcting a linked transaction's type **atomically unlinks both legs** — the corrected one becomes manual, the freed one reverts to its M5 default. Memory updates from a correction are **opt-in** (unchecked by default) — an exception fix should not silently retrain future imports. Nav carries a live needs-review count. |
 | Monthly grid | `/finance/monthly` — the landing route and the actual product. Month × category totals, Total Expenditure, Income, Gross Savings, all computed live from `finance_transactions` (never stored). Columns in the owner's `sort_order`, flat — never regrouped by `kind`. Every cell with a transaction drills down to the exact rows, through the same `gridBaseConditions()` the aggregate query uses, so a drill-down total structurally cannot disagree with its cell (proven in the integration suite). A `confirmed`/`auto` transaction with no category (should be impossible after M7) is still counted, and now also surfaces a dedicated reconciliation banner. |
-| Suites | `pnpm test` **332** (domain + components, Docker-free) · `pnpm test:integration` **155** (Testcontainers) · `pnpm test:e2e` **21** (Playwright) |
+| Suites | `pnpm test` **319** (domain + components, Docker-free) · `pnpm test:integration` **109** (Testcontainers) · `pnpm test:e2e` **21** (Playwright) |
 | **Pushed?** | **NO.** Commits are local only. |
 | Repository visibility | **Private** |
 
@@ -455,22 +441,22 @@ burmy-os/
 │   └── ROADMAP.md               Live milestone tracker + "RESUME HERE"
 ├── drizzle/                     Generated migrations (COMMITTED)
 │   ├── 0000_wet_malcolm_colcord.sql   14 tables — M1
-│   ├── 0001_nappy_ultron.sql          + 5 auth tables — M2, purely additive
+│   ├── 0001_nappy_ultron.sql          + 5 auth tables — M2, purely additive.
+│   │                                  Now unused, retained rather than dropped — §7
 │   └── 0002_strong_red_hulk.sql       + finance_import_rows.decision_overridden — M5
 ├── scripts/
 │   ├── migrate.mjs              Migration runner — plain ESM on purpose
-│   └── auth-grant.mjs           BREAK GLASS. Mints bootstrap/recovery grants.
-│                                Plain ESM for the same reason: it must run on a
-│                                host that may have just been rebuilt.
+│   └── provision-owner.mjs      Idempotent one-time owner-row insert, plain ESM.
+│                                requireOwner() only ever RESOLVES this row —
+│                                this script is the only thing that creates it.
 ├── src/
 │   ├── proxy.ts                 Level with app/, NOT inside it. Access JWT + CSP
 │   │                            nonce. EDGE runtime — keep it edge-safe.
 │   ├── app/
 │   │   ├── page.tsx             -> redirects to /finance/monthly
-│   │   ├── (auth)/sign-in/      passkey challenge
-│   │   ├── (auth)/recovery/     redeem a grant (cannot ISSUE one)
-│   │   ├── (onboarding)/onboarding/passkeys/   the two-passkey gate. Own route
-│   │   │                        group so it cannot redirect-loop with (private).
+│   │   ├── (auth)/access-denied/  static error page — NOT a sign-in screen.
+│   │   │                        Where an unauthenticated request lands; there is
+│   │   │                        no in-app credential to offer.
 │   │   ├── (private)/layout.tsx requireOwner() for navigation
 │   │   ├── (private)/finance/layout.tsx   Monthly / Import sub-nav — M5
 │   │   ├── (private)/finance/monthly/page.tsx   THE PRODUCT — month x category
@@ -478,29 +464,26 @@ burmy-os/
 │   │   ├── (private)/finance/import/page.tsx    upload + in-progress list — M5
 │   │   ├── (private)/finance/import/[importId]/page.tsx   preview/review/commit — M5
 │   │   ├── (private)/finance/review/page.tsx    needs-attention queue — M7
-│   │   ├── api/health/route.ts  UNAUTHENTICATED; booleans + version ONLY
-│   │   ├── api/auth/[...all]/   UNAUTHENTICATED by design; getAuth() per request
+│   │   ├── api/health/route.ts  UNAUTHENTICATED; booleans + version ONLY. The
+│   │   │                        ONLY unauthenticated route in the app.
 │   │   ├── layout.tsx  globals.css
-│   │   ├── (private)/settings/{accounts,categories,passkeys}/
+│   │   ├── (private)/settings/{accounts,categories}/
 │   │   ├── (private)/{error,loading,not-found}.tsx
 │   ├── components/ui/           shadcn/ui — button, input, label, select, dialog,
 │   │                            table, dropdown-menu, sonner
-│   ├── features/auth/           sign-in, enrolment, grant redemption (client)
-│   ├── features/shell/          nav, theme toggle, sign-out, StyleNonce
-│   ├── features/finance/settings/  accounts, categories, passkeys managers + actions
+│   ├── features/shell/          nav, theme toggle, StyleNonce. No sign-out button
+│   │                            — there is no session of Burmy's own to sign out of.
+│   ├── features/finance/settings/  accounts, categories managers + actions
 │   ├── features/finance/import/    upload form, review table, actions — M5
 │   ├── features/finance/review/    queue, filters, corrections, bulk actions — M7
 │   ├── features/finance/monthly/   grid table (client), drill-down Server Action — M8
-│   ├── lib/auth-client.ts       Better Auth browser client, passkey plugin only
 │   ├── lib/utils.ts             cn()
 │   ├── server/
 │   │   ├── auth/
-│   │   │   ├── access.ts        FACTOR 1 — Cloudflare Access JWT, fail-closed
-│   │   │   ├── index.ts         FACTOR 2 — Better Auth. Lazily constructed.
-│   │   │   ├── owner.ts         requireOwner() — THE boundary
-│   │   │   ├── grants.ts        single-use token format (hashed at rest)
-│   │   │   ├── grant-plugin.ts  POST /api/auth/burmy/redeem-grant
-│   │   │   └── passkey-policy.ts  re-auth + last-passkey rule + audit
+│   │   │   ├── access.ts        Cloudflare Access JWT verification, fail-closed —
+│   │   │   │                    the ENTIRE authentication mechanism
+│   │   │   └── owner.ts         requireOwner() — THE boundary. Verifies Access,
+│   │   │                        RESOLVES (never creates) the owner row.
 │   │   ├── security/{csp,audit,theme}.ts
 │   │   ├── db/
 │   │   │   ├── {index,schema,seed}.ts
@@ -545,7 +528,7 @@ burmy-os/
 │   │                            raw BYTES. Checksummed — update the digest in
 │   │                            fixture-guard.test.ts when one legitimately changes.
 │   ├── setup/testing-library.ts jest-dom matchers + RTL cleanup (jsdom project only)
-│   ├── integration/             155 tests. Testcontainers PG18. Own config.
+│   ├── integration/             109 tests. Testcontainers PG18. Own config.
 │   │   ├── entry-points.test.ts THE anti-silent-coverage-gap test
 │   │   ├── finance-imports.test.ts   staging, Tier 2, the commit-time race +
 │   │   │                        override preservation, file-hash status — M5
@@ -558,13 +541,20 @@ burmy-os/
 │   │                        boundary, refund netting, and — the core M8 guarantee —
 │   │                        drill-down sums proven bit-for-bit equal to the
 │   │                        aggregate for 4 scopes (category/expenditure/income/year)
-│   └── e2e/                     21 tests, SERIAL. Chrome virtual authenticator,
-│                                real Radix overlays under the real CSP.
+│   └── e2e/                     21 tests, SERIAL. Real Radix overlays under the
+│                                real CSP; a real dev-server + Postgres, but no
+│                                Cloudflare Access in the loop (dev-bypass) — see
+│                                auth.spec.ts below.
 │                                import.spec.ts: golden path, re-upload idempotency,
 │                                merchant-memory pre-fill (M6). review.spec.ts:
 │                                resolve a needs_review row, correct a linked pair (M7).
 │                                monthly.spec.ts: a grid cell's total matching its
 │                                drill-down dialog exactly, the reconciliation banner (M8).
+│                                auth.spec.ts: a provisioned owner reaches
+│                                /finance/monthly directly, no sign-in step; an
+│                                unprovisioned owner sees /access-denied, not a
+│                                passkey prompt. csp.spec.ts: the CSP proofs that
+│                                used to live in the old passkey.spec.ts.
 ├── Dockerfile                   base / deps / prod-deps / builder / migrator / runner
 ├── compose.dev.yml              Postgres 18 + one-shot migrate
 ├── eslint.config.mjs  vitest.config.ts  vitest.integration.config.ts
@@ -619,11 +609,18 @@ docker compose -f compose.dev.yml up -d postgres
 # 4. Run migrations THROUGH THE CONTAINER (never host pnpm)
 docker compose -f compose.dev.yml run --rm migrate
 
-# 5. Optional: synthetic seed data (4 accounts, 11 categories, 0 transactions)
+# 5. Provision the owner row — requireOwner() only ever RESOLVES it, never
+#    creates one, so this is a required one-time step, not optional
+pnpm db:provision-owner
+
+# 6. Optional: synthetic seed data (4 accounts, 11 categories, 0 transactions)
 pnpm db:seed
 
-# 6. Start the dev server
+# 7. Start the dev server
 pnpm dev                      # http://localhost:3000
+#    NODE_ENV=development bypasses Cloudflare Access automatically (there is no
+#    Cloudflare locally by design) — visiting / lands directly on
+#    /finance/monthly once the owner row exists.
 ```
 
 ### Verification commands
@@ -693,11 +690,11 @@ capped at 500 rows by design, not a general browser.
 
 ### Also outstanding
 
-**Manual real-device passkey verification**, carried from M2 through M8. The
-automated ceremony passes against Chrome's virtual authenticator (real WebAuthn
-with a software key store), but no physical authenticator has been used. Two
-minutes: `pnpm dev`, sign in at `/sign-in` with a phone or Windows Hello, then
-check Settings → Passkeys.
+Nothing carried forward from the authentication system — the item that used to be here, manual
+real-device passkey verification, is moot: the passkey plugin it was tracking was removed entirely in
+the post-M8 Cloudflare-Access-only auth change (§7). What remains for a real deployment is
+provisioning: `node scripts/provision-owner.mjs` once, against the production database, before the
+first real sign-in.
 
 ---
 
@@ -705,7 +702,7 @@ check Settings → Passkeys.
 
 | # | Milestone | Essence |
 | --- | --- | --- |
-| ~~M2~~ | ~~Authentication & security baseline~~ | **Complete.** Access JWT verification, Better Auth passkeys, `requireOwner()`, bootstrap/recovery settled by prototype, CSP, audit events |
+| ~~M2~~ | ~~Authentication & security baseline~~ | **Complete.** Access JWT verification, `requireOwner()`, CSP, audit events. Originally shipped with Better Auth passkeys as a second factor; replaced post-M8 by Cloudflare Access alone — §7. |
 | ~~M3~~ | ~~App shell, accounts, categories~~ **Complete.** | `Finance` / `Settings` nav, `/` → `/finance/monthly`, shadcn/ui init, CRUD for accounts and categories (archive never delete) |
 | ~~M4~~ | ~~Parsing & normalization core~~ **Complete.** | **Starts by reading one real redacted BoA export.** Header-signature detection, BoA deposit + card adapters, generic mapper, merchant normalization, dedupe. **Also verifies whether `source_transaction_id` earns a unique constraint.** |
 | ~~M5~~ | ~~Import pipeline, preview, duplicates~~ **Complete.** | Single-file upload, in-memory staging, preview, count-based dedupe, atomic commit |

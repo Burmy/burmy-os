@@ -135,7 +135,7 @@ build, and the database may hold newer writes that a restore would destroy.
                · row counts vs the backup manifest
                · SUM(amount_cents) checksum per year
                · latest transaction date
-               · passkey auth round-trip
+               · Cloudflare Access sign-in reaches /finance/monthly
                · monthly grid totals match the reconciliation baseline
 ```
 
@@ -145,7 +145,7 @@ build, and the database may hold newer writes that a restore would destroy.
 | --- | --- |
 | The restic password | Password manager + printed offline copy |
 | The domain / Cloudflare account | Cloudflare account recovery codes, stored offline |
-| Every enrolled passkey | Two devices minimum are required at onboarding, plus the break-glass path settled in Milestone 2 |
+| The Cloudflare Access policy | Reconfigured from the Cloudflare dashboard; the owner row itself (`node scripts/provision-owner.mjs`) is resolved by email, not tied to any device |
 | The VPS | This entire procedure — it is why the VPS is treated as disposable |
 | **The local CSV archive** | **Nothing.** This is why Stage 1 exists and comes first. |
 

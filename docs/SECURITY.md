@@ -14,8 +14,8 @@ if it were public — because it was, briefly, before the first commit.
 
 | Threat | Realistic? | Primary control |
 | --- | --- | --- |
-| Google account compromise | The single most likely path in | Passkey at the app layer — a genuinely different factor |
-| Stolen/borrowed device with a live session | Plausible | Cloudflare Access still gates; short session; re-auth for sensitive actions |
+| Google account compromise | The single most likely path in | Cloudflare Access's own policy and Google's own account security — Burmy has no independent factor of its own (see "Authentication" below for why) |
+| Stolen/borrowed device with a live Access session | Plausible | Cloudflare Access's own session duration and policy — not something Burmy controls or can re-check independently, since it has no session of its own |
 | Malicious or malformed statement file | Certain, eventually — files come from outside | Treat every upload as hostile (below) |
 | A file reaching the pipeline that the owner never chose | Would require a watched folder | There is no watched folder. The only input is the browser-selected file — see "The filesystem is not an input". |
 | Formula injection into an export | Plausible — a merchant name is attacker-influenced text | Neutralized at the writer |
@@ -29,93 +29,79 @@ if it were public — because it was, briefly, before the first commit.
 
 - **Cloudflare can technically read application content** in transit; TLS terminates at their edge.
 - **The VPS provider can technically read everything** at rest and in memory.
-- A targeted attacker with physical access to the owner's unlocked, passkey-enrolled device.
+- A targeted attacker with physical access to the owner's unlocked device carrying a live Cloudflare
+  Access session.
 - Nation-state adversaries.
 
 ---
 
 ## Authentication
 
-Two factors with **different failure modes** — the point is not "two logins", it is that compromising
-one does not compromise the other.
+**Cloudflare Access, authenticating against Google, is the SOLE authentication mechanism.** There is
+no in-app credential, no session of Burmy's own, and no second factor:
 
 ```
-Cloudflare Access  →  Google identity, allowlisted to OWNER_EMAIL   ← factor 1
-Burmy application  →  Passkey (WebAuthn), rpID = app.burmy.me       ← factor 2
+app.burmy.me → Cloudflare Access / Google → Burmy application
 ```
 
-**Google is configured exactly once, in Cloudflare Access.** Better Auth handles passkeys and the
-local session only. There is no second OAuth client — one fewer place for the allowlist to drift.
+This replaced an earlier two-factor design (Cloudflare Access *plus* an in-app Better Auth passkey) —
+see "Former design: Cloudflare Access + passkey (removed)" below for what that was and why it is gone.
+
+**Google is configured exactly once, in Cloudflare Access.** There is no OAuth client anywhere inside
+this application — nothing here could configure a second one even by accident, because there is no
+auth library installed that has a slot for one.
+
+**Cloudflare Access's JWT assertion is re-verified inside the application, not merely trusted, on
+every single request:**
+
+- `src/proxy.ts` verifies it at the edge, first — defense-in-depth, not the boundary (Next.js can
+  route around a `matcher`, per "Authorization" below).
+- `requireOwner()` (`src/server/auth/owner.ts`) verifies it again, independently, on every protected
+  entry point: signature, `aud`, `iss`, `exp` against Cloudflare's JWKS (`src/server/auth/access.ts`),
+  **and** that the verified email is `OWNER_EMAIL`. Only then does it resolve the matching row in
+  `user` — a **read**, never a write. An incoming request, however well authenticated, can never
+  create the owner row on its own; see "Owner provisioning" below.
 
 Rules:
 
 - No password authentication anywhere. No custom cryptography.
 - **No signup route exists.** It is not registered, not merely hidden.
-- `OWNER_EMAIL` is checked against the verified Access JWT claim *and* at session creation. Any other
-  identity is rejected and audited.
-- Session cookie: `httpOnly`, `Secure`, `SameSite=Lax`, **host-only — never `Domain=.burmy.me`**,
-  7-day expiry with rolling refresh, stored server-side in Postgres for instant revocation.
-- **At least two passkeys must be enrolled** before onboarding completes.
-- Sensitive actions require re-authentication: bulk deletion, account deletion, passkey removal, full
-  export, changing `OWNER_EMAIL`.
+- `OWNER_EMAIL` is checked against the verified Access JWT claim on **every** request — there is no
+  session in between two checks that could go stale, because there is no session.
+- **Fail closed, always.** Missing or invalid Cloudflare Access configuration (`CF_ACCESS_TEAM_DOMAIN`,
+  `CF_ACCESS_AUD`) makes the app refuse every request with `503`, in production, rather than serve
+  traffic without the outer gate — `resolveAccessMode()` bypasses verification **only** when
+  `NODE_ENV` is exactly `development`, never on `!== 'production'` (see the gotcha in `CLAUDE.md`).
+- A missing owner row, or a validly-verified identity that is not `OWNER_EMAIL`, is rejected the same
+  way: a bodiless `401`, and a browser navigation lands on `/access-denied` — a static page, not a
+  sign-in screen, because there is no in-app action that could fix either case.
 
----
+### Owner provisioning
 
-## Bootstrap and recovery — settled by prototype in M2
+`requireOwner()` only ever **resolves** the owner by verified email — it never inserts a row. The
+first row has to come from somewhere else: `node scripts/provision-owner.mjs`, run once, out of band,
+by whoever controls the host and the database. It is idempotent (safe to re-run) and inserts nothing
+if a row for `OWNER_EMAIL` already exists.
 
-Better Auth's passkey plugin documents **no** bootstrap-without-a-session story and **no** recovery
-path at all. Both candidates from the plan were implemented and measured against a real PostgreSQL 18
-before anything was chosen. What follows is observed behaviour, not design intent.
+This is a deliberate security property, not an oversight: an authenticated request must never be able
+to conjure a database row into existence by itself, however trustworthy its Access identity looks.
 
-### One mechanism serves both: the out-of-band grant
+### Former design: Cloudflare Access + passkey (removed)
 
-`scripts/auth-grant.mjs <bootstrap|recovery>` mints a **256-bit, single-use, 10-minute** token and
-prints it once to the terminal. It is redeemed at `POST /api/auth/burmy/redeem-grant`, which verifies
-Cloudflare Access itself, then creates a session.
+Through Milestone 8, Burmy additionally required an in-app Better Auth passkey as a second factor,
+with its own session, an out-of-band bootstrap/recovery grant system (`scripts/auth-grant.mjs`, a
+`POST /api/auth/burmy/redeem-grant` endpoint, single-use 10-minute tokens minted over SSH through
+Tailscale), and a two-passkey-minimum onboarding gate. Both bootstrap candidates considered at the
+time — passkey-first registration versus session-first grant redemption — were implemented and
+measured against a real Postgres before the session-first design shipped.
 
-| Property | How it is guaranteed |
-| --- | --- |
-| Single use | Better Auth's `consumeVerificationValue()` — an atomic `consumeOne` inside a transaction. Proven by a test firing 5 concurrent redemptions of one token: exactly 1 succeeded, 1 session row existed. |
-| Short lived | `expiresAt` on the `verification` row, re-checked after consumption. |
-| Not in a backup | Only `sha256(token)` is stored. The database can *recognize* a token, never produce one — so a restored dump contains no usable credential. |
-| Never over HTTP | Minting requires Tailscale + an SSH key + shell access + the database password. There is no HTTP route that issues one. |
-| Not email | There is no email path anywhere in Burmy. An emailed reset link would be a permanent phishable bypass of the very factor the passkey provides. |
-| Audited | `issued` / `redeemed` / `rejected` with a reason, and never the token. |
-| Rate limited | 5 attempts/hour on that path, counters in the **`rate_limit` table** — a restart does not clear them. |
-| Factor 1 still required | Losing a passkey does not cost the owner their Google account, so recovery still passes Access. A leaked token alone is insufficient. |
-
-Recovery additionally **revokes every existing session** before creating its own: the owner is there
-because their credentials are gone, so any surviving session is forgotten at best.
-
-A `bootstrap` grant is **refused once any passkey exists**, so a forgotten bootstrap token cannot
-become a permanent side door. After enrolment, getting back in is recovery, and needs a recovery
-grant. The two kinds are not interchangeable in either direction, and a mismatched token is still
-consumed — a wrong guess is not a free probe.
-
-### Bootstrap: why passkey-first registration was rejected
-
-| | Candidate A — passkey-first | **Candidate B — session-first (shipped)** |
-| --- | --- | --- |
-| Config | `registration.requireSession: false` + a `resolveUser` gate | `requireSession` left at its default `true` |
-| Unauthenticated surface | `/passkey/generate-register-options` answers anonymous callers **permanently**, for a once-ever operation | Endpoint is simply unreachable without a session |
-| Token consumption | Could not consume at options time without burning the grant whenever the browser prompt was dismissed → **one token yielded unlimited challenges for its full 10 minutes** | Single use, consumed on redemption |
-| Owner row creation | Created from an **anonymous request** | Created inside an authenticated redemption |
-| Code paths to keep correct | Two token validators (`resolveUser` + redeem) | One |
-| Recovery path exercised | Cold — first run on the worst day | **Same code as bootstrap, so it runs on day one** |
-
-Both were verified working. B was chosen because A's cost is a standing unauthenticated endpoint in
-exchange for an operation that happens exactly once, and because B makes the break-glass path
-something that has already been used successfully rather than untested code.
-
-**Candidate A's implementation was deleted, not left behind a flag.** A `requireSession: false` code
-path in the tree is one edit away from being live.
-
-### Committed constraints, both met
-
-- **Two passkeys minimum** before onboarding completes — enforced in `requireOwner()`, not in the UI.
-- **Recovery does not depend on email** — there is no email in the system.
-- **The last passkey cannot be deleted.** Two → one is allowed (the gate then asks for a replacement);
-  one → zero is refused, so a mis-click cannot force a break-glass recovery.
+That entire mechanism was removed by deliberate product/security-model decision: Cloudflare Access
+with Google is now the sole interactive authentication mechanism, and the in-app second factor was
+judged to add operational complexity (break-glass recovery, passkey enrolment UX, a second session to
+reason about) without a correspondingly distinct threat it defended against, given Access already
+gates on the same Google identity. The full comparison and the M2 prototyping evidence remain in git
+history for whoever wants the detail; this document no longer carries it, because none of that code is
+live to reason about anymore.
 
 ---
 
@@ -130,12 +116,15 @@ Consequently:
 > **Every protected server entry point — Server Action or Route Handler — begins with
 > `await requireOwner()`.** `src/proxy.ts` is defense-in-depth, not the security boundary.
 
-**Unprotected endpoints are an explicit allowlist, not a judgement call:**
+**Unprotected endpoints are an explicit allowlist, not a judgement call — exactly one entry:**
 
 | Endpoint | Why | Constraint |
 | --- | --- | --- |
-| `/api/health` | Container and deploy healthchecks | Returns booleans and a version string **only**. No counts, no data, no error text, no environment detail. |
-| `/api/auth/*` | Better Auth's own flows | Authenticates by design |
+| `/api/health` | Container and deploy healthchecks, reached from *inside* the Docker network with no Cloudflare in the path | Returns booleans and a version string **only**. No counts, no data, no error text, no environment detail. |
+
+`/api/auth/*` was the second entry through Milestone 8 — Better Auth's own flows, which authenticated
+by design. It no longer exists: there is no in-app authentication endpoint left to allowlist, since
+Cloudflare Access is verified entirely outside this application.
 
 Anything not listed is protected. Integration tests invoke every entry point unauthenticated with the
 proxy bypassed and assert rejection, and assert the health response contains no sensitive fields.
@@ -243,9 +232,9 @@ category names. Covered by a payload fixture test.
 | CSP | Strict, nonce-based, per request, built in `src/proxy.ts`. `'unsafe-eval'` in **development only** (React Refresh cannot hot reload without it). `'unsafe-inline'` in exactly one directive — `style-src-attr` — as an accepted, non-neutral tradeoff (below). |
 | HSTS | `max-age=63072000; includeSubDomains; preload` |
 | Others | `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `X-Frame-Options: DENY`, restrictive `Permissions-Policy` |
-| CSRF | Next.js Server Action origin checks + Better Auth token. **No state-changing GET routes.** |
+| CSRF | Next.js Server Action origin checks. **No state-changing GET routes.** There is no auth-endpoint CSRF surface at all — authentication happens entirely at Cloudflare Access, outside this application. |
 | XSS | React escaping; `dangerouslySetInnerHTML` banned by lint. Statement descriptions are untrusted text everywhere they are rendered. |
-| Rate limiting | Cloudflare at the edge; Better Auth limiter on auth routes, counters in the `rate_limit` **table** so a restart does not clear them; 5/hour on grant redemption; per-owner limits on upload and export (M5+) |
+| Rate limiting | Cloudflare at the edge; per-owner limits on upload and export (M5+). No origin-side auth-endpoint limiter — there is no in-app auth endpoint left to rate limit. The `rate_limit` table remains in the schema, unused (see `src/server/db/schema.ts`), rather than dropped without a concrete reason. |
 
 ### The CSP: one accepted relaxation, and one refused
 
@@ -288,7 +277,7 @@ violations.
 
 **What the tests pin.** `tests/unit/csp.test.ts` asserts `'unsafe-inline'` appears in
 exactly one directive and that no `script-src-attr` escape hatch exists.
-`tests/e2e/passkey.spec.ts` proves the live header is byte-identical to
+`tests/e2e/csp.spec.ts` proves the live header is byte-identical to
 `buildCsp(...)` output, then asserts the four production properties directly:
 `style-src-attr` permits `'unsafe-inline'`; `script-src` does not; production
 `script-src` has no `'unsafe-eval'` (development does); and `style-src` stays
@@ -318,8 +307,11 @@ asserts zero violations from application code.
 
 ## Audit and logging
 
-**Audited:** sign-in success/failure, passkey add/remove, recovery use, import commit/discard, bulk
-category change, rule change, export, transaction delete. Metadata is redacted.
+**Audited:** an entry point reached without a valid, owner-matched Access identity (distinguishing "no
+or invalid assertion" from "verified as the owner, but the row is not provisioned yet"), Access
+misconfiguration, import commit/discard, bulk category change, rule change, export, transaction
+delete. Metadata is redacted — see `src/server/security/audit.ts`. There is no sign-in/sign-out event
+of its own to audit: authentication happens entirely at Cloudflare Access, which keeps its own logs.
 
 **Never logged:** raw statement rows, full descriptions, amounts at info level, tokens, cookies,
 `Authorization` headers, OAuth secrets, connection strings.
@@ -344,9 +336,11 @@ tests as of M2 and re-run on every suite; the rest need the real deployment.
       by direct invocation)
 - [x] ✅ `/api/health` response contains no counts, data, or environment detail
 - [ ] Postgres is unreachable from outside the Docker network *(needs the production compose stack)*
-- [x] ✅ A revoked session dies immediately — server-side session store, asserted in
-      `tests/integration/owner-guard.test.ts`
-- [x] ✅ Session cookie is host-only, `HttpOnly`, `SameSite=Lax`, and `Secure` in production
+- [x] ✅ Access is revoked from the Cloudflare Access policy takes effect on the owner's very next
+      request — there is no session of Burmy's own to independently outlive it; asserted in
+      `tests/integration/owner-guard.test.ts`'s "resolve, never create" and fail-closed cases
+- [ ] The owner row is provisioned (`node scripts/provision-owner.mjs`) before the first real sign-in
+      *(needs the production deployment)*
 - [ ] `git log -p` contains no secret and no real financial data *(re-check at M10)*
 - [ ] An integration test proves an unscoped Finance read is impossible *(M3+, when there is Finance
       data to read)*
