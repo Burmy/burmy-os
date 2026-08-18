@@ -17,7 +17,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M7** | Review queue | ✅ Complete |
 | **M8** | Monthly grid & drill-down *(the product)* | ✅ Complete |
 | **M9** | Transactions ledger, reconciliation & export | ✅ Complete |
-| M10 | Backup automation, deployment, hardening, launch | ⚪ Not started |
+| M10 | Backup automation, deployment, hardening, launch | 🔵 In progress — repo-side done, external infra pending |
 
 Legend: ⚪ not started · 🔵 in progress · 🟡 blocked · ✅ complete
 
@@ -861,8 +861,65 @@ existing M1–M8 schema with zero migrations. M10 is infrastructure, not a
 feature milestone — hardening the M1 image for production, standing up
 `app.burmy.me` behind Cloudflare Tunnel + Access + Tailscale, backup
 automation with a **verified restore**, and a full DR drill, all completed
-**before** the first real production import. Full scope in
-`IMPLEMENTATION_PLAN.md` §39 and `docs/HANDOFF.md`.
+**before** the first real production import.
+
+**Repo-side work is done and locally tested; external infrastructure is not
+provisioned yet.** Split deliberately, per owner instruction, so nothing
+external gets touched before the plan was reviewed in detail:
+
+**Done, locally verified against real (synthetic) data:**
+- Production `compose.yml` — `edge`/`dbnet` split, no published ports
+  anywhere, secrets scoped by consumer (five `.env.<scope>` files, never one
+  blanket file — `web` never sees B2/restic/Tunnel credentials).
+- `Dockerfile`: `provision-owner.mjs` added to the `migrator` stage (needed
+  by `deploy.sh`'s idempotent-every-deploy provisioning step).
+- Docker hardening actually exercised against the real built `runner` image
+  for the first time in this project — `read_only: true` + `tmpfs: [/tmp]`,
+  `init: true`, `stop_grace_period` — confirmed working (`touch /app/x`
+  fails, `/tmp` succeeds, `/api/health` responds). Found and fixed a real
+  latent bug along the way: `output: 'standalone'` + pnpm doesn't reliably
+  trace `@swc/helpers`, and the image crash-looped on `MODULE_NOT_FOUND`
+  until `@swc/helpers` was promoted to a direct dependency and
+  `outputFileTracingIncludes` forced it into the traced output — see
+  CLAUDE.md. Dev has always run via `pnpm dev` on the host, so nothing
+  before this ever actually started the `runner` image.
+- `scripts/{provision,deploy,backup,maintenance,restore,
+  restore-verify-weekly,verify,check-host}.sh`, all executable, all
+  `bash -n`-clean. Backup/maintenance/restore/verify exercised end to end
+  against a real local restic repository and real seeded Postgres data (no
+  B2 credentials needed for this — `RESTIC_REPOSITORY` just points at a
+  local path): dump → manifest → restic backup → restic restore → pg_restore
+  → manifest comparison, all correct, plaintext dump/manifest confirmed
+  removed after every run regardless of outcome. `deploy.sh`'s image
+  tag/retag/rollback/prune logic tested in isolation with simulated deploys
+  — caught and fixed a real bug where pruning sorted by the TAG STRING
+  (meaningless for a git SHA) instead of actual build time. `check-host.sh`
+  caught and fixed a real `df -P` column-parsing bug (breaks when the
+  filesystem name itself contains a space). `provision.sh` reviewed
+  carefully but **not** exercised — no way to test `ufw`/`tailscale`/`sshd`
+  changes against a real remote host locally; the first real run against
+  the actual VPS is the test.
+- `deploy/systemd/*.{service,timer}` — nightly backup (03:00), weekly
+  maintenance (Sun 04:00), weekly restore-verify (Sun 05:00), daily host
+  check (08:00).
+- `.github/workflows/ci.yml` — test-only, no production secrets, no deploy
+  capability: typecheck/lint/unit/integration/e2e/build on every push and PR.
+- Docs updated to match what was actually built: `docs/DEPLOYMENT.md`
+  (image-versioning design, secrets-scoping table, corrected OCI sizing —
+  2 OCPU/12 GB is the current documented Always Free total, not 1/6),
+  `docs/BACKUP_RESTORE.md` (nightly/weekly split, plaintext-handling
+  change, healthchecks.io start+success/fail signaling, explicit DR
+  dependency ordering), `docs/SECURITY.md` (checklist updated with what M10
+  actually proves so far).
+
+**NOT done — external, manual, stopped deliberately before touching them:**
+VPS provisioning, Cloudflare Tunnel/Access/DNS configuration (blocked on
+confirming whether `burmy.me` is already a Cloudflare zone), Backblaze B2
+bucket/keys, Tailscale network, healthchecks.io account, and therefore the
+real production deploy, the real DR drill, and the 13-point launch
+checklist. See `docs/DEPLOYMENT.md`, "External setup" for the exact manual
+steps and `docs/DEPLOYMENT.md`, "Launch checklist" for what still needs
+proving before real financial data touches production.
 
 ## Carried forward
 

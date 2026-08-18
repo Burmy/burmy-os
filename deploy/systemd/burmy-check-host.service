@@ -1,0 +1,10 @@
+[Unit]
+Description=Burmy daily host check (disk usage, container restart-looping)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=burmy
+WorkingDirectory=/home/burmy/burmy-os
+ExecStart=/home/burmy/burmy-os/scripts/check-host.sh

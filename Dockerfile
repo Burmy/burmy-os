@@ -49,8 +49,17 @@ COPY . .
 RUN pnpm build
 
 # ── migrator ─────────────────────────────────────────────────────────────────
-# Needs only: production node_modules, the generated SQL, and one .mjs script.
-# No TypeScript, no tsx, no esbuild.
+# Needs only: production node_modules, the generated SQL, and two .mjs
+# scripts. No TypeScript, no tsx, no esbuild.
+#
+# `provision-owner.mjs` rides along in this same stage (M10) rather than
+# getting a third image — it has the identical minimal footprint as
+# `migrate.mjs` (plain ESM, only `postgres` + a Node builtin), and
+# `scripts/deploy.sh` runs it via this image right after migrations, on every
+# deploy, not just the first one — it is idempotent and cheap. The default
+# CMD stays `migrate.mjs`; deploy.sh overrides the command for the
+# provision-owner invocation (`docker compose run --rm migrate node
+# scripts/provision-owner.mjs`).
 FROM base AS migrator
 ENV NODE_ENV=production
 RUN addgroup -g 1001 -S burmy && adduser -u 1001 -S burmy -G burmy
@@ -59,6 +68,7 @@ COPY --from=prod-deps --chown=burmy:burmy /app/node_modules ./node_modules
 COPY --chown=burmy:burmy package.json ./
 COPY --chown=burmy:burmy drizzle ./drizzle
 COPY --chown=burmy:burmy scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --chown=burmy:burmy scripts/provision-owner.mjs ./scripts/provision-owner.mjs
 
 USER burmy
 CMD ["node", "scripts/migrate.mjs"]

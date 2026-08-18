@@ -289,6 +289,37 @@ These are verified, not folklore. Do not "fix" them back.
   which is real reconciliation logic this page deliberately does not build. If a future feature genuinely
   needs a dollar figure for `transaction_type IN ('transfer', 'credit_card_payment')`, that is pair-matching
   work, not a `SUM`/`ABS` choice — do not reach for either as a shortcut.
+- **`output: 'standalone'` + pnpm does not reliably trace `@swc/helpers` into the runner image, and
+  `pnpm build`/`next build` never catch it.** M10 was the first time anyone actually ran the built
+  `runner` stage end to end (`docker compose up web`) rather than `pnpm dev` on the host — it
+  crash-looped immediately with `Cannot find module '.../@swc/helpers/esm/_interop_require_default.js'`,
+  a documented Next.js + pnpm interaction, not specific to this app. The trace resolves against a
+  specific pnpm-hashed instance of `next` (varies by which peer packages, including devDependencies
+  like `@playwright/test`, are present at build time) and misses a conditionally-loaded ESM interop
+  helper for that instance. Fixed two ways together: `@swc/helpers` promoted from transitive to a
+  **direct** dependency (`package.json`), and `outputFileTracingIncludes: { '**/*':
+  ['./node_modules/@swc/helpers/**/*'] }` in `next.config.ts` to force the whole package into
+  `.next/standalone` regardless — Node's directory-walk module resolution then finds it from any
+  nested pnpm instance. If a similar `MODULE_NOT_FOUND` appears for some other package after `output:
+  standalone`, this is the pattern: promote to a direct dependency AND force-include it in tracing:
+  fixing only one of the two did not resolve it in testing.
+- **`docker compose run` has no `--no-build` flag** — that flag exists on `up` only. Passing it to
+  `run` fails outright with `unknown flag: --no-build`, not a silent no-op. `run` already does not
+  rebuild by default unless the image is missing or `--build` is passed, so the fix is simply omitting
+  the flag, not finding an equivalent.
+- **Image-tag pruning must sort by the image's actual build time, never by the tag string.** A git
+  short-SHA (`a1b2c3d`) has no chronological ordering as text — `scripts/deploy.sh`'s first draft used
+  `sort -r` on `docker images --format '{{.Tag}}'` and would have kept whichever tags sorted
+  alphabetically last, unrelated to which deploys were actually most recent. Caught by simulating a
+  sequence of fake deploys with genuinely distinct image timestamps and checking what survived
+  pruning — sorting by tag looked plausible on a quick read and was simply wrong. Fixed by sorting on
+  `docker images --format '{{.CreatedAt}}|{{.Tag}}'` instead, since every SHA tag corresponds to a
+  real, distinct `docker build`.
+- **`df -P /`'s column positions shift if the filesystem name itself contains a space** (seen locally:
+  `C:/Program Files/Git`) — a fixed `awk '{print $5}'` silently reads the wrong field instead of
+  failing. `scripts/check-host.sh`'s disk-usage check reads `$(NF-1)` (second-to-last field) instead:
+  `df -P`'s last column is always `Mounted on` and the one before it is always `Capacity`, regardless
+  of how many fields the filesystem name itself splits into.
 
 ---
 

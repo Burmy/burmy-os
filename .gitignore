@@ -15,7 +15,15 @@
 # ── SECRETS ──────────────────────────────────────────────────────────────────
 .env
 .env.*
+# M10 production secrets are scoped by consumer (see docs/DEPLOYMENT.md) —
+# real .env.postgres / .env.database / .env.app / .env.tunnel / .env.backup
+# on the VPS must never be committed; only their .example templates may be.
 !.env.example
+!.env.postgres.example
+!.env.database.example
+!.env.app.example
+!.env.tunnel.example
+!.env.backup.example
 *.pem
 *.key
 *.p12

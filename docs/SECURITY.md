@@ -335,7 +335,11 @@ tests as of M2 and re-run on every suite; the rest need the real deployment.
       fails the suite (validated by temporarily adding one and watching it fail both statically and
       by direct invocation)
 - [x] ✅ `/api/health` response contains no counts, data, or environment detail
-- [ ] Postgres is unreachable from outside the Docker network *(needs the production compose stack)*
+- [ ] Postgres is unreachable from outside the Docker network — the production `compose.yml` now
+      exists and publishes **no ports** for `postgres` on the `internal: true` `dbnet` network,
+      confirmed locally (`docker compose ps` shows no port mapping; `dbnet` has no route to the
+      internet). *Final confirmation still needs the real VPS network boundary, not a local Docker
+      Desktop instance.*
 - [x] ✅ Access is revoked from the Cloudflare Access policy takes effect on the owner's very next
       request — there is no session of Burmy's own to independently outlive it; asserted in
       `tests/integration/owner-guard.test.ts`'s "resolve, never create" and fail-closed cases
@@ -344,5 +348,11 @@ tests as of M2 and re-run on every suite; the rest need the real deployment.
 - [ ] `git log -p` contains no secret and no real financial data *(re-check at M10)*
 - [ ] An integration test proves an unscoped Finance read is impossible *(M3+, when there is Finance
       data to read)*
-- [ ] Formula-injection fixture round-trips safely through CSV and XLSX export *(M9)*
-- [ ] A restore has been performed and verified — not merely configured *(M10)*
+- [x] ✅ Formula-injection fixture round-trips safely through CSV export — `tests/unit/export-csv.test.ts`
+      (M9). XLSX export was never built (CSV alone covers the need; ExcelJS's dependency-security gate
+      was never triggered), so there is no XLSX path to cover.
+- [ ] A restore has been performed and verified — not merely configured. **Locally proven**: a real
+      `pg_dump` → `restic backup` → `restic restore` → `pg_restore` → manifest-comparison round trip
+      against real seeded Postgres data and a local restic repository, `scripts/{backup,restore,
+      verify}.sh` (M10). *Still outstanding: the same drill against the real production VPS and
+      Backblaze B2 — see `docs/BACKUP_RESTORE.md`'s DR sequence.*

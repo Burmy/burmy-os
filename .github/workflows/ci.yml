@@ -1,0 +1,86 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CI — test-only. No production secrets, no deploy capability, exactly the
+# gates every milestone in this project already runs by hand:
+#
+#   typecheck / lint / unit / integration / e2e / build
+#
+# Deployment stays manual and Tailscale-gated (docs/DEPLOYMENT.md) — this
+# workflow cannot reach the VPS, holds no Cloudflare/B2/restic credentials,
+# and the one Postgres password it uses is a throwaway, CI-only value with
+# no connection to anything real.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: burmy
+          # CI-only, throwaway — never used outside this job's own container,
+          # never reused anywhere real. Not treated as a secret.
+          POSTGRES_PASSWORD: ci_only_not_a_real_secret
+          POSTGRES_DB: burmy
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U burmy -d burmy"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://burmy:ci_only_not_a_real_secret@localhost:5432/burmy
+      OWNER_EMAIL: ci@example.invalid
+      NODE_ENV: development
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+      - name: Apply migrations (for E2E, against the service Postgres above)
+        run: node scripts/migrate.mjs
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: E2E tests
+        run: pnpm test:e2e
+
+      - name: Build
+        run: pnpm build

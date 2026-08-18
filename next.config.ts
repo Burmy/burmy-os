@@ -5,6 +5,20 @@ const nextConfig: NextConfig = {
   // server bundle instead of shipping the whole node_modules tree.
   output: 'standalone',
 
+  // Next's own file tracer misses `@swc/helpers` under pnpm's per-package
+  // isolated store — a documented Next.js + pnpm interaction, not specific
+  // to this app. Discovered running the ACTUAL `runner` image end to end for
+  // the first time (M10): `.next/standalone` builds and `next build` passes
+  // cleanly either way, but `node server.js` crash-loops with
+  // `Cannot find module '.../@swc/helpers/esm/_interop_require_default.js'`
+  // — a runtime failure `pnpm build`/`next build` never surfaces on their
+  // own, since dev always runs on the host via `pnpm dev`, never this image.
+  // Forcing the whole package into the traced output (Node's directory-walk
+  // resolution then finds it from any nested pnpm-hashed instance) fixes it.
+  outputFileTracingIncludes: {
+    '**/*': ['./node_modules/@swc/helpers/**/*'],
+  },
+
   // Fail the production build on type errors. The default is already to fail,
   // but stating it prevents a future "just ship it" flag from being added
   // quietly to a codebase that handles money.

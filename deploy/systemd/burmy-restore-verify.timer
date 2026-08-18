@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly Sunday 05:00 — Burmy automated restore verification (after maintenance)
+
+[Timer]
+OnCalendar=Sun *-*-* 05:00:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
