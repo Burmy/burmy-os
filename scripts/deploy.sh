@@ -3,10 +3,11 @@ set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Deploy the current git HEAD. Run ON THE VPS, from inside the cloned repo —
-# the owner reaches the VPS over Tailscale SSH first, then runs this
-# directly; this script contains no SSH/remote logic of its own, which is
-# exactly what makes its core logic (build, tag, migrate, up, healthcheck,
-# rollback) testable locally against a dev machine's own Docker daemon.
+# the owner reaches the VPS over ordinary key-based SSH first, then runs
+# this directly; this script contains no SSH/remote logic of its own, which
+# is exactly what makes its core logic (build, tag, migrate, up,
+# healthcheck, rollback) testable locally against a dev machine's own
+# Docker daemon.
 #
 # IMAGE VERSIONING (read before changing this script)
 #

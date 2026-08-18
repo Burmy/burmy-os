@@ -1,5 +1,9 @@
 [Unit]
-Description=Burmy weekly automated restore verification (scratch database, destroyed after)
+# OPTIONAL — not installed by default. Automated weekly restore
+# verification is deferred for V1 (owner decision, M10 simplification); the
+# required proof before launch is one MANUAL restore, run by hand once. See
+# scripts/restore-verify-weekly.sh's header comment before enabling this.
+Description=Burmy weekly automated restore verification (scratch database, destroyed after) [OPTIONAL]
 After=docker.service
 Requires=docker.service
 

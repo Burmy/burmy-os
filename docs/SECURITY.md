@@ -288,8 +288,12 @@ asserts zero violations from application code.
 
 ## Network
 
-- **No inbound ports.** `cloudflared` dials out.
-- `ufw` default-deny. SSH bound to the Tailscale interface only, key-only, root login disabled.
+- **No inbound ports for the application.** `cloudflared` dials out; Burmy-OS itself has no public web
+  port.
+- `ufw` default-deny inbound, with exactly one allowed port: SSH — key-only, password auth and root
+  login disabled. No VPN/Tailscale mesh (owner decision, M10 simplification, see
+  `docs/DEPLOYMENT.md`) — a second piece of infrastructure whose only job is gating access to the
+  first was judged not worth its own complexity for a single-owner deployment.
 - **Postgres is never published to the host** and sits only on the `internal: true` `dbnet` network.
 
 ---

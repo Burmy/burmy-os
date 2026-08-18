@@ -1,5 +1,5 @@
 [Unit]
-Description=Nightly at 03:00 — Burmy database backup
+Description=Nightly at 03:00 — Burmy database backup [REQUIRED]
 
 [Timer]
 OnCalendar=*-*-* 03:00:00

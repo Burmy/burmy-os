@@ -57,7 +57,7 @@ Violating any of these is a correctness or security bug, not a style preference.
 | Grids | Hand-rolled on the shadcn `Table` primitive, with a thin shared presentation layer in `src/components/finance/`. TanStack Table was originally approved but was never actually installed — the tables in this app are small (dozens of rows, no sort/virtualization need), so it was dropped from the plan during the M8-era UX pass rather than added just because it was once on the list. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
 | Parsing | Papa Parse (CSV), ExcelJS (XLSX, provisional) |
 | Testing | Vitest + React Testing Library, Playwright |
-| Infra | Docker Compose, Cloudflare Tunnel + Access, Tailscale, restic → Backblaze B2 |
+| Infra | Docker Compose, Cloudflare Tunnel + Access, ordinary key-based SSH (no Tailscale/VPN — simplified during M10), restic → Backblaze B2 |
 
 ---
 

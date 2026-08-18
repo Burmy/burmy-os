@@ -32,6 +32,7 @@ if [ -n "${B2_ACCOUNT_ID:-}" ]; then
   export B2_ACCOUNT_ID B2_ACCOUNT_KEY
 fi
 
+# OPTIONAL, deferred for V1 — see the matching comment in scripts/backup.sh.
 PING_BASE="${HEALTHCHECKS_MAINTENANCE_PING_URL:-}"
 ping() {
   [ -n "${PING_BASE}" ] || return 0

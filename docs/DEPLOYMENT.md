@@ -1,9 +1,16 @@
 # Deployment
 
 > **Status: repo-side M10 pieces are implemented and locally tested (production `compose.yml`, all
-> `scripts/*.sh`, systemd units, CI). External infrastructure — the actual VPS, Cloudflare Tunnel/Access,
-> Backblaze B2 bucket, Tailscale network — has NOT been created yet; see "External setup" below for the
-> exact manual steps still outstanding. Nothing here should be read as "already deployed".
+> `scripts/*.sh`, systemd units, CI) against the SIMPLIFIED architecture below. External infrastructure
+> — the actual VPS, Cloudflare Tunnel/Access, Backblaze B2 bucket — has NOT been created yet; see
+> "External setup" below for the exact manual steps still outstanding. Nothing here should be read as
+> "already deployed".
+
+**Simplified scope (owner decision):** `VPS + Cloudflare Access with Google + Burmy-OS/Postgres + B2
+backups.` Nothing more, unless a concrete blocker shows up. Tailscale, healthchecks.io, automated
+weekly restore verification, and quarterly DR drills were all in an earlier draft of this plan and are
+now explicitly deferred — see "Deferred for V1" near the end of this document for exactly what that
+means and why nothing was deleted, only made optional.
 
 Production launch deliberately comes **after** transactions, export, reconciliation, hardening and a
 verified backup/restore. Real financial data does not touch production until recovery has been proven —
@@ -26,9 +33,14 @@ Browser ──HTTPS──▶ Cloudflare  (TLS terminates here)
         │    migrate ──▶ postgres 18 ──▶ pgdata   │
         └─────────────────────────────────────────┘
 
-        Owner's PC ──▶ Tailscale ──▶ VPS (SSH, admin, deploys)
-        ufw default-deny · SSH bound to the Tailscale interface only
+        Owner's PC ──▶ ordinary key-based SSH ──▶ VPS (admin, deploys)
+        ufw default-deny inbound · SSH is the ONE inbound rule · no VPN mesh
 ```
+
+Deliberately no Tailscale, no VPN, no private admin network — a second piece of infrastructure whose
+only job is protecting access to the first was judged not worth its own complexity for a single-owner
+personal deployment. Key-only SSH on the public port, with password auth and root login disabled, is
+the accepted tradeoff; see "VPS administration" below.
 
 ---
 
@@ -94,19 +106,20 @@ actually started this image.
 ## Host provisioning
 
 ```bash
-TAILSCALE_AUTHKEY=tskey-auth-xxxxx ./scripts/provision.sh   # as root, over the provider's initial console
+./scripts/provision.sh   # as root, over the provider's initial console
 ```
 
 One command, because "limited Linux experience" is a stated constraint. It installs Docker, configures
-`ufw` (default-deny), installs and joins Tailscale, binds SSH to the Tailscale interface only,
-disables root login and password auth, creates the app user, and prepares the systemd timer directory.
-Ubuntu/Debian (`apt`) assumed. **Untested against a real VPS as of this commit** — reviewed carefully,
-but there is no way to exercise `ufw`/`tailscale`/`sshd` changes against a real remote host from this
-project's development machine; the first real run against the actual VPS is the test.
+`ufw` (default-deny inbound, SSH is the one allowed port), disables root login and password auth over
+SSH, creates the app user (reusing root's authorized key so access survives disabling root login),
+and prepares the systemd timer directory. Ubuntu/Debian (`apt`) assumed. **Untested against a real VPS
+as of this commit** — reviewed carefully, but there is no way to exercise `ufw`/`sshd` changes against
+a real remote host from this project's development machine; the first real run against the actual VPS
+is the test.
 
-`TAILSCALE_AUTHKEY` must be a **fresh, short-lived, single-use** key generated in the Tailscale admin
-console specifically for this node — never a reusable key stored for hypothetical future
-re-provisioning. A future re-provision means generating a new one-off key, not reaching for a saved one.
+No Tailscale, no VPN, no auth key to generate — see "Target topology" above for why. SSH stays on its
+normal port, reachable from anywhere, secured by key-only authentication and disabled password/root
+login, which is judged sufficient for a single-owner deployment.
 
 **Right-sized to 2 OCPU / 12 GB** on Oracle's Ampere A1 Always Free tier (the current documented total,
 not the 1 OCPU / 6 GB figure an earlier draft of this plan assumed) — ample for one user either way,
@@ -141,12 +154,12 @@ Pruning never runs during a rollback, only after a successful deploy.
 
 ## Deploying
 
-Run directly on the VPS, from inside the cloned repo, after reaching it over Tailscale SSH —
+Run directly on the VPS, from inside the cloned repo, after reaching it over ordinary key-based SSH —
 `scripts/deploy.sh` contains no SSH logic of its own. **CI never holds credentials that can reach the
 VPS** — a compromised GitHub Action cannot touch the server.
 
 ```bash
-ssh burmy@<tailscale-ip>
+ssh burmy@<vps-ip>
 cd burmy-os && ./scripts/deploy.sh
 ```
 
@@ -206,7 +219,7 @@ Postgres), `build`. **Test-only.** No production secrets, no deploy capability �
 password it uses is a throwaway value scoped to that job's own ephemeral service container, never
 reused anywhere real.
 
-**No deployment credentials exist in CI.** Deployment is manual and Tailscale-gated by design.
+**No deployment credentials exist in CI.** Deployment is manual and SSH-key-gated by design.
 
 ---
 
@@ -241,23 +254,127 @@ and reclaims idle instances. Migration is a rehearsed restore drill, not an emer
 
 ---
 
+## DNS strategy for `app.burmy.me` — investigated, nothing changed yet
+
+**No DNS or nameserver change has been made.** This section is the investigation the owner asked for,
+so a real decision can be made before anything external is touched.
+
+### What's actually there today
+
+A read-only public DNS lookup (`nslookup`, no account access, nothing mutated) found:
+
+- `burmy.me` resolves to `98.84.224.111` and `18.208.88.157`.
+- Its authoritative nameservers are `dns{1-4}.p06.nsone.net`, and the zone's SOA record reports
+  `responsible mail addr = domains+netlify.netlify.com`.
+- **This means `burmy.me` is hosted on Netlify, using Netlify's own DNS product** — Netlify DNS is
+  built on NS1's infrastructure, which is why the nameservers are branded `nsone.net` rather than
+  anything Netlify-branded. The two apex A records above are almost certainly Netlify's own
+  load-balancer IPs, auto-managed by Netlify DNS, not something to reproduce by hand. **Worth
+  confirming directly in the Netlify dashboard** — this is a strong inference from public DNS
+  records, not something read from an account.
+- `app.burmy.me` does not exist yet. No MX or TXT records were found for the apex (either genuinely
+  absent, or not visible to this non-authoritative lookup).
+
+### Option A — RECOMMENDED: delegate only `app.burmy.me` to Cloudflare
+
+Add an NS delegation record for just the `app` subdomain, inside Netlify's own DNS panel (Netlify DNS
+supports delegating a subdomain to another provider — this is a standard, decades-old DNS mechanism,
+not a Netlify-specific trick):
+
+1. Add `burmy.me` as a domain in Cloudflare (Cloudflare will not ask to become authoritative for the
+   whole zone for this — only `app` needs to point at it). Cloudflare issues two nameservers for the
+   zone, e.g. `xxx.ns.cloudflare.com` / `yyy.ns.cloudflare.com`.
+2. In the **Netlify DNS panel** (not Namecheap — Namecheap only points at NS1/Netlify and is not
+   where records are managed), add:
+   ```
+   app.burmy.me.   NS   xxx.ns.cloudflare.com.
+   app.burmy.me.   NS   yyy.ns.cloudflare.com.
+   ```
+3. Everything else — `burmy.me` apex, `www`, the live portfolio site, Netlify's own SSL cert
+   management — is **completely untouched**. Only queries for names ending in `app.burmy.me` are
+   affected.
+
+**Tradeoffs:** requires Netlify DNS to support adding a custom NS record for a subdomain (standard
+DNS panels do; worth a two-minute check before committing to this path). No change at Namecheap at
+all. Lowest blast radius of any option — if it turns out to be wrong, deleting the two NS records
+reverts it completely, with zero effect on the live site the whole time.
+
+### Option B — full zone migration to Cloudflare (not recommended without a concrete reason)
+
+Change `burmy.me`'s nameservers at Namecheap from the four `nsone.net` servers to Cloudflare's. This
+would require, **before** touching anything: inventorying every existing record in Netlify DNS (at
+minimum the apex A records, likely Netlify-specific verification TXT records, possibly `www` and any
+other configured subdomains), reproducing all of them inside Cloudflare, and verifying the live
+portfolio site still resolves correctly through Cloudflare — **before** the nameserver cutover, per
+the owner's explicit instruction. Real risk if anything is missed (a forgotten record is exactly how a
+live site or its email breaks during a DNS migration), and it gives up Netlify DNS's own automatic
+management of the site's records for no benefit this project needs.
+
+**Only worth it if Option A turns out to be blocked for a concrete, specific reason** — e.g. Netlify
+DNS refusing to accept a custom NS record on a subdomain. Not proposed as the default.
+
+### Next step
+
+This is a decision, not an implementation detail — waiting for a choice between Option A (recommended)
+and Option B, or confirmation that Option A is blocked, before any Cloudflare/Netlify/Namecheap
+configuration happens.
+
+---
+
+## VPS administration
+
+Plain SSH, not a VPN mesh (see "Target topology"). Concretely, from `scripts/provision.sh`:
+
+- Key-based authentication only; password authentication disabled in `sshd_config`.
+- Root login disabled; the app user is created with root's own authorized key copied over first, so
+  access survives that change.
+- `ufw` default-denies all inbound traffic and allows exactly one port: SSH. Burmy-OS itself and
+  Postgres are never given a firewall rule at all — the app is reached exclusively through the
+  outbound-only Cloudflare Tunnel, and Postgres has no route to the internet on the `internal: true`
+  `dbnet` network regardless of any firewall rule.
+- No public web port for Burmy-OS, no public Postgres port, and no second private network built
+  solely to reach SSH — the single inbound firewall rule *is* the admin path.
+
+---
+
 ## External setup — not yet done, needs the owner
 
 Nothing below is a repo/code change. None of it has been performed as of this commit; each is a real,
-often hard-to-reverse external action, so none of it is done unilaterally.
+often hard-to-reverse external action, so none of it is done unilaterally. **Stop-and-confirm, one
+service at a time** — not all of this at once.
 
-1. **Confirm whether `burmy.me` is already a Cloudflare DNS zone** (used by the existing portfolio
-   site) before any DNS/nameserver change is proposed in detail — if yes, adding the Tunnel is one new
-   record; if no, it is a nameserver migration, a bigger and separate decision.
+1. **DNS strategy for `app.burmy.me`** — see the section above; needs a decision (Option A recommended)
+   before anything else touches Cloudflare or Netlify.
 2. VPS provider account — Oracle Cloud Always Free as documented, or a different provider.
 3. Cloudflare account with Zero Trust / Access enabled.
 4. A Google Cloud Console OAuth client for Cloudflare Access's Google identity provider.
 5. Backblaze B2 account, one bucket, one application key scoped to that bucket.
-6. Tailscale account (personal tailnet).
-7. A healthchecks.io free account (four checks: backup, maintenance, restore-verify, check-host).
-8. Password manager entries for: `RESTIC_PASSWORD` (+ a **printed offline copy**), `TUNNEL_TOKEN`,
-   B2 keys, `POSTGRES_PASSWORD`, `OWNER_EMAIL`, the four healthchecks.io ping URLs.
-9. Initial SSH access to the VPS (cloud console) so `scripts/provision.sh` can bootstrap Tailscale.
+6. Password manager entries for: `RESTIC_PASSWORD` (+ a **printed offline copy**), `TUNNEL_TOKEN`,
+   B2 keys, `POSTGRES_PASSWORD`, `OWNER_EMAIL`.
+7. Initial SSH access to the VPS (cloud console) so `scripts/provision.sh` can run.
+
+That's the complete list under the simplified scope — no Tailscale account, no healthchecks.io account
+required. See "Deferred for V1" below if either is wanted later.
+
+---
+
+## Deferred for V1 — optional, not required, nothing deleted
+
+Owner decision: reduce infrastructure complexity for the initial launch. Each of these existed in an
+earlier draft of this plan; none were removed from the repo, all are clearly labeled where they live:
+
+| Deferred | Where it still lives | How to opt in later |
+| --- | --- | --- |
+| Tailscale / VPN-gated admin access | Not in the repo at all — `scripts/provision.sh` was rewritten around plain SSH | A deliberate follow-up decision, not a flag to flip |
+| healthchecks.io monitoring | `scripts/{backup,maintenance,restore-verify-weekly,check-host}.sh`'s `ping()` calls — genuine no-ops when the four `HEALTHCHECKS_*_PING_URL` vars in `.env.backup` are blank | Fill in the four ping URLs |
+| Automated weekly restore verification | `scripts/restore-verify-weekly.sh` + `deploy/systemd/burmy-restore-verify.{service,timer}`, marked `[OPTIONAL]`, not enabled by `provision.sh` | Copy the two unit files, `systemctl enable --now burmy-restore-verify.timer` |
+| Daily host check (disk/restart-loop) | `scripts/check-host.sh` + `deploy/systemd/burmy-check-host.{service,timer}`, marked `[OPTIONAL]`, not enabled by `provision.sh` | Copy the two unit files, `systemctl enable --now burmy-check-host.timer` |
+| Quarterly DR drills | `docs/BACKUP_RESTORE.md`'s DR sequence remains fully documented and usable manually | Run it by hand whenever wanted; not scheduled |
+
+What's still **required** for V1: nightly backup (`burmy-backup.timer`), weekly repository maintenance
+(`burmy-maintenance.timer` — retention/pruning, a different concern from restore *verification*, and
+not part of this deferral), and the **one manual** restore-and-verify proof before launch (Launch
+checklist, item 11).
 
 ---
 

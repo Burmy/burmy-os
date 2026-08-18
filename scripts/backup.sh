@@ -56,10 +56,15 @@ if [ -n "${B2_ACCOUNT_ID:-}" ]; then
   export B2_ACCOUNT_ID B2_ACCOUNT_KEY
 fi
 
+# OPTIONAL, deferred for V1 (owner decision, M10 simplification):
+# healthchecks.io monitoring is not part of the required launch path — this
+# is a genuine no-op, not a degraded mode, when HEALTHCHECKS_BACKUP_PING_URL
+# is left blank in .env.backup. This script's own exit code (and systemd's
+# own logging of it) is what's authoritative either way; the ping is an
+# opt-in extra if it's ever wanted later.
 PING_BASE="${HEALTHCHECKS_BACKUP_PING_URL:-}"
 ping() {
-  # $1: "" (success), "/start", or "/fail". Silent no-op if monitoring isn't
-  # configured — this script's own exit code is still authoritative either way.
+  # $1: "" (success), "/start", or "/fail".
   [ -n "${PING_BASE}" ] || return 0
   curl -fsS -m 10 --retry 3 "${PING_BASE}${1:-}" >/dev/null 2>&1 || true
 }

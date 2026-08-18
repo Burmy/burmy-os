@@ -117,7 +117,7 @@ These came from a structured interview with the owner and are **settled**. Do no
 | Testing | Vitest + React Testing Library, Playwright | |
 | Packaging | Docker + Docker Compose | |
 | Ingress | Cloudflare Tunnel + Cloudflare Access | |
-| Admin access | Tailscale | |
+| Admin access | Ordinary key-based SSH | No Tailscale/VPN — simplified during M10, see `docs/DEPLOYMENT.md` |
 | Backups | restic → Backblaze B2 | M10 |
 
 **Deliberately rejected:** Kubernetes, Redis, Kafka, Elasticsearch, GraphQL, microservices, message
@@ -640,7 +640,8 @@ pnpm db:generate                                      # drizzle-kit generate -> 
 docker compose -f compose.dev.yml run --rm migrate    # apply
 ```
 
-Cloudflare and Tailscale are **not** needed locally and are absent by design.
+Cloudflare is **not** needed locally and is absent by design. Nor is Tailscale — production admin
+access is ordinary key-based SSH, not a VPN mesh (M10 simplification).
 
 ---
 
@@ -709,8 +710,8 @@ first real sign-in.
 | ~~M6~~ | ~~Categorization & classification~~ **Complete.** | Merchant memory, transfer / card-payment counterpart matching with deterministic evidence only; investment auto-classification deferred |
 | ~~M7~~ | ~~Review queue~~ **Complete.** | Filterable queue, category/type correction, the counterpart unlink, bulk assignment, opt-in "remember merchant" |
 | ~~M8~~ | ~~Monthly grid & drill-down~~ **Complete.** | *The product.* SQL pivot in the owner's `sort_order`, Total Expenditure/Income/Gross Savings, cell drill-down sharing the aggregate's own filter, the unreconciled-transaction warning |
-| **M9** | Transactions table, Excel reconciliation, export | TanStack Table + Virtual, **ExcelJS dependency/security review gate**, `finance_expected_totals`, reconciliation deltas, formula-injection-safe export |
-| **M10** | Backup, deployment, hardening, launch | Harden the M1 image for production, Oracle/VPS + Cloudflare Tunnel + Access + Tailscale, backup automation and a **verified restore**, full DR drill — **then** the first real production import |
+| ~~M9~~ | ~~Transactions ledger, reconciliation & export~~ **Complete.** | `/finance/transactions` — full ledger, filters, search, CSV export. Course-corrected from this row's original plan: no TanStack Table (never installed, see the UX-refactor note above), no XLSX, and `finance_expected_totals` stays deliberately unbuilt — see `docs/ROADMAP.md`'s M9 section for the full reasoning. |
+| **M10** | Backup, deployment, hardening, launch | 🔵 In progress — repo-side done, external infra pending. **Simplified scope** (owner decision): `VPS + Cloudflare Access with Google + Burmy-OS/Postgres + Backblaze B2 backups`, nothing more unless a concrete blocker appears. No Tailscale, no healthchecks.io, no automated weekly restore verification, no quarterly DR drills — all deferred, not deleted (`docs/DEPLOYMENT.md`, "Deferred for V1"). Full detail and current status: `docs/ROADMAP.md`'s M10 section. |
 
 Production launch is deliberately **last**: real financial data does not touch production until
 recovery has been proven.

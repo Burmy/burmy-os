@@ -2,12 +2,20 @@
 set -euo pipefail
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL, NOT INSTALLED BY DEFAULT — deferred for V1 (owner decision, M10
+# simplification): extra infrastructure whose only purpose is monitoring
+# other infrastructure was explicitly cut from the required launch path.
+# scripts/provision.sh does not enable deploy/systemd/burmy-check-host.timer;
+# see its own printed instructions for the two-line opt-in if this is ever
+# wanted.
+#
 # Daily lightweight host check — disk usage and container restart-looping.
 # Deliberately NOT a monitoring stack (Prometheus/Grafana/Loki): two `df`/
-# `docker compose ps` checks and a ping, per the owner's explicit "keep this
-# lightweight" instruction.
+# `docker compose ps` checks and an optional ping, per the owner's explicit
+# "keep this lightweight" instruction.
 #
-# Run via the burmy-check-host.timer/.service systemd unit (deploy/systemd/).
+# Run via the burmy-check-host.timer/.service systemd unit (deploy/systemd/),
+# once opted into.
 # ─────────────────────────────────────────────────────────────────────────────
 
 cd "$(dirname "$0")/.."

@@ -1,5 +1,6 @@
 [Unit]
-Description=Weekly Sunday 05:00 — Burmy automated restore verification (after maintenance)
+# OPTIONAL — not enabled by scripts/provision.sh. See burmy-restore-verify.service.
+Description=Weekly Sunday 05:00 — Burmy automated restore verification (after maintenance) [OPTIONAL]
 
 [Timer]
 OnCalendar=Sun *-*-* 05:00:00

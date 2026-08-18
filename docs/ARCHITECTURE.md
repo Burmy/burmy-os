@@ -183,9 +183,11 @@ Stated plainly, because the reassuring version would be false:
   provider.
 - **Google** sees an identity assertion at the Access layer and no financial data.
 - **Backblaze B2** sees opaque restic blobs; encryption keys never leave the VPS.
-- **Tailscale** sees coordination metadata, not traffic.
+- **SSH access** is ordinary key-based SSH, not a VPN mesh (simplified during M10 — see
+  `docs/DEPLOYMENT.md`) — encrypted end to end by the SSH protocol itself; the VPS provider's own
+  hypervisor-level access above is the operative trust boundary here, not the network path.
 
 The architecture buys "no inbound ports, no exposed database, an identity gate, $0/month" in exchange
-for trusting Cloudflare in transit and the VPS provider at rest. Alternatives exist (Tailscale Funnel
-terminates TLS on the origin; self-hosting removes the provider) and are documented in the plan with
-their costs. This should be an informed trade, not an assumption.
+for trusting Cloudflare in transit and the VPS provider at rest. Alternatives exist (self-hosting
+removes the provider) and are documented in the plan with their costs. This should be an informed
+trade, not an assumption.

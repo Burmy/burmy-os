@@ -1,5 +1,5 @@
 [Unit]
-Description=Burmy weekly restic repository maintenance (forget --prune -> check)
+Description=Burmy weekly restic repository maintenance (forget --prune -> check) [REQUIRED]
 After=docker.service
 Requires=docker.service
 

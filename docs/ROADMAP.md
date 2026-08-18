@@ -859,9 +859,18 @@ M9 closed out the last owner-facing feature gap: a full searchable ledger,
 its own lightweight reconciliation summary, and CSV export, all built on the
 existing M1–M8 schema with zero migrations. M10 is infrastructure, not a
 feature milestone — hardening the M1 image for production, standing up
-`app.burmy.me` behind Cloudflare Tunnel + Access + Tailscale, backup
-automation with a **verified restore**, and a full DR drill, all completed
-**before** the first real production import.
+`app.burmy.me` behind Cloudflare Tunnel + Access, backup automation with a
+**verified restore**, all completed **before** the first real production
+import.
+
+**Simplified mid-milestone (owner decision):** the production target is now
+`VPS + Cloudflare Access with Google + Burmy-OS/Postgres + Backblaze B2
+backups` — nothing more, unless a concrete blocker shows up. Tailscale,
+healthchecks.io, automated weekly restore verification, and quarterly DR
+drills — all present in the first draft of this milestone — are deferred
+for V1. Nothing was deleted: each is clearly labeled `[OPTIONAL]` where it
+still lives in the repo, with the two-line command to opt in later. See
+`docs/DEPLOYMENT.md`, "Deferred for V1" for the exact list.
 
 **Repo-side work is done and locally tested; external infrastructure is not
 provisioned yet.** Split deliberately, per owner instruction, so nothing
@@ -870,7 +879,8 @@ external gets touched before the plan was reviewed in detail:
 **Done, locally verified against real (synthetic) data:**
 - Production `compose.yml` — `edge`/`dbnet` split, no published ports
   anywhere, secrets scoped by consumer (five `.env.<scope>` files, never one
-  blanket file — `web` never sees B2/restic/Tunnel credentials).
+  blanket file — `web` never sees B2/restic/Tunnel credentials). Unchanged
+  by the simplification — Tailscale was never a compose service.
 - `Dockerfile`: `provision-owner.mjs` added to the `migrator` stage (needed
   by `deploy.sh`'s idempotent-every-deploy provisioning step).
 - Docker hardening actually exercised against the real built `runner` image
@@ -895,31 +905,47 @@ external gets touched before the plan was reviewed in detail:
   — caught and fixed a real bug where pruning sorted by the TAG STRING
   (meaningless for a git SHA) instead of actual build time. `check-host.sh`
   caught and fixed a real `df -P` column-parsing bug (breaks when the
-  filesystem name itself contains a space). `provision.sh` reviewed
-  carefully but **not** exercised — no way to test `ufw`/`tailscale`/`sshd`
-  changes against a real remote host locally; the first real run against
-  the actual VPS is the test.
-- `deploy/systemd/*.{service,timer}` — nightly backup (03:00), weekly
-  maintenance (Sun 04:00), weekly restore-verify (Sun 05:00), daily host
-  check (08:00).
+  filesystem name itself contains a space). `provision.sh` **rewritten**
+  around plain key-based SSH (Tailscale removed entirely — install, auth
+  key, `tailscale0`-bound `ufw` rule, all gone); reviewed carefully but
+  **not** exercised — no way to test `ufw`/`sshd` changes against a real
+  remote host locally; the first real run against the actual VPS is the
+  test.
+- `deploy/systemd/*.{service,timer}` — nightly backup and weekly maintenance
+  are `[REQUIRED]` and enabled by `provision.sh`; weekly restore-verify and
+  the daily host check are `[OPTIONAL]`, shipped but **not** enabled by
+  default (owner decision — see "Simplified" above).
 - `.github/workflows/ci.yml` — test-only, no production secrets, no deploy
   capability: typecheck/lint/unit/integration/e2e/build on every push and PR.
-- Docs updated to match what was actually built: `docs/DEPLOYMENT.md`
-  (image-versioning design, secrets-scoping table, corrected OCI sizing —
-  2 OCPU/12 GB is the current documented Always Free total, not 1/6),
-  `docs/BACKUP_RESTORE.md` (nightly/weekly split, plaintext-handling
-  change, healthchecks.io start+success/fail signaling, explicit DR
-  dependency ordering), `docs/SECURITY.md` (checklist updated with what M10
-  actually proves so far).
+  Unchanged by the simplification.
+- **Read-only DNS investigation for `app.burmy.me`** (no account access, no
+  mutation): `burmy.me` is hosted on **Netlify**, using Netlify's own DNS
+  product (built on NS1, hence the `nsone.net` nameservers) — not a
+  Cloudflare zone today. Two options written up in
+  `docs/DEPLOYMENT.md`, "DNS strategy for app.burmy.me": delegate only the
+  `app` subdomain to Cloudflare via an NS record inside Netlify's DNS panel
+  (recommended — zero effect on the live portfolio site), or migrate the
+  whole zone's nameservers to Cloudflare (not recommended without a
+  concrete reason — requires a full record inventory first). **No DNS
+  change has been made; awaiting the owner's choice.**
+- Docs updated to match what was actually built and the simplified scope:
+  `docs/DEPLOYMENT.md` (image-versioning design, secrets-scoping table,
+  corrected OCI sizing, the DNS investigation above, "VPS administration",
+  "Deferred for V1"), `docs/BACKUP_RESTORE.md` (nightly/weekly split,
+  plaintext-handling change, healthchecks.io marked optional, one manual
+  restore proof required instead of automated weekly verification,
+  explicit DR dependency ordering), `docs/SECURITY.md` (checklist and
+  Network section updated for plain SSH).
 
 **NOT done — external, manual, stopped deliberately before touching them:**
-VPS provisioning, Cloudflare Tunnel/Access/DNS configuration (blocked on
-confirming whether `burmy.me` is already a Cloudflare zone), Backblaze B2
-bucket/keys, Tailscale network, healthchecks.io account, and therefore the
-real production deploy, the real DR drill, and the 13-point launch
-checklist. See `docs/DEPLOYMENT.md`, "External setup" for the exact manual
-steps and `docs/DEPLOYMENT.md`, "Launch checklist" for what still needs
-proving before real financial data touches production.
+DNS decision for `app.burmy.me` (needs the owner's choice between the two
+options above), VPS provisioning, Cloudflare Tunnel/Access configuration,
+Backblaze B2 bucket/keys, and therefore the real production deploy and the
+13-point launch checklist. No Tailscale account and no healthchecks.io
+account are needed under the simplified scope. See `docs/DEPLOYMENT.md`,
+"External setup" for the exact remaining manual steps and "Launch
+checklist" for what still needs proving before real financial data touches
+production.
 
 ## Carried forward
 

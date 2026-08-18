@@ -56,31 +56,38 @@ No VPS, no restic, no infrastructure. This happens on day one.
 
 ## Stage 3 — Production automation (Milestone 10, before the first real import)
 
-> **Status: implemented and tested locally** (`scripts/{backup,maintenance,restore,
+> **Status: implemented and tested locally** (`scripts/{backup,maintenance,restore,verify,
 > restore-verify-weekly}.sh` + the systemd units under `deploy/systemd/`), against a real local restic
 > repository and real seeded Postgres data — not yet run against the actual production VPS/B2, since
 > that infrastructure doesn't exist yet (see `docs/DEPLOYMENT.md`, "External setup").
+>
+> **Simplified scope (owner decision):** two systemd timers are REQUIRED for V1 — nightly backup,
+> weekly repository maintenance. Automated weekly restore *verification* is OPTIONAL, deferred —
+> what's required instead is ONE manual restore-and-verify proof before launch (see "Verification"
+> below). See `docs/DEPLOYMENT.md`, "Deferred for V1" for the complete list of what's optional and why
+> nothing was deleted.
 
-**Three separate systemd timers, not one combined nightly job** (owner decision, M10) — repository
-maintenance and restore verification are real work that a nightly backup should not pay for every
+**Two required systemd timers, not one combined nightly job** — repository maintenance is real work
+(pruning, integrity-checking the whole repository) that a nightly backup should not pay for every
 single night:
 
 ```
-Nightly, 03:00 — scripts/backup.sh
+Nightly, 03:00 — scripts/backup.sh                                              [REQUIRED]
     ├─ pg_dump -Fc                                        (Postgres's own consistent snapshot,
     ├─ manifest: row counts, per-year SUM(amount_cents),   NEVER a copy of the live pgdata dir)
     │  latest transaction date — coarse facts only, never row content
     ├─ restic backup (dump + manifest, AES-256, client-side, deduplicated)  →  b2:burmy-backups
-    └─ healthchecks.io: /start on begin, plain ping on success, /fail on any failure
+    └─ healthchecks.io: /start, success, /fail — OPTIONAL, a genuine no-op if not configured
 
-Weekly, Sunday 04:00 — scripts/maintenance.sh
+Weekly, Sunday 04:00 — scripts/maintenance.sh                                   [REQUIRED]
     ├─ restic forget --prune   →  7 daily · 4 weekly · 12 monthly · 3 yearly
     └─ restic check            (repository integrity)
 
-Weekly, Sunday 05:00 — scripts/restore-verify-weekly.sh (after maintenance)
-    └─ scripts/restore.sh --snapshot latest --target scratch, then destroyed
-       — the only automated caller of restore.sh, and the only one that can EVER reach
-       --target scratch; --target production always requires a human and typed confirmation
+Weekly, Sunday 05:00 — scripts/restore-verify-weekly.sh (after maintenance)     [OPTIONAL, deferred]
+    └─ scripts/restore.sh --snapshot latest --target scratch, then destroyed — not installed
+       by scripts/provision.sh by default; see docs/DEPLOYMENT.md, "Deferred for V1" to opt in.
+       What's required for V1 instead is the ONE manual run of this exact command, once, before
+       launch — see "Verification" below.
 ```
 
 **Retention rationale.** A compressed dump of years of personal transactions is single-digit megabytes,
@@ -121,27 +128,37 @@ to decrypt it. Keep them separate.
 > **The restic password must exist somewhere outside the VPS — password manager plus a printed copy.**
 > A backup you cannot decrypt is not a backup.
 
-### Monitoring — healthchecks.io, start + success/fail, not success-only
+### Monitoring — OPTIONAL, deferred for V1
 
-Each of the four jobs above (plus the daily host check) pings its own healthchecks.io URL — four/five
-separate checks, not one shared one, so a missed run is attributable to the specific job that missed
-it. Every script signals `/start` on begin and either a plain success ping or `/fail` on completion —
-**not success-only** — so a script that starts and then hangs or crashes mid-run is caught by an
-explicit `/fail` signal in addition to healthchecks.io's own missed-run grace-period detection. Ping
-URLs are treated as secrets and stored in `.env.backup` alongside the restic/B2 credentials, per owner
-decision — low sensitivity in practice (worst case is a spurious early ping), but scoped the same way
-regardless.
+`scripts/{backup,maintenance,restore-verify-weekly,check-host}.sh` each know how to ping a
+healthchecks.io URL — `/start` on begin, a plain success ping or `/fail` on completion, **not
+success-only**, so a script that starts and then hangs is still caught. But this is genuinely optional
+infrastructure (owner decision, M10 simplification): every ping call is a silent no-op when its
+`HEALTHCHECKS_*_PING_URL` is left blank in `.env.backup`, which is the default, supported path for V1.
+No healthchecks.io account is required to launch. If ever wanted later, the four ping URLs are treated
+as secrets and stored in `.env.backup` alongside the restic/B2 credentials.
 
-### Verification is part of the backup, not a separate hope
+### Verification — one required manual proof, weekly automation optional
 
-Weekly, automatically (`scripts/restore-verify-weekly.sh`):
+**Required before launch, run by hand once:**
 
-1. Restore the latest snapshot into a **disposable scratch** Postgres container — never the live
-   database; the automated path can only ever reach `--target scratch`.
+```bash
+./scripts/restore.sh --snapshot latest --target scratch
+```
+
+1. Restores the latest snapshot into a **disposable scratch** Postgres container — never the live
+   database; `--target scratch` is also the default, so this is the safe form even if `--target` is
+   omitted.
 2. `pg_restore` into it.
-3. Assert row counts and per-year `SUM(amount_cents)` checksums against the manifest that was backed
+3. Asserts row counts and per-year `SUM(amount_cents)` checksums against the manifest that was backed
    up alongside that same snapshot (`scripts/verify.sh`).
-4. Tear the scratch container down. Report. **A backup is not green until it has been restored.**
+4. Tears the scratch container down and reports pass/fail. **A backup is not green until it has been
+   restored** — this one manual run is what proves that, and it is Launch checklist item 11.
+
+**Optional, deferred for V1:** the identical check running unattended every week
+(`scripts/restore-verify-weekly.sh`, on `burmy-restore-verify.timer`) is not installed by
+`scripts/provision.sh` by default. See `docs/DEPLOYMENT.md`, "Deferred for V1" to opt in later — the
+script and unit files are still in the repo, just not enabled.
 
 ---
 
@@ -172,14 +189,16 @@ order.
 
 ## Disaster recovery — the VPS is gone
 
-**Target: under 30 minutes. Rehearsed once for M10 acceptance, then quarterly.**
+**Target: under 30 minutes. Rehearsed once for M10 acceptance.** Quarterly re-drills are OPTIONAL for
+V1 (owner decision) — this procedure stays fully documented and usable manually whenever wanted; it is
+simply not scheduled. See `docs/DEPLOYMENT.md`, "Deferred for V1".
 
 The dependencies are made explicit on purpose (owner decision, M10) — on a totally fresh VPS there is
 no database running yet, so nothing in this sequence may assume an unstated prior step is already up:
 
 ```
-1. PROVISION   TAILSCALE_AUTHKEY=<fresh one-off key> ./scripts/provision.sh
-               → docker, ufw, tailscale, app user, secret-file placeholders, systemd timer prep
+1. PROVISION   ./scripts/provision.sh
+               → docker, ufw, SSH hardening, app user, secret-file placeholders, systemd timer prep
                (works on Oracle or any fallback host — the VPS is disposable)
 
 2. CLONE       git clone git@github.com:Burmy/burmy-os.git
@@ -214,7 +233,8 @@ no database running yet, so nothing in this sequence may assume an unstated prio
 
 9. NETWORK     New Cloudflare tunnel token → .env.tunnel → cloudflared. DNS follows the tunnel.
                The Access APPLICATION/POLICY is reused, not recreated — it isn't tied to any one
-               tunnel or device. tailscale up, approve the node.
+               tunnel or device. No VPN to rejoin — SSH is reachable the moment step 1's ufw rule
+               is active.
 
 10. VERIFY     ./scripts/verify.sh --container <postgres> --manifest <restored manifest> \
                  --check-health http://127.0.0.1:3000/api/health

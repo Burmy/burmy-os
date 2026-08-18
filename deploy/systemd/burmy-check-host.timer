@@ -1,5 +1,6 @@
 [Unit]
-Description=Daily 08:00 — Burmy host check
+# OPTIONAL — not enabled by scripts/provision.sh. See burmy-check-host.service.
+Description=Daily 08:00 — Burmy host check [OPTIONAL]
 
 [Timer]
 OnCalendar=*-*-* 08:00:00

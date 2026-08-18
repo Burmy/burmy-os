@@ -1,5 +1,5 @@
 [Unit]
-Description=Burmy nightly database backup (pg_dump -Fc -> restic -> monitoring signal)
+Description=Burmy nightly database backup (pg_dump -Fc -> restic -> optional monitoring signal) [REQUIRED]
 After=docker.service
 Requires=docker.service
 

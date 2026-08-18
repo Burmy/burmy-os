@@ -1,5 +1,9 @@
 [Unit]
-Description=Burmy daily host check (disk usage, container restart-looping)
+# OPTIONAL — not installed by default. Extra infrastructure whose only
+# purpose is monitoring other infrastructure is deferred for V1 (owner
+# decision, M10 simplification). See scripts/check-host.sh's header comment
+# before enabling this.
+Description=Burmy daily host check (disk usage, container restart-looping) [OPTIONAL]
 After=docker.service
 Requires=docker.service
 
