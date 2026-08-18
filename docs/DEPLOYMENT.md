@@ -304,43 +304,66 @@ carry. But a non-authoritative public resolver is not the source of truth here, 
 visible through this lookup method at all. **Per the "do not invent records" rule below, this table is
 a starting point the Netlify dashboard must confirm or correct, not a substitute for it.**
 
+### Confirmed from the actual Netlify dashboard (the real source of truth)
+
+The owner opened Netlify → Domains → `burmy.me` → DNS directly and shared the real record list.
+**Only 2 DNS records exist, both TTL 3600:**
+
+| Type | Name | Value/Target |
+| --- | --- | --- |
+| `NETLIFY` | `burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` |
+| `NETLIFY` | `www.burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` |
+
+No MX, no TXT, no other subdomains — confirms the public-lookup inference above, now from the
+authoritative source rather than an inference. IPv6 is **not enabled** (Netlify's dashboard shows an
+unclicked "Enable IPv6" prompt) — nothing to carry over there either.
+
+**One real correction this revealed:** `NETLIFY` is **not a standard DNS record type** — it's Netlify's
+own dynamic record, resolved by Netlify's nameservers at query time to whatever load-balancer IPs are
+currently live. The two A records the public lookup found (`98.84.224.111`, `18.208.88.157`) were only
+*that moment's* resolved snapshot of this record, not a stable value. Reproducing them as static A
+records in Cloudflare — the plan this table originally sketched — would work today and then silently
+break the day Netlify ever rotates those IPs, exactly the scenario Netlify's own dynamic record type
+exists to make invisible to the customer.
+
+**The correct equivalent: a CNAME pointed at the same target**, `infallible-visvesvaraya-eefd80.netlify.app`,
+not at its resolved IPs. `www.burmy.me` is an ordinary subdomain, so a plain CNAME works directly.
+`burmy.me` is the zone apex, where a literal CNAME isn't allowed by the DNS standard — Cloudflare's
+answer is **CNAME flattening**, a long-standing **Free**-tier feature (unrelated to the
+Enterprise-gated partial-zone issue that ruled out the original subdomain-delegation idea — this is a
+different Cloudflare feature, available regardless of plan) that lets a CNAME-shaped record sit at the
+root and resolves it dynamically underneath, tracking the target the same way Netlify's own record
+type does.
+
 ### DNS migration checklist
 
 **Stop-and-confirm gate: Namecheap's nameservers are not touched until step 9 is explicitly approved.**
 
-1. **Inventory every currently published record** — the table above is the public-lookup starting
-   point; step 2 fills the gaps.
-2. **What to check directly in the Netlify DNS dashboard** (Netlify → Domains → `burmy.me` → DNS
-   panel), since public lookup can't show these:
-   - The complete record list as Netlify itself displays it — the authoritative source, full stop.
-   - Exact TTL for each record.
-   - Whether the apex/`www` A records are literal Netlify load-balancer IPs or Netlify's own
-     "ALIAS"/"ANAME"-style flattened record (Netlify sometimes represents apex records specially;
-     the dashboard will show which).
-   - Any record not discoverable by guessing a hostname — a domain-verification TXT record for some
-     third-party tool, a subdomain for a service other than the main site, anything under a selector
-     name that public lookup has no reason to try.
-   - Confirmation that email genuinely isn't configured (no MX/SPF/DKIM/DMARC), since the public
-     lookup above only proves their *absence at the names checked*, not a full audit.
-3. **Record inventory table** — filled in as far as public lookup allows; `[NEEDS DASHBOARD CHECK]`
-   marks everything that needs Netlify-panel confirmation before it's trustworthy:
+1. ✅ **DONE — inventory every currently published record.** Confirmed directly from the Netlify
+   dashboard (Netlify → Domains → `burmy.me` → DNS), not just inferred from public lookup: **exactly 2
+   records**, both TTL 3600, both the `NETLIFY` dynamic type, no MX/TXT/other subdomains, IPv6 not
+   enabled. See "Confirmed from the actual Netlify dashboard" above.
+2. ✅ **DONE — Netlify-dashboard confirmation.** Superseded step 1's public-lookup guess; nothing left
+   unconfirmed for this domain's DNS.
+3. **Record inventory table — CONFIRMED**, current Netlify config on the left, the Cloudflare
+   recreation plan on the right:
 
-   | Type | Hostname | Current value/target | TTL | Purpose | Recreate in Cloudflare? | Cloudflare proxy status |
-   | --- | --- | --- | --- | --- | --- | --- |
-   | A | `burmy.me` | `98.84.224.111`, `18.208.88.157` | `[NEEDS DASHBOARD CHECK]` | Netlify site (apex) | Yes | **DNS only** |
-   | A | `www.burmy.me` | `98.84.224.111`, `18.208.88.157` | `[NEEDS DASHBOARD CHECK]` | Netlify site (www) | Yes | **DNS only** |
-   | MX | `burmy.me` | none found | — | — | Only if the dashboard shows one | **DNS only** |
-   | TXT | `burmy.me` | none found | — | SPF, domain verification, etc. | Only if the dashboard shows any | **DNS only** |
-   | TXT | `_dmarc.burmy.me` | confirmed absent | — | DMARC | No, unless added later | **DNS only** |
-   | ? | *(anything else Netlify's dashboard shows)* | `[NEEDS DASHBOARD CHECK]` | `[NEEDS DASHBOARD CHECK]` | `[NEEDS DASHBOARD CHECK]` | `[NEEDS DASHBOARD CHECK]` | **DNS only** by default |
-   | CNAME/NS | `app.burmy.me` | *(does not exist yet)* | — | Cloudflare Tunnel | New, added later, after the migration is verified | **DNS only** (Cloudflare Tunnel's own CNAME target handles routing without needing the orange cloud) |
+   | Type (Netlify) | Hostname | Netlify value | TTL | → | Type (Cloudflare) | Cloudflare value | Proxy status |
+   | --- | --- | --- | --- | --- | --- | --- | --- |
+   | `NETLIFY` | `burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME (flattened at apex) | `infallible-visvesvaraya-eefd80.netlify.app` | **DNS only** |
+   | `NETLIFY` | `www.burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME | `infallible-visvesvaraya-eefd80.netlify.app` | **DNS only** |
+   | — | — | *(no MX, no TXT, no other subdomains — confirmed, not inferred)* | | | *(nothing else to recreate)* | | |
+   | — | `app.burmy.me` | *(does not exist yet)* | — | → | CNAME | Cloudflare Tunnel's assigned target | **DNS only** (the Tunnel handles routing without needing the orange cloud) — added later, after the migration above is verified healthy |
 
-4. **Preserve everything required for**: the Netlify apex site, `www`, email/MX, SPF, DKIM, DMARC,
-   domain verification, and any other existing subdomain/service found in step 2 — the table above is
-   updated in place as step 2's findings come back, not treated as final until then.
-5. **The real current configuration is the source of truth.** Nothing above is invented from generic
-   Netlify documentation — every row is either a live lookup result or explicitly marked as needing
-   the dashboard, and stays marked that way until confirmed.
+   The `→` column is the one real translation, not a literal copy: `NETLIFY` isn't a portable record
+   type, so its target is reproduced as a flattened CNAME rather than the point-in-time A records a
+   public lookup would have suggested — see "Confirmed from the actual Netlify dashboard" above for why
+   that distinction matters.
+4. **Preserve everything required for**: the Netlify apex site, `www`. Email/MX/SPF/DKIM/DMARC and any
+   other subdomain/service are confirmed **not present** — nothing there to preserve.
+5. ✅ **DONE — the real current configuration is the source of truth.** Nothing in the table above is
+   invented from generic Netlify documentation — every row is the actual Netlify dashboard's own
+   record list, confirmed directly, not inferred.
 6. **Create the Cloudflare zone first** — add `burmy.me` in Cloudflare, note the two nameservers it
    assigns. This alone changes nothing (Namecheap still points at NS1 until step 9).
 7. **Reproduce every required record from the completed table inside Cloudflare**, DNS-only, before
@@ -372,9 +395,16 @@ a starting point the Netlify dashboard must confirm or correct, not a substitute
 
 ### Next step
 
-Waiting on the Netlify-dashboard confirmation in step 2 above before step 3's inventory table can be
-called complete, and waiting on your explicit approval at step 9's gate before any Namecheap change.
-Nothing past step 1 (this document) has been touched.
+Steps 1, 2 and 5 are done — the record inventory is confirmed from the real Netlify dashboard, not
+inferred. Two small confirmations outstanding before step 6 (creating the Cloudflare zone):
+
+1. OK with CNAME flattening as the apex mechanism (the one real translation from Netlify's own
+   `NETLIFY` record type, not a literal copy)?
+2. IPv6 stays off, matching Netlify's current unclicked state?
+
+Waiting on those, then your explicit approval at step 9's gate before any Namecheap change. Nothing
+past step 5 (this document) has been touched — no Cloudflare zone, no Netlify record, no Namecheap
+change.
 
 ---
 
@@ -404,9 +434,10 @@ service at a time** — not all of this at once.
 appear below because the DNS migration touches them, not because they're being newly added.
 
 1. **A Cloudflare account** (Free plan), so the `burmy.me` zone can be created — the first concrete
-   step of the DNS migration checklist above (step 6). Creating the zone alone changes nothing.
-2. **The Netlify-dashboard confirmation** — DNS migration checklist step 2 — before the record
-   inventory table can be called complete.
+   step of the DNS migration checklist above (step 6). Creating the zone alone changes nothing. Two
+   small confirmations first (CNAME flattening at the apex, IPv6 staying off) — see "Next step" above.
+2. ✅ **DONE** — the Netlify-dashboard confirmation (checklist step 2). The record inventory is
+   complete: 2 records, no email, no other subdomains.
 3. **Explicit approval of the comparison checklist** (step 8) before I change anything at Namecheap
    (step 9).
 4. *(Only after the migrated site is confirmed healthy — step 11)*: Cloudflare Zero Trust / Access
