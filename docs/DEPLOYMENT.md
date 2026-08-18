@@ -326,14 +326,25 @@ records in Cloudflare — the plan this table originally sketched — would work
 break the day Netlify ever rotates those IPs, exactly the scenario Netlify's own dynamic record type
 exists to make invisible to the customer.
 
-**The correct equivalent: a CNAME pointed at the same target**, `infallible-visvesvaraya-eefd80.netlify.app`,
-not at its resolved IPs. `www.burmy.me` is an ordinary subdomain, so a plain CNAME works directly.
-`burmy.me` is the zone apex, where a literal CNAME isn't allowed by the DNS standard — Cloudflare's
-answer is **CNAME flattening**, a long-standing **Free**-tier feature (unrelated to the
-Enterprise-gated partial-zone issue that ruled out the original subdomain-delegation idea — this is a
-different Cloudflare feature, available regardless of plan) that lets a CNAME-shaped record sit at the
-root and resolves it dynamically underneath, tracking the target the same way Netlify's own record
-type does.
+**The correct equivalent is NOT "point everything at the site's own `.netlify.app` hostname" — apex and
+`www` need different targets, per Netlify's own documented external-DNS guidance** (verified directly
+against `docs.netlify.com`, "Configure external DNS for a custom domain," not assumed):
+
+- **Apex (`burmy.me`)** → an ALIAS/ANAME/flattened CNAME pointed at **`apex-loadbalancer.netlify.com`**
+  — Netlify's own geo-distributed load-balancer hostname, specifically documented for this case.
+  Netlify's docs are explicit that a *plain* CNAME at the apex pointing to the site's own
+  `.netlify.app` subdomain is wrong, and not just a style preference: the DNS standard forbids any
+  other record (MX, TXT, etc.) coexisting at a name that has a CNAME, so a literal CNAME at the root
+  would foreclose ever adding one later. `apex-loadbalancer.netlify.com` is the one target Netlify
+  documents as safe to flatten at the root.
+- **`www.burmy.me`** → an ordinary CNAME pointed at the site's own subdomain,
+  `infallible-visvesvaraya-eefd80.netlify.app` — this one Netlify documents as an ordinary CNAME target,
+  no flattening needed, since `www` isn't the zone apex.
+
+Cloudflare's mechanism for the apex is **CNAME flattening**, a long-standing **Free**-tier feature
+(unrelated to the Enterprise-gated partial-zone issue that ruled out the original subdomain-delegation
+idea — a different Cloudflare feature, available regardless of plan) that lets a CNAME-shaped record
+sit at the root and resolves it dynamically underneath.
 
 ### DNS migration checklist
 
@@ -346,19 +357,26 @@ type does.
 2. ✅ **DONE — Netlify-dashboard confirmation.** Superseded step 1's public-lookup guess; nothing left
    unconfirmed for this domain's DNS.
 3. **Record inventory table — CONFIRMED**, current Netlify config on the left, the Cloudflare
-   recreation plan on the right:
+   recreation plan on the right, apex and `www` targets corrected to match Netlify's own documented
+   external-DNS guidance (verified against `docs.netlify.com` — see above; NOT both pointed at the
+   site's `.netlify.app` hostname, an earlier draft's mistake):
 
    | Type (Netlify) | Hostname | Netlify value | TTL | → | Type (Cloudflare) | Cloudflare value | Proxy status |
    | --- | --- | --- | --- | --- | --- | --- | --- |
-   | `NETLIFY` | `burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME (flattened at apex) | `infallible-visvesvaraya-eefd80.netlify.app` | **DNS only** |
+   | `NETLIFY` | `burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME (flattened at apex) | **`apex-loadbalancer.netlify.com`** | **DNS only** |
    | `NETLIFY` | `www.burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME | `infallible-visvesvaraya-eefd80.netlify.app` | **DNS only** |
    | — | — | *(no MX, no TXT, no other subdomains — confirmed, not inferred)* | | | *(nothing else to recreate)* | | |
+   | — | — | *(IPv6 not enabled on Netlify)* | | | *(no AAAA record — do not create one)* | | |
    | — | `app.burmy.me` | *(does not exist yet)* | — | → | CNAME | Cloudflare Tunnel's assigned target | **DNS only** (the Tunnel handles routing without needing the orange cloud) — added later, after the migration above is verified healthy |
 
-   The `→` column is the one real translation, not a literal copy: `NETLIFY` isn't a portable record
-   type, so its target is reproduced as a flattened CNAME rather than the point-in-time A records a
-   public lookup would have suggested — see "Confirmed from the actual Netlify dashboard" above for why
-   that distinction matters.
+   The `→` column is the real translation, not a literal copy, and it is **not** the same translation
+   for both rows: `NETLIFY` isn't a portable record type, so it's reproduced using Netlify's own
+   documented external-DNS targets — `apex-loadbalancer.netlify.com` for the apex specifically (Netlify
+   explicitly warns against a plain CNAME at the root pointing to the site's own subdomain, since a
+   CNAME at the apex would forbid any other record — MX, TXT — ever coexisting there), and the site's
+   own `.netlify.app` hostname for `www`, which Netlify documents as an ordinary CNAME target since
+   `www` isn't the zone apex. See "Confirmed from the actual Netlify dashboard" above for the full
+   reasoning and the documentation citation.
 4. **Preserve everything required for**: the Netlify apex site, `www`. Email/MX/SPF/DKIM/DMARC and any
    other subdomain/service are confirmed **not present** — nothing there to preserve.
 5. ✅ **DONE — the real current configuration is the source of truth.** Nothing in the table above is
@@ -396,15 +414,12 @@ type does.
 ### Next step
 
 Steps 1, 2 and 5 are done — the record inventory is confirmed from the real Netlify dashboard, not
-inferred. Two small confirmations outstanding before step 6 (creating the Cloudflare zone):
+inferred, and its Cloudflare targets are verified against Netlify's own external-DNS documentation,
+not assumed. Owner has confirmed: CNAME flattening at the apex is OK, and IPv6/AAAA stays off.
 
-1. OK with CNAME flattening as the apex mechanism (the one real translation from Netlify's own
-   `NETLIFY` record type, not a literal copy)?
-2. IPv6 stays off, matching Netlify's current unclicked state?
-
-Waiting on those, then your explicit approval at step 9's gate before any Namecheap change. Nothing
-past step 5 (this document) has been touched — no Cloudflare zone, no Netlify record, no Namecheap
-change.
+**Nothing has been touched externally — no Cloudflare zone, no Netlify record, no Namecheap change.**
+Waiting on explicit approval to proceed to step 6 (create the Cloudflare zone), then step 9's separate
+gate before any Namecheap change.
 
 ---
 
