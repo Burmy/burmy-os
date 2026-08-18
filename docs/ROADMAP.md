@@ -919,15 +919,22 @@ external gets touched before the plan was reviewed in detail:
   capability: typecheck/lint/unit/integration/e2e/build on every push and PR.
   Unchanged by the simplification.
 - **Read-only DNS investigation for `app.burmy.me`** (no account access, no
-  mutation): `burmy.me` is hosted on **Netlify**, using Netlify's own DNS
-  product (built on NS1, hence the `nsone.net` nameservers) — not a
-  Cloudflare zone today. Two options written up in
-  `docs/DEPLOYMENT.md`, "DNS strategy for app.burmy.me": delegate only the
-  `app` subdomain to Cloudflare via an NS record inside Netlify's DNS panel
-  (recommended — zero effect on the live portfolio site), or migrate the
-  whole zone's nameservers to Cloudflare (not recommended without a
-  concrete reason — requires a full record inventory first). **No DNS
-  change has been made; awaiting the owner's choice.**
+  mutation, refined over two passes): `burmy.me` is hosted on **Netlify**,
+  using Netlify's own DNS product (built on NS1, hence the `nsone.net`
+  nameservers) — not a Cloudflare zone today. The first pass proposed
+  delegating only the `app` subdomain to Cloudflare via an NS record inside
+  Netlify's DNS panel — **withdrawn**: Cloudflare's subdomain-only/partial
+  (CNAME) setup is Enterprise-only, not available on the Free plan this
+  project assumes. The corrected strategy in `docs/DEPLOYMENT.md`, "DNS
+  strategy for app.burmy.me": move `burmy.me`'s full DNS authority to
+  Cloudflare while Netlify keeps hosting the site exactly as today — every
+  Netlify-facing record reproduced in Cloudflare, DNS-only (not proxied),
+  verified record-for-record, **before** the Namecheap nameserver change,
+  with a full migration checklist and a public-lookup-grounded record
+  inventory (apex/`www` A records confirmed; no MX/TXT/DMARC found — needs
+  Netlify-dashboard confirmation before treating that as final). `app.burmy.me`
+  itself is created only after the migrated site is verified healthy. **No
+  DNS, Cloudflare, Netlify, or Namecheap change has been made.**
 - Docs updated to match what was actually built and the simplified scope:
   `docs/DEPLOYMENT.md` (image-versioning design, secrets-scoping table,
   corrected OCI sizing, the DNS investigation above, "VPS administration",

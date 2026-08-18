@@ -256,68 +256,125 @@ and reclaims idle instances. Migration is a rehearsed restore drill, not an emer
 
 ## DNS strategy for `app.burmy.me` — investigated, nothing changed yet
 
-**No DNS or nameserver change has been made.** This section is the investigation the owner asked for,
-so a real decision can be made before anything external is touched.
+**No DNS, Cloudflare, Netlify, Namecheap, VPS, or B2 change has been made.** This section is the
+investigation the owner asked for, corrected once already (see "Corrected from an earlier draft"
+below), so a real migration plan can be reviewed before anything external is touched.
 
-### What's actually there today
+### Corrected from an earlier draft of this section
 
-A read-only public DNS lookup (`nslookup`, no account access, nothing mutated) found:
+An earlier version of this document recommended delegating only the `app` subdomain to Cloudflare via
+an NS record inside Netlify's DNS panel, leaving `burmy.me`'s authoritative DNS on Netlify/NS1
+entirely. **That recommendation was wrong and has been withdrawn.** Cloudflare's subdomain-only /
+partial (CNAME) setup — the feature that recommendation depended on — is **not available on Cloudflare
+Free or Pro**; Cloudflare gates it to Enterprise. This project assumes **Cloudflare Free** unless a
+concrete reason to pay for a higher plan shows up, so that path is not available here, full stop.
 
-- `burmy.me` resolves to `98.84.224.111` and `18.208.88.157`.
-- Its authoritative nameservers are `dns{1-4}.p06.nsone.net`, and the zone's SOA record reports
-  `responsible mail addr = domains+netlify.netlify.com`.
-- **This means `burmy.me` is hosted on Netlify, using Netlify's own DNS product** — Netlify DNS is
-  built on NS1's infrastructure, which is why the nameservers are branded `nsone.net` rather than
-  anything Netlify-branded. The two apex A records above are almost certainly Netlify's own
-  load-balancer IPs, auto-managed by Netlify DNS, not something to reproduce by hand. **Worth
-  confirming directly in the Netlify dashboard** — this is a strong inference from public DNS
-  records, not something read from an account.
-- `app.burmy.me` does not exist yet. No MX or TXT records were found for the apex (either genuinely
-  absent, or not visible to this non-authoritative lookup).
+### The corrected strategy: move DNS authority, not the website
 
-### Option A — RECOMMENDED: delegate only `app.burmy.me` to Cloudflare
+**`burmy.me`'s full DNS zone moves to Cloudflare. Netlify keeps hosting the site.** These are two
+separate facts and it matters that they don't get conflated:
 
-Add an NS delegation record for just the `app` subdomain, inside Netlify's own DNS panel (Netlify DNS
-supports delegating a subdomain to another provider — this is a standard, decades-old DNS mechanism,
-not a Netlify-specific trick):
+- **DNS authority** (which nameservers answer queries for `burmy.me`) moves from NS1/Netlify DNS to
+  Cloudflare.
+- **Website hosting** (what actually serves `burmy.me` and `www.burmy.me`'s content) stays on Netlify,
+  completely unchanged. Cloudflare's DNS records for the apex and `www` simply point at the same
+  Netlify infrastructure the current Netlify DNS records point at today — reproduced, not replaced.
+- Every Netlify/website-facing record is added to Cloudflare **DNS only** (grey cloud, not the orange
+  "Proxied" cloud) unless a concrete, verified reason to proxy one shows up later. Proxying changes
+  the IP Netlify itself sees traffic arrive from and can interact with Netlify's own SSL — not a
+  default to reach for.
+- `app.burmy.me` is the **one** new record, added after the migration is verified healthy, pointing at
+  the Cloudflare Tunnel instead.
 
-1. Add `burmy.me` as a domain in Cloudflare (Cloudflare will not ask to become authoritative for the
-   whole zone for this — only `app` needs to point at it). Cloudflare issues two nameservers for the
-   zone, e.g. `xxx.ns.cloudflare.com` / `yyy.ns.cloudflare.com`.
-2. In the **Netlify DNS panel** (not Namecheap — Namecheap only points at NS1/Netlify and is not
-   where records are managed), add:
-   ```
-   app.burmy.me.   NS   xxx.ns.cloudflare.com.
-   app.burmy.me.   NS   yyy.ns.cloudflare.com.
-   ```
-3. Everything else — `burmy.me` apex, `www`, the live portfolio site, Netlify's own SSL cert
-   management — is **completely untouched**. Only queries for names ending in `app.burmy.me` are
-   affected.
+### What's there today — from public, read-only lookups (no account access)
 
-**Tradeoffs:** requires Netlify DNS to support adding a custom NS record for a subdomain (standard
-DNS panels do; worth a two-minute check before committing to this path). No change at Namecheap at
-all. Lowest blast radius of any option — if it turns out to be wrong, deleting the two NS records
-reverts it completely, with zero effect on the live site the whole time.
+| Query | Result |
+| --- | --- |
+| `burmy.me` A | `98.84.224.111`, `18.208.88.157` |
+| `www.burmy.me` A | `98.84.224.111`, `18.208.88.157` (same two addresses — not a CNAME; `-type=CNAME` for `www` returned no record) |
+| `burmy.me` MX | none found |
+| `burmy.me` TXT | none found |
+| `_dmarc.burmy.me` TXT | **NXDOMAIN — confirmed absent**, not just unqueried |
+| `burmy.me` NS | `dns1-4.p06.nsone.net` |
+| SOA | `responsible mail addr = domains+netlify.netlify.com` → **hosted on Netlify**, using Netlify's own DNS product (built on NS1, hence the `nsone.net` nameservers) |
 
-### Option B — full zone migration to Cloudflare (not recommended without a concrete reason)
+**Read from this, cautiously:** no email appears to be configured for `burmy.me` today (no MX, no SPF/
+DMARC TXT) — if true, that's one whole category (email/SPF/DKIM/DMARC) the migration doesn't need to
+carry. But a non-authoritative public resolver is not the source of truth here, and TTL values aren't
+visible through this lookup method at all. **Per the "do not invent records" rule below, this table is
+a starting point the Netlify dashboard must confirm or correct, not a substitute for it.**
 
-Change `burmy.me`'s nameservers at Namecheap from the four `nsone.net` servers to Cloudflare's. This
-would require, **before** touching anything: inventorying every existing record in Netlify DNS (at
-minimum the apex A records, likely Netlify-specific verification TXT records, possibly `www` and any
-other configured subdomains), reproducing all of them inside Cloudflare, and verifying the live
-portfolio site still resolves correctly through Cloudflare — **before** the nameserver cutover, per
-the owner's explicit instruction. Real risk if anything is missed (a forgotten record is exactly how a
-live site or its email breaks during a DNS migration), and it gives up Netlify DNS's own automatic
-management of the site's records for no benefit this project needs.
+### DNS migration checklist
 
-**Only worth it if Option A turns out to be blocked for a concrete, specific reason** — e.g. Netlify
-DNS refusing to accept a custom NS record on a subdomain. Not proposed as the default.
+**Stop-and-confirm gate: Namecheap's nameservers are not touched until step 9 is explicitly approved.**
+
+1. **Inventory every currently published record** — the table above is the public-lookup starting
+   point; step 2 fills the gaps.
+2. **What to check directly in the Netlify DNS dashboard** (Netlify → Domains → `burmy.me` → DNS
+   panel), since public lookup can't show these:
+   - The complete record list as Netlify itself displays it — the authoritative source, full stop.
+   - Exact TTL for each record.
+   - Whether the apex/`www` A records are literal Netlify load-balancer IPs or Netlify's own
+     "ALIAS"/"ANAME"-style flattened record (Netlify sometimes represents apex records specially;
+     the dashboard will show which).
+   - Any record not discoverable by guessing a hostname — a domain-verification TXT record for some
+     third-party tool, a subdomain for a service other than the main site, anything under a selector
+     name that public lookup has no reason to try.
+   - Confirmation that email genuinely isn't configured (no MX/SPF/DKIM/DMARC), since the public
+     lookup above only proves their *absence at the names checked*, not a full audit.
+3. **Record inventory table** — filled in as far as public lookup allows; `[NEEDS DASHBOARD CHECK]`
+   marks everything that needs Netlify-panel confirmation before it's trustworthy:
+
+   | Type | Hostname | Current value/target | TTL | Purpose | Recreate in Cloudflare? | Cloudflare proxy status |
+   | --- | --- | --- | --- | --- | --- | --- |
+   | A | `burmy.me` | `98.84.224.111`, `18.208.88.157` | `[NEEDS DASHBOARD CHECK]` | Netlify site (apex) | Yes | **DNS only** |
+   | A | `www.burmy.me` | `98.84.224.111`, `18.208.88.157` | `[NEEDS DASHBOARD CHECK]` | Netlify site (www) | Yes | **DNS only** |
+   | MX | `burmy.me` | none found | — | — | Only if the dashboard shows one | **DNS only** |
+   | TXT | `burmy.me` | none found | — | SPF, domain verification, etc. | Only if the dashboard shows any | **DNS only** |
+   | TXT | `_dmarc.burmy.me` | confirmed absent | — | DMARC | No, unless added later | **DNS only** |
+   | ? | *(anything else Netlify's dashboard shows)* | `[NEEDS DASHBOARD CHECK]` | `[NEEDS DASHBOARD CHECK]` | `[NEEDS DASHBOARD CHECK]` | `[NEEDS DASHBOARD CHECK]` | **DNS only** by default |
+   | CNAME/NS | `app.burmy.me` | *(does not exist yet)* | — | Cloudflare Tunnel | New, added later, after the migration is verified | **DNS only** (Cloudflare Tunnel's own CNAME target handles routing without needing the orange cloud) |
+
+4. **Preserve everything required for**: the Netlify apex site, `www`, email/MX, SPF, DKIM, DMARC,
+   domain verification, and any other existing subdomain/service found in step 2 — the table above is
+   updated in place as step 2's findings come back, not treated as final until then.
+5. **The real current configuration is the source of truth.** Nothing above is invented from generic
+   Netlify documentation — every row is either a live lookup result or explicitly marked as needing
+   the dashboard, and stays marked that way until confirmed.
+6. **Create the Cloudflare zone first** — add `burmy.me` in Cloudflare, note the two nameservers it
+   assigns. This alone changes nothing (Namecheap still points at NS1 until step 9).
+7. **Reproduce every required record from the completed table inside Cloudflare**, DNS-only, before
+   touching Namecheap.
+8. **Comparison checklist** — side by side, Netlify DNS vs. the new Cloudflare zone, for owner
+   sign-off before cutover:
+   - [ ] Every row in the record inventory table exists in Cloudflare with an identical value.
+   - [ ] Proxy status is **DNS only** for every website/email record (nothing accidentally proxied).
+   - [ ] No extra record exists in Cloudflare that isn't in the inventory (nothing invented).
+   - [ ] TTLs are sane (Cloudflare's DNS-only defaults are fine; they don't need to match Netlify's
+     exactly, but shouldn't be absurdly long during the cutover window).
+9. **Only after that comparison is explicitly approved** does the Namecheap nameserver change happen —
+   from the four `nsone.net` servers to Cloudflare's two.
+10. **Post-cutover verification** (DNS propagation can take up to ~48h in the worst case, though
+    usually much faster):
+    - [ ] `burmy.me` resolves
+    - [ ] `www.burmy.me` resolves
+    - [ ] The existing Netlify site loads correctly, full visual/functional check, not just "a page
+      loads"
+    - [ ] HTTPS/SSL is healthy (Netlify's cert continues working, or Cloudflare's own edge cert takes
+      over cleanly — confirm which, don't assume)
+    - [ ] Any existing redirects still behave correctly
+    - [ ] Email-related DNS records still resolve correctly (moot if step 2 confirms no email exists,
+      but checked either way, not assumed)
+11. **Only once the existing site is confirmed healthy** does `app.burmy.me` get created:
+    Cloudflare Tunnel → Cloudflare Access → Google OAuth identity provider. Not before.
+12. VPS provisioning and Backblaze B2 setup remain separate, later stop-points — unrelated to the DNS
+    migration and not blocked by it, but still not started until their own turn.
 
 ### Next step
 
-This is a decision, not an implementation detail — waiting for a choice between Option A (recommended)
-and Option B, or confirmation that Option A is blocked, before any Cloudflare/Netlify/Namecheap
-configuration happens.
+Waiting on the Netlify-dashboard confirmation in step 2 above before step 3's inventory table can be
+called complete, and waiting on your explicit approval at step 9's gate before any Namecheap change.
+Nothing past step 1 (this document) has been touched.
 
 ---
 
@@ -343,15 +400,25 @@ Nothing below is a repo/code change. None of it has been performed as of this co
 often hard-to-reverse external action, so none of it is done unilaterally. **Stop-and-confirm, one
 service at a time** — not all of this at once.
 
-1. **DNS strategy for `app.burmy.me`** — see the section above; needs a decision (Option A recommended)
-   before anything else touches Cloudflare or Netlify.
-2. VPS provider account — Oracle Cloud Always Free as documented, or a different provider.
-3. Cloudflare account with Zero Trust / Access enabled.
-4. A Google Cloud Console OAuth client for Cloudflare Access's Google identity provider.
-5. Backblaze B2 account, one bucket, one application key scoped to that bucket.
-6. Password manager entries for: `RESTIC_PASSWORD` (+ a **printed offline copy**), `TUNNEL_TOKEN`,
+**Netlify and Namecheap are not new services** — `burmy.me` already runs on both today; they only
+appear below because the DNS migration touches them, not because they're being newly added.
+
+1. **A Cloudflare account** (Free plan), so the `burmy.me` zone can be created — the first concrete
+   step of the DNS migration checklist above (step 6). Creating the zone alone changes nothing.
+2. **The Netlify-dashboard confirmation** — DNS migration checklist step 2 — before the record
+   inventory table can be called complete.
+3. **Explicit approval of the comparison checklist** (step 8) before I change anything at Namecheap
+   (step 9).
+4. *(Only after the migrated site is confirmed healthy — step 11)*: Cloudflare Zero Trust / Access
+   enabled on the same Cloudflare account, plus a Google Cloud Console OAuth client for Access's
+   Google identity provider.
+5. VPS provider account — Oracle Cloud Always Free as documented, or a different provider. Unrelated
+   to the DNS migration; can happen in parallel or after, your call.
+6. Backblaze B2 account, one bucket, one application key scoped to that bucket. Also unrelated to DNS;
+   its own later stop-point.
+7. Password manager entries for: `RESTIC_PASSWORD` (+ a **printed offline copy**), `TUNNEL_TOKEN`,
    B2 keys, `POSTGRES_PASSWORD`, `OWNER_EMAIL`.
-7. Initial SSH access to the VPS (cloud console) so `scripts/provision.sh` can run.
+8. Initial SSH access to the VPS (cloud console) so `scripts/provision.sh` can run.
 
 That's the complete list under the simplified scope — no Tailscale account, no healthchecks.io account
 required. See "Deferred for V1" below if either is wanted later.
