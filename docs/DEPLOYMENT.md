@@ -348,7 +348,7 @@ sit at the root and resolves it dynamically underneath.
 
 ### DNS migration checklist
 
-**Stop-and-confirm gate: Namecheap's nameservers are not touched until step 9 is explicitly approved.**
+**Stop-and-confirm gate: Namecheap's nameservers are not touched until step 10 is explicitly approved.**
 
 1. ✅ **DONE — inventory every currently published record.** Confirmed directly from the Netlify
    dashboard (Netlify → Domains → `burmy.me` → DNS), not just inferred from public lookup: **exactly 2
@@ -382,20 +382,44 @@ sit at the root and resolves it dynamically underneath.
 5. ✅ **DONE — the real current configuration is the source of truth.** Nothing in the table above is
    invented from generic Netlify documentation — every row is the actual Netlify dashboard's own
    record list, confirmed directly, not inferred.
-6. **Create the Cloudflare zone first** — add `burmy.me` in Cloudflare, note the two nameservers it
-   assigns. This alone changes nothing (Namecheap still points at NS1 until step 9).
-7. **Reproduce every required record from the completed table inside Cloudflare**, DNS-only, before
-   touching Namecheap.
+6. **Create the Cloudflare zone first** (Free plan) — add `burmy.me` in Cloudflare, note the two
+   nameservers it assigns. This alone changes nothing (Namecheap still points at NS1 until step 10).
+   **Cloudflare will likely offer to auto-import existing DNS records by scanning current answers —
+   do NOT trust these as-is.** A scan can only see what public lookup already saw: the resolved A
+   records behind Netlify's dynamic `NETLIFY` record, the exact static-IP problem this whole
+   correction exists to avoid (see "Confirmed from the actual Netlify dashboard" above). Any
+   auto-imported A record for `burmy.me` or `www.burmy.me` must be deleted, not kept.
+7. **Reproduce only the confirmed table inside Cloudflare**, replacing anything the scan imported:
+   - `@` → CNAME (flattened) → `apex-loadbalancer.netlify.com` → DNS only
+   - `www` → CNAME → `infallible-visvesvaraya-eefd80.netlify.app` → DNS only
+   - No AAAA, no MX, no TXT.
+   - No duplicate records for the same hostname — if the scan's A record and the correct CNAME both
+     exist for a moment, the A record is deleted, not left "just in case."
 8. **Comparison checklist** — side by side, Netlify DNS vs. the new Cloudflare zone, for owner
    sign-off before cutover:
    - [ ] Every row in the record inventory table exists in Cloudflare with an identical value.
-   - [ ] Proxy status is **DNS only** for every website/email record (nothing accidentally proxied).
-   - [ ] No extra record exists in Cloudflare that isn't in the inventory (nothing invented).
+   - [ ] Proxy status is **DNS only** for both records (nothing accidentally proxied).
+   - [ ] No extra record exists in Cloudflare that isn't in the inventory — in particular, no leftover
+     auto-scanned A record for either hostname.
+   - [ ] No AAAA record exists.
    - [ ] TTLs are sane (Cloudflare's DNS-only defaults are fine; they don't need to match Netlify's
      exactly, but shouldn't be absurdly long during the cutover window).
-9. **Only after that comparison is explicitly approved** does the Namecheap nameserver change happen —
-   from the four `nsone.net` servers to Cloudflare's two.
-10. **Post-cutover verification** (DNS propagation can take up to ~48h in the worst case, though
+9. **DNSSEC/DS check** (read-only, public — verified via two independent DNS-over-HTTPS resolvers,
+   Google's `dns.google` and Cloudflare's own `cloudflare-dns.com`, querying `burmy.me` type `DS`):
+   **no DS record exists today.** Both queries returned `NOERROR` with an empty Answer section and
+   only the parent `.me` registry's own SOA in Authority — the standard "this record type is absent"
+   pattern, not a lookup failure. **What this means:** DNSSEC is not currently enabled for `burmy.me`
+   at all — there is no chain of trust for a validating resolver to check, so nothing about the
+   Netlify/NS1 → Cloudflare nameserver cutover can trip DNSSEC validation. The classic DNSSEC-migration
+   hazard (a DS record at the registrar still pointing at the OLD provider's key material after
+   cutover, which breaks the domain for any resolver that enforces DNSSEC) **does not apply here**,
+   because there is no DS record to go stale. **Exact action required before cutover: none.** If
+   DNSSEC is ever wanted later (a separate, distinct decision, not part of this migration), it would
+   be enabled from within Cloudflare once the zone is authoritative, which generates a new DS record
+   that then has to be added at Namecheap — that is future scope, not a blocker here.
+10. **Only after the comparison checklist (step 8) is explicitly approved** does the Namecheap
+    nameserver change happen — from the four `nsone.net` servers to Cloudflare's two.
+11. **Post-cutover verification** (DNS propagation can take up to ~48h in the worst case, though
     usually much faster):
     - [ ] `burmy.me` resolves
     - [ ] `www.burmy.me` resolves
@@ -404,22 +428,42 @@ sit at the root and resolves it dynamically underneath.
     - [ ] HTTPS/SSL is healthy (Netlify's cert continues working, or Cloudflare's own edge cert takes
       over cleanly — confirm which, don't assume)
     - [ ] Any existing redirects still behave correctly
-    - [ ] Email-related DNS records still resolve correctly (moot if step 2 confirms no email exists,
-      but checked either way, not assumed)
-11. **Only once the existing site is confirmed healthy** does `app.burmy.me` get created:
+    - [ ] No email-related DNS records were expected and none now exist (confirmed, not assumed)
+12. **Only once the existing site is confirmed healthy** does `app.burmy.me` get created:
     Cloudflare Tunnel → Cloudflare Access → Google OAuth identity provider. Not before.
-12. VPS provisioning and Backblaze B2 setup remain separate, later stop-points — unrelated to the DNS
+13. VPS provisioning and Backblaze B2 setup remain separate, later stop-points — unrelated to the DNS
     migration and not blocked by it, but still not started until their own turn.
 
 ### Next step
 
-Steps 1, 2 and 5 are done — the record inventory is confirmed from the real Netlify dashboard, not
-inferred, and its Cloudflare targets are verified against Netlify's own external-DNS documentation,
-not assumed. Owner has confirmed: CNAME flattening at the apex is OK, and IPv6/AAAA stays off.
+Steps 1, 2, 5 and 9 (DNSSEC) are done — the record inventory is confirmed from the real Netlify
+dashboard, not inferred; its Cloudflare targets are verified against Netlify's own external-DNS
+documentation, not assumed; no DS record exists, so DNSSEC is not a cutover concern. Owner has
+confirmed: CNAME flattening at the apex is OK, IPv6/AAAA stays off, and the corrected apex/`www`
+targets above are approved.
 
 **Nothing has been touched externally — no Cloudflare zone, no Netlify record, no Namecheap change.**
-Waiting on explicit approval to proceed to step 6 (create the Cloudflare zone), then step 9's separate
-gate before any Namecheap change.
+Step 6 (create the Cloudflare zone) is a real external action this document's author has no way to
+perform directly — no Cloudflare API credentials, no browser access. It has to be either (a) done
+manually by the owner following the exact steps below, or (b) done via a scoped Cloudflare API token
+the owner explicitly chooses to provide. Manual steps, for (a):
+
+1. Sign in at `dash.cloudflare.com` (or create an account if none exists yet).
+2. **Add a Site** → enter `burmy.me` → select the **Free** plan.
+3. When Cloudflare offers to scan and auto-import existing DNS records, let it run, but **do not
+   accept the results as final** — see step 6 of the checklist above for exactly why (it will likely
+   surface the same stale, point-in-time A records public lookup already found behind Netlify's
+   dynamic record).
+4. In the DNS records panel: delete any auto-imported A record for `burmy.me` or `www.burmy.me`. Add
+   the two records from step 7 of the checklist above exactly — CNAME `@` → `apex-loadbalancer.netlify.com`
+   (DNS only), CNAME `www` → `infallible-visvesvaraya-eefd80.netlify.app` (DNS only). Confirm no AAAA,
+   MX, or TXT records exist.
+5. Note the two nameservers Cloudflare assigns to the zone (shown on the zone's overview page) —
+   **do not enter these at Namecheap yet.**
+6. Report back what the DNS records panel shows (a screenshot, same as the Netlify one, works well)
+   so the comparison checklist (step 8 above) can be completed together.
+
+Waiting on that before step 10's separate gate for any Namecheap change.
 
 ---
 
@@ -449,13 +493,15 @@ service at a time** — not all of this at once.
 appear below because the DNS migration touches them, not because they're being newly added.
 
 1. **A Cloudflare account** (Free plan), so the `burmy.me` zone can be created — the first concrete
-   step of the DNS migration checklist above (step 6). Creating the zone alone changes nothing. Two
-   small confirmations first (CNAME flattening at the apex, IPv6 staying off) — see "Next step" above.
+   step of the DNS migration checklist above (step 6). Creating the zone alone changes nothing. The
+   two confirmations (CNAME flattening at the apex, IPv6 staying off) and the DNSSEC check are done —
+   see "Next step" above for the exact manual steps, since zone creation itself needs the owner (no
+   Cloudflare API credentials or browser access exist to do this directly).
 2. ✅ **DONE** — the Netlify-dashboard confirmation (checklist step 2). The record inventory is
    complete: 2 records, no email, no other subdomains.
 3. **Explicit approval of the comparison checklist** (step 8) before I change anything at Namecheap
-   (step 9).
-4. *(Only after the migrated site is confirmed healthy — step 11)*: Cloudflare Zero Trust / Access
+   (step 10).
+4. *(Only after the migrated site is confirmed healthy — step 12)*: Cloudflare Zero Trust / Access
    enabled on the same Cloudflare account, plus a Google Cloud Console OAuth client for Access's
    Google identity provider.
 5. VPS provider account — Oracle Cloud Always Free as documented, or a different provider. Unrelated
