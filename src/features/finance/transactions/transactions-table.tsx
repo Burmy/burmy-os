@@ -33,7 +33,6 @@ import type {
   LedgerTransaction,
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type ManualTransactionType } from '@/server/finance/classify/manual';
-import { cents, format } from '@/server/finance/money';
 import { LEDGER_TRANSACTION_TYPES } from './filters';
 import { updateTransactionCategoryAction, updateTransactionTypeAction } from './actions';
 
@@ -226,8 +225,8 @@ export function TransactionsTable({
         {summary.needsReviewCount > 0 ? <span>{summary.needsReviewCount} need review</span> : null}
         {summary.excludedCount > 0 ? (
           <span>
-            {summary.excludedCount} transfer/card payment{summary.excludedCount === 1 ? '' : 's'} (
-            {format(cents(summary.excludedAmountCents))}) excluded from Monthly
+            {summary.excludedCount} transfer/card payment transaction{summary.excludedCount === 1 ? '' : 's'} excluded
+            from Monthly
           </span>
         ) : null}
         <a href={exportHref} className="ml-auto font-medium underline underline-offset-2">

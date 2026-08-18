@@ -277,16 +277,18 @@ These are verified, not folklore. Do not "fix" them back.
   testing-environment limitation, not a security gap) and updating the expected count. If you add
   another protected Route Handler and this test starts throwing instead of asserting a status code, this
   is why — it is not a new security hole.
-- **A credit-card-payment/transfer pair is two rows with OPPOSITE signs, so a plain signed `SUM()` over
-  them can cancel toward zero even when real dollars moved.** The checking-side payment (outflow,
-  positive) and the card-side "payment thank you" credit (inflow, negative) are the same $200 moving
-  once. M9's Transactions reconciliation strip summed `abs(amount_cents)` instead specifically because
-  of this — whenever both legs of a pair are in the current filter's scope (e.g. no account filter
-  applied), the naive signed sum silently reports $0 for real excluded spending. Caught by re-deriving
-  the SQL by hand before writing a test, then pinned with one that seeds both legs of a real pair and
-  asserts the combined magnitude survives. Any future "total excluded" or "total transferred" figure
-  built from `transaction_type IN ('transfer', 'credit_card_payment')` needs the same `ABS`, not a
-  reflexive `SUM`.
+- **A credit-card-payment/transfer PAIR is two rows for one real movement of money, and there is no
+  cheap way to turn "two rows" back into "one dollar figure."** The checking-side payment (outflow,
+  positive) and the card-side "payment thank you" credit (inflow, negative) are the SAME $200 moving
+  once — a plain `SUM()` across both legs cancels to $0 (hides real excluded spending); `SUM(ABS(...))`
+  avoids the cancellation but then DOUBLE-COUNTS the pair (a real $675 payment reads as $1,350).
+  M9's first draft of the Transactions reconciliation strip shipped the `ABS` version, then the owner
+  caught the double-counting after accepting the milestone and asked for a narrow fix. `getLedgerSummary()`
+  (`db/finance/transactions.ts`) now reports `excludedCount` — a plain row count — with **no paired dollar
+  amount at all**, by explicit decision: netting the pair back to the true $675 would mean matching legs,
+  which is real reconciliation logic this page deliberately does not build. If a future feature genuinely
+  needs a dollar figure for `transaction_type IN ('transfer', 'credit_card_payment')`, that is pair-matching
+  work, not a `SUM`/`ABS` choice — do not reach for either as a shortcut.
 
 ---
 

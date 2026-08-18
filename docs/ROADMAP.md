@@ -734,11 +734,11 @@ implementation:**
    — `gridBaseConditions()`, the aggregate/drill-down equality guarantee —
    is completely untouched.
 3. **The reconciliation strip stays to three counts**: total in the current
-   filter, needs-review count, and transfer/credit-card-payment count +
-   amount excluded from Monthly. A generic filtered dollar total was cut —
-   summing income, expense, refunds and transfers into one signed number is
-   not a meaningful figure and risked reading as competing with Monthly's
-   own totals.
+   filter, needs-review count, and a transfer/credit-card-payment row count
+   excluded from Monthly — **no dollar amount at all**, see below. A generic
+   filtered dollar total was cut too — summing income, expense, refunds and
+   transfers into one signed number is not a meaningful figure and risked
+   reading as competing with Monthly's own totals.
 4. **One shared, owner-scoped filter/condition helper** (`ledgerConditions()`
    in `db/finance/transactions.ts`) is reused, unmodified, by the paginated
    listing, the reconciliation summary, and the CSV export — not three
@@ -777,17 +777,26 @@ closer to "a new accounting subsystem" than the three guarantees already in
 place justify. The schema is still there, unused, ready if a concrete need
 shows up later.
 
-**A real bug caught before it ever shipped, by re-deriving the SQL by
-hand, not by a failing test:** the first draft of the excluded-amount
-figure was a plain signed `SUM()` over `transfer`/`credit_card_payment`
-rows. A credit-card-payment pair is two rows with **opposite signs** — the
-checking-side outflow and the card-side "payment thank you" inflow are the
-same real dollars, moving once — so whenever both legs are in scope (e.g.
-no account filter applied), a signed sum cancels toward zero and silently
-hides the very figure the strip exists to surface. Fixed by summing
-`ABS(amount_cents)` instead, and pinned with an integration test that seeds
-both legs of a real pair and asserts the two rows still report the full
-combined magnitude, not a near-zero net.
+**The excluded-amount figure went through two fixes, the second one after
+the owner had already accepted the milestone.** The first draft summed
+signed `amount_cents` over `transfer`/`credit_card_payment` rows — caught
+before it ever shipped, by re-deriving the SQL by hand, not by a failing
+test: a credit-card-payment pair is two rows with **opposite signs** (the
+checking-side outflow, the card-side "payment thank you" inflow are the
+same real dollars, moving once), so a signed sum cancels toward zero
+exactly when both legs are in scope. Fixed by summing `ABS(amount_cents)`
+instead, and shipped that way in the accepted commit. The owner then caught
+a SECOND, subtler problem in real use: `SUM(ABS(...))` avoids the
+cancellation but then **double-counts** the pair — a real $675 linked
+payment reads as $1,350 excluded, since both legs contribute their full
+magnitude. Rather than build pair-matching/netting logic to recover the
+true $675 (explicitly rejected — that is real reconciliation logic this
+page does not attempt), the fix removes the dollar amount entirely:
+`getLedgerSummary()` now reports `excludedCount`, a plain row count, with
+no paired amount. The general lesson, now in CLAUDE.md: for this table's
+data shape, there is no cheap `SUM` vs `ABS` choice that produces a
+correct dollar figure for a linked pair — only netting does, and netting
+is out of scope here by design.
 
 **A real gap found in `tests/integration/entry-points.test.ts` itself,
 never previously exercised:** its "unauthenticated invocation, with the

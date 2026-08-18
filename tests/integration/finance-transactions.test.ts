@@ -269,13 +269,14 @@ describe('getLedgerSummary', () => {
     expect(summary.needsReviewCount).toBe(2);
   });
 
-  it('excluded amount uses ABSOLUTE VALUE, so opposite-signed legs of a card payment do not cancel to zero', async () => {
+  it('excludedCount is a plain row count — both legs of a linked pair count separately, no netting', async () => {
     const owner = await makeOwner('owner@burmy.test');
     const checkingId = await makeAccountId(owner, 'checking', 'Checking');
     const cardId = await makeAccountId(owner, 'credit_card', 'Card');
-    // The checking-side payment (outflow, positive) and the card-side "payment
-    // thank you" credit (inflow, negative) are the SAME real $200 moving —
-    // a plain SUM across both legs would net to zero and hide it.
+    // Deliberately no dollar amount alongside this count — see the
+    // getLedgerSummary() doc comment: a pair is two rows for one real
+    // movement of money, and this page does not attempt to net them back
+    // down to the single real amount, by owner decision.
     await seedTransaction({
       ownerId: owner,
       accountId: checkingId,
@@ -295,7 +296,6 @@ describe('getLedgerSummary', () => {
 
     const summary = await transactions.getLedgerSummary(owner, { year: 2026 });
     expect(summary.excludedCount).toBe(2);
-    expect(summary.excludedAmountCents).toBe(40000);
   });
 
   it('scopes to the same filter as the listing (an account filter isolates one leg)', async () => {
@@ -317,7 +317,6 @@ describe('getLedgerSummary', () => {
 
     const summary = await transactions.getLedgerSummary(owner, { year: 2026, accountId: checkingId });
     expect(summary.excludedCount).toBe(1);
-    expect(summary.excludedAmountCents).toBe(20000);
   });
 });
 

@@ -979,19 +979,25 @@ needed anywhere.
 
 Three counts, computed from `ledgerConditions()` for whatever filter is
 currently on screen: the transaction count, the needs-review count, and the
-`transfer`/`credit_card_payment` count **and amount** excluded from every
-Monthly total. No overall signed dollar total is shown — summing income,
-expense, refunds and transfers into one number is not a meaningful figure
-and risked reading as competing with Monthly's own totals.
+`transfer`/`credit_card_payment` row count excluded from every Monthly
+total. No overall signed dollar total is shown — summing income, expense,
+refunds and transfers into one number is not a meaningful figure and risked
+reading as competing with Monthly's own totals.
 
-The excluded amount sums `ABS(amount_cents)`, not a plain signed `SUM`. A
-credit-card-payment pair is two rows with **opposite signs** (the
-checking-side outflow, the card-side "payment thank you" inflow) — the same
-real dollars, moving once. A signed sum across both legs cancels toward
-zero exactly when both are in scope (no account filter applied), silently
-hiding the figure this strip exists to surface. Summing magnitude reports
-"how much moved through excluded rows" honestly regardless of how many legs
-the current filter happens to include.
+**The excluded figure is a plain row count, deliberately with NO paired
+dollar amount** — this went through two drafts. A credit-card-payment PAIR
+is two rows for one real movement of money: the checking-side outflow and
+the card-side "payment thank you" inflow are the same dollars, moving once.
+A signed `SUM` across both legs cancels toward zero exactly when both are
+in scope (no account filter applied) — caught before it ever shipped.
+`SUM(ABS(...))` avoids that cancellation but then **double-counts** the
+pair: a real $675 linked payment reads as $1,350 excluded — caught by the
+owner in real use, after the milestone carrying the `ABS` version had
+already been accepted. Recovering the true $675 would mean matching legs
+back into pairs, which is real reconciliation/netting logic this page
+deliberately does not build (see "Reconciliation" above). Showing the row
+count only sidesteps the whole class of bug instead of picking a
+lesser-wrong dollar figure.
 
 This strip is additive to, not a replacement for, the correctness
 guarantees that already exist: M4's BoA checksum, M5's Tier 2 count

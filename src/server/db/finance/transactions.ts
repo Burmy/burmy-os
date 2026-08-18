@@ -411,16 +411,22 @@ export interface LedgerSummary {
   readonly needsReviewCount: number;
   /** `transfer` + `credit_card_payment` rows in scope — excluded from every Monthly total. */
   readonly excludedCount: number;
-  readonly excludedAmountCents: number;
 }
 
 /**
  * One aggregate query over the SAME conditions the listing and the export
  * use. Deliberately no overall signed sum — mixing income, expense, refunds
  * and transfers into one number is not a meaningful total, and showing one
- * risked reading as an authoritative figure competing with Monthly's. The
- * three sub-counts below are what M4/M5/M8's own correctness guarantees
- * don't already surface on this page.
+ * risked reading as an authoritative figure competing with Monthly's.
+ *
+ * `excludedCount` is a plain row count, deliberately WITHOUT a paired dollar
+ * amount. A transfer/card-payment PAIR is two rows for one real movement of
+ * money — a signed `SUM` cancels toward zero exactly when both legs are in
+ * scope, and `SUM(ABS(...))` avoids that but then double-counts the pair
+ * (a real $675 payment reads as $1,350 excluded). Netting the pair back down
+ * to $675 would mean matching legs — real reconciliation logic this page
+ * deliberately does not build. Showing the row count only sidesteps the
+ * whole class of bug rather than picking a lesser-wrong number.
  */
 export async function getLedgerSummary(ownerId: string, filters: LedgerFilters): Promise<LedgerSummary> {
   const conditions = ledgerConditions(ownerId, filters);
@@ -430,18 +436,11 @@ export async function getLedgerSummary(ownerId: string, filters: LedgerFilters):
       totalCount: sql<number>`count(*)::int`,
       needsReviewCount: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
       excludedCount: sql<number>`count(*) filter (where ${financeTransactions.transactionType} in ('transfer', 'credit_card_payment'))::int`,
-      // ABS, not a plain SUM: a transfer/card-payment pair is two rows with
-      // OPPOSITE signs (money out one account, in the other), so a signed sum
-      // can cancel toward zero even when real dollars moved — exactly when
-      // both legs are in scope (e.g. no account filter applied). Summing
-      // magnitude reports "how much moved through excluded rows" honestly
-      // regardless of how many legs the current filter happens to include.
-      excludedAmountCents: sql<number>`coalesce(sum(abs(${financeTransactions.amountCents})) filter (where ${financeTransactions.transactionType} in ('transfer', 'credit_card_payment')), 0)::int`,
     })
     .from(financeTransactions)
     .where(and(...conditions));
 
-  return row ?? { totalCount: 0, needsReviewCount: 0, excludedCount: 0, excludedAmountCents: 0 };
+  return row ?? { totalCount: 0, needsReviewCount: 0, excludedCount: 0 };
 }
 
 /** One more than the export cap, so the caller can tell "exactly at the cap" from "over it" and fail visibly rather than silently truncate. */
