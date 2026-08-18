@@ -320,6 +320,27 @@ These are verified, not folklore. Do not "fix" them back.
   failing. `scripts/check-host.sh`'s disk-usage check reads `$(NF-1)` (second-to-last field) instead:
   `df -P`'s last column is always `Mounted on` and the one before it is always `Capacity`, regardless
   of how many fields the filesystem name itself splits into.
+- **`formatInflow()` expects a still-negative, RAW stored value — calling it on a figure that is
+  already sign-flipped double-flips it back negative.** `getMonthlyTotalsAllTime()` (M11) sign-flips
+  income to a positive display figure at the DB boundary itself, exactly like M8's `GridRowTotals
+  .incomeCents` already does (both are documented "never re-negate this"). The Finance dashboard's
+  Income stat card first wrote `formatInflow(cents(summary.incomeCents))` anyway and rendered
+  `-$6,400.00` for a real paycheck. The fix is the same one `MonthlyGridTable`'s own local `money()`
+  helper already uses for exactly this reason: plain `format(cents(value), { signed: true })` on an
+  already-flipped aggregate. `formatInflow` is only correct on a raw, still-negative stored value —
+  a single transaction row, not a pre-summed monthly/YTD total. Caught only by seeding synthetic data
+  and looking at the running dev server, not by typecheck, lint, or any test — the types don't
+  distinguish "raw" `Cents` from "already display-flipped" `Cents`, so nothing catches this statically.
+- **A flex item's default `min-width` is `auto`, not `0` — a wide descendant several levels down can
+  force the ENTIRE flex chain wider than the viewport even though it sits inside its own
+  `overflow-x-auto` container.** `src/app/(private)/layout.tsx`'s sidebar/content flex chain had no
+  `min-w-0` anywhere, so the M8 monthly grid table (which the M11 dashboard now sits above, with more
+  categories visible than before) pushed `<body>` to 979px on a 390px mobile viewport instead of
+  scrolling inside its own `Table` primitive's `overflow-x-auto` wrapper — confirmed via
+  `document.body.scrollWidth` in a real headless-browser check, not by reading the JSX. Fixing `<main>`
+  alone was not sufficient; the intermediate `flex-col` wrapper between `<main>` and the outer sidebar
+  row needed `min-w-0` too — every flex boundary in the chain defaults to `min-width: auto`
+  independently, so each one needs the override, not just the one closest to the wide content.
 
 ---
 
