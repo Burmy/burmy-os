@@ -76,6 +76,21 @@
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
+
+  /* Dashboard chart colors (M11) — purposeful, not decorative: green means
+     money in, amber means money out, red is reserved for a net-negative
+     month specifically. Category series reuse the same muted 6-color set
+     used by both the breakdown chart and the category-trend lines, so a
+     category keeps the same color across both. */
+  --color-chart-income: var(--chart-income);
+  --color-chart-expense: var(--chart-expense);
+  --color-chart-net-negative: var(--chart-net-negative);
+  --color-chart-cat-1: var(--chart-cat-1);
+  --color-chart-cat-2: var(--chart-cat-2);
+  --color-chart-cat-3: var(--chart-cat-3);
+  --color-chart-cat-4: var(--chart-cat-4);
+  --color-chart-cat-5: var(--chart-cat-5);
+  --color-chart-cat-6: var(--chart-cat-6);
 }
 
 /* ── Light (the base; never only inside a media query) ────────────────────── */
@@ -101,6 +116,16 @@
   --border: #e4e4e7;
   --input: #e4e4e7;
   --ring: #a1a1aa;
+
+  --chart-income: #16a34a;
+  --chart-expense: #d97706;
+  --chart-net-negative: #b91c1c;
+  --chart-cat-1: #2563eb;
+  --chart-cat-2: #0d9488;
+  --chart-cat-3: #7c3aed;
+  --chart-cat-4: #d97706;
+  --chart-cat-5: #db2777;
+  --chart-cat-6: #64748b;
 }
 
 /* ── Dark: system preference, unless light was explicitly chosen ──────────── */
@@ -125,6 +150,16 @@
     --border: #27272a;
     --input: #27272a;
     --ring: #52525b;
+
+    --chart-income: #4ade80;
+    --chart-expense: #fb923c;
+    --chart-net-negative: #f87171;
+    --chart-cat-1: #60a5fa;
+    --chart-cat-2: #2dd4bf;
+    --chart-cat-3: #a78bfa;
+    --chart-cat-4: #fb923c;
+    --chart-cat-5: #f472b6;
+    --chart-cat-6: #94a3b8;
   }
 }
 
@@ -149,6 +184,16 @@
   --border: #27272a;
   --input: #27272a;
   --ring: #52525b;
+
+  --chart-income: #4ade80;
+  --chart-expense: #fb923c;
+  --chart-net-negative: #f87171;
+  --chart-cat-1: #60a5fa;
+  --chart-cat-2: #2dd4bf;
+  --chart-cat-3: #a78bfa;
+  --chart-cat-4: #fb923c;
+  --chart-cat-5: #f472b6;
+  --chart-cat-6: #94a3b8;
 }
 
 body {

@@ -1,0 +1,290 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  buildCategoryBreakdown,
+  buildCategoryTrend,
+  buildTrend,
+  compareToPreviousMonth,
+  computeAverageDailySpending,
+  computeSavingsRate,
+  computeYtdSummary,
+  daysInMonth,
+  findBiggestSpendingDay,
+  findExtremeMonth,
+  monthRange,
+  previousMonth,
+  toMonthSummary,
+  type CategoryMeta,
+} from '@/server/finance/dashboard';
+import type { CategoryMonthlyTotal, MonthlyTotal } from '@/server/db/finance/grid';
+
+function total(overrides: Partial<MonthlyTotal>): MonthlyTotal {
+  return { year: 2026, month: 1, incomeCents: 0, expenseCents: 0, transactionCount: 0, ...overrides };
+}
+
+function catRow(overrides: Partial<CategoryMonthlyTotal>): CategoryMonthlyTotal {
+  return { year: 2026, month: 1, categoryId: 'cat-1', amountCents: 1000, txnCount: 1, ...overrides };
+}
+
+const CATEGORIES: CategoryMeta[] = [
+  { id: 'cat-1', name: 'Groceries' },
+  { id: 'cat-2', name: 'Gas' },
+  { id: null, name: 'Uncategorized' },
+];
+
+describe('date math', () => {
+  it('daysInMonth handles a leap February', () => {
+    expect(daysInMonth(2028, 2)).toBe(29);
+    expect(daysInMonth(2026, 2)).toBe(28);
+  });
+
+  it('monthRange gives an exclusive end that rolls into the next year at December', () => {
+    expect(monthRange(2026, 12)).toEqual({ start: '2026-12-01', endExclusive: '2027-01-01' });
+  });
+
+  it('previousMonth crosses the year boundary at January', () => {
+    expect(previousMonth(2026, 1)).toEqual({ year: 2025, month: 12 });
+    expect(previousMonth(2026, 6)).toEqual({ year: 2026, month: 5 });
+  });
+});
+
+describe('toMonthSummary — income, expenses, net', () => {
+  it('net is income minus expenses', () => {
+    const summary = toMonthSummary(total({ incomeCents: 500000, expenseCents: 320000, transactionCount: 42 }));
+    expect(summary.incomeCents).toBe(500000);
+    expect(summary.expenseCents).toBe(320000);
+    expect(summary.netCents).toBe(180000);
+    expect(summary.transactionCount).toBe(42);
+  });
+
+  it('an empty month is all zeros, not fabricated', () => {
+    const summary = toMonthSummary(total({}));
+    expect(summary).toMatchObject({ incomeCents: 0, expenseCents: 0, netCents: 0, transactionCount: 0 });
+  });
+
+  it('never produces a negative-zero net for a zero/zero month', () => {
+    const summary = toMonthSummary(total({ incomeCents: 0, expenseCents: 0 }));
+    expect(Object.is(summary.netCents, -0)).toBe(false);
+  });
+});
+
+describe('computeSavingsRate', () => {
+  it('is (income - expense) / income * 100', () => {
+    expect(computeSavingsRate(500000, 320000)).toBeCloseTo(36, 5);
+  });
+
+  it('is null for a zero-income month, never 0%', () => {
+    expect(computeSavingsRate(0, 40000)).toBeNull();
+  });
+
+  it('can be negative when expenses exceed income', () => {
+    expect(computeSavingsRate(100000, 150000)).toBeCloseTo(-50, 5);
+  });
+});
+
+describe('computeAverageDailySpending', () => {
+  it('divides expenses by the supplied divisor', () => {
+    expect(computeAverageDailySpending(310000, 31)).toBeCloseTo(10000, 5);
+  });
+
+  it('a non-positive divisor is treated as no data, not a divide-by-zero crash', () => {
+    expect(computeAverageDailySpending(50000, 0)).toBe(0);
+  });
+});
+
+describe('compareToPreviousMonth', () => {
+  it('null previous month yields no comparison at all', () => {
+    expect(compareToPreviousMonth(toMonthSummary(total({})), null)).toBeNull();
+  });
+
+  it('lower expenses this month is favorable', () => {
+    const current = toMonthSummary(total({ expenseCents: 30000 }));
+    const previous = toMonthSummary(total({ expenseCents: 40000 }));
+    const cmp = compareToPreviousMonth(current, previous)!;
+    expect(cmp.expense.deltaCents).toBe(-10000);
+    expect(cmp.expense.direction).toBe('favorable');
+  });
+
+  it('higher expenses this month is unfavorable', () => {
+    const current = toMonthSummary(total({ expenseCents: 50000 }));
+    const previous = toMonthSummary(total({ expenseCents: 40000 }));
+    expect(compareToPreviousMonth(current, previous)!.expense.direction).toBe('unfavorable');
+  });
+
+  it('higher income this month is favorable, lower income is unfavorable', () => {
+    const current = toMonthSummary(total({ incomeCents: 600000 }));
+    const previous = toMonthSummary(total({ incomeCents: 500000 }));
+    expect(compareToPreviousMonth(current, previous)!.income.direction).toBe('favorable');
+    expect(compareToPreviousMonth(previous, current)!.income.direction).toBe('unfavorable');
+  });
+
+  it('higher net is favorable, lower net is unfavorable', () => {
+    const current = toMonthSummary(total({ incomeCents: 500000, expenseCents: 100000 }));
+    const previous = toMonthSummary(total({ incomeCents: 500000, expenseCents: 300000 }));
+    expect(compareToPreviousMonth(current, previous)!.net.direction).toBe('favorable');
+    expect(compareToPreviousMonth(previous, current)!.net.direction).toBe('unfavorable');
+  });
+
+  it('no change is neutral, not favorable or unfavorable', () => {
+    const same = toMonthSummary(total({ incomeCents: 500000, expenseCents: 300000 }));
+    const cmp = compareToPreviousMonth(same, same)!;
+    expect(cmp.income.direction).toBe('neutral');
+    expect(cmp.expense.direction).toBe('neutral');
+    expect(cmp.net.direction).toBe('neutral');
+  });
+
+  it('a previous value of zero yields a null percent change, not Infinity', () => {
+    const current = toMonthSummary(total({ incomeCents: 100000 }));
+    const previous = toMonthSummary(total({ incomeCents: 0 }));
+    expect(compareToPreviousMonth(current, previous)!.income.deltaPercent).toBeNull();
+  });
+});
+
+describe('buildTrend', () => {
+  it('zero-fills months with no data but never extends before the earliest real month', () => {
+    const totals = [total({ year: 2026, month: 3, incomeCents: 100000, expenseCents: 50000 })];
+    const points = buildTrend(totals, 2026, 5, 12);
+    expect(points.map((p) => `${p.year}-${p.month}`)).toEqual(['2026-3', '2026-4', '2026-5']);
+    expect(points[0]!.incomeCents).toBe(100000);
+    expect(points[1]!.incomeCents).toBe(0);
+  });
+
+  it('empty history returns an empty trend, not a fabricated one', () => {
+    expect(buildTrend([], 2026, 6, 12)).toEqual([]);
+  });
+});
+
+describe('findExtremeMonth', () => {
+  const totals = [
+    total({ year: 2026, month: 1, incomeCents: 400000, expenseCents: 300000 }),
+    total({ year: 2026, month: 2, incomeCents: 900000, expenseCents: 850000 }),
+    total({ year: 2026, month: 3, incomeCents: 500000, expenseCents: 100000 }),
+  ];
+
+  it('highest income month', () => {
+    expect(findExtremeMonth(totals, 'income')).toMatchObject({ month: 2, incomeCents: 900000 });
+  });
+
+  it('highest spending month', () => {
+    expect(findExtremeMonth(totals, 'expense')).toMatchObject({ month: 2, expenseCents: 850000 });
+  });
+
+  it('best net month is the highest income-minus-expense, not the highest income', () => {
+    expect(findExtremeMonth(totals, 'net')).toMatchObject({ month: 3 });
+  });
+
+  it('no data at all returns null', () => {
+    expect(findExtremeMonth([], 'income')).toBeNull();
+  });
+});
+
+describe('buildCategoryBreakdown', () => {
+  it('sorts largest first and computes percent of the month total', () => {
+    const rows = [
+      catRow({ categoryId: 'cat-2', amountCents: 3000 }),
+      catRow({ categoryId: 'cat-1', amountCents: 7000 }),
+    ];
+    const breakdown = buildCategoryBreakdown(rows, 2026, 1, CATEGORIES);
+    expect(breakdown.map((b) => b.categoryId)).toEqual(['cat-1', 'cat-2']);
+    expect(breakdown[0]!.percentOfExpenses).toBeCloseTo(70, 5);
+    expect(breakdown[1]!.percentOfExpenses).toBeCloseTo(30, 5);
+  });
+
+  it('an uncategorized (null) bucket is never dropped, and reconciles into the total', () => {
+    const rows = [catRow({ categoryId: 'cat-1', amountCents: 6000 }), catRow({ categoryId: null, amountCents: 4000 })];
+    const breakdown = buildCategoryBreakdown(rows, 2026, 1, CATEGORIES);
+    const sum = breakdown.reduce((acc, b) => acc + b.amountCents, 0);
+    expect(sum).toBe(10000);
+    expect(breakdown.find((b) => b.categoryId === null)?.name).toBe('Uncategorized');
+  });
+
+  it('an empty month has no spending at all — 0%, not NaN or a crash', () => {
+    expect(buildCategoryBreakdown([], 2026, 1, CATEGORIES)).toEqual([]);
+  });
+
+  it('only rows for the requested (year, month) are included', () => {
+    const rows = [catRow({ year: 2026, month: 1, amountCents: 5000 }), catRow({ year: 2026, month: 2, amountCents: 9000 })];
+    const breakdown = buildCategoryBreakdown(rows, 2026, 1, CATEGORIES);
+    expect(breakdown).toHaveLength(1);
+    expect(breakdown[0]!.amountCents).toBe(5000);
+  });
+});
+
+describe('buildCategoryTrend', () => {
+  const window = [
+    { year: 2026, month: 1, label: 'Jan 2026' },
+    { year: 2026, month: 2, label: 'Feb 2026' },
+  ];
+
+  it('picks the top categories by total spend across the whole window, not per-month', () => {
+    const rows = [
+      catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 1000 }),
+      catRow({ year: 2026, month: 2, categoryId: 'cat-1', amountCents: 1000 }),
+      catRow({ year: 2026, month: 1, categoryId: 'cat-2', amountCents: 5000 }),
+    ];
+    const trend = buildCategoryTrend(rows, CATEGORIES, window, 1);
+    expect(trend).toHaveLength(1);
+    expect(trend[0]!.categoryId).toBe('cat-2');
+  });
+
+  it('zero-fills months a category had no activity, keyed the same across every series', () => {
+    const rows = [catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 4000 })];
+    const trend = buildCategoryTrend(rows, CATEGORIES, window, 5);
+    const series = trend.find((s) => s.categoryId === 'cat-1')!;
+    expect(series.points).toEqual([
+      { label: 'Jan 2026', amountCents: 4000 },
+      { label: 'Feb 2026', amountCents: 0 },
+    ]);
+  });
+});
+
+describe('findBiggestSpendingDay', () => {
+  it('picks the highest-spend day', () => {
+    const day = findBiggestSpendingDay([
+      { day: 1, amountCents: 2000 },
+      { day: 14, amountCents: 9000 },
+      { day: 20, amountCents: 500 },
+    ]);
+    expect(day).toEqual({ day: 14, amountCents: 9000 });
+  });
+
+  it('an empty month has no biggest spending day, not a fabricated "day 1"', () => {
+    expect(findBiggestSpendingDay([])).toBeNull();
+  });
+});
+
+describe('computeYtdSummary', () => {
+  const rows = [
+    { month: 1, incomeCents: 500000, expenseCents: 300000 },
+    { month: 2, incomeCents: 500000, expenseCents: 900000 },
+    { month: 3, incomeCents: 500000, expenseCents: 100000 },
+    { month: 4, incomeCents: 999999, expenseCents: 999999 }, // beyond monthsElapsed — must be ignored
+  ];
+
+  it('only sums the elapsed months, not the whole array', () => {
+    const summary = computeYtdSummary(rows, 2026, 3);
+    expect(summary.incomeCents).toBe(1500000);
+    expect(summary.expenseCents).toBe(1300000);
+    expect(summary.netCents).toBe(200000);
+  });
+
+  it('average monthly expense divides by months elapsed', () => {
+    const summary = computeYtdSummary(rows, 2026, 3);
+    expect(summary.averageMonthlyExpenseCents).toBeCloseTo(1300000 / 3, 5);
+  });
+
+  it('savings rate is null when YTD income is zero', () => {
+    const summary = computeYtdSummary([{ month: 1, incomeCents: 0, expenseCents: 5000 }], 2026, 1);
+    expect(summary.savingsRatePercent).toBeNull();
+  });
+
+  it('finds the highest-spending month within the elapsed window', () => {
+    const summary = computeYtdSummary(rows, 2026, 3);
+    expect(summary.highestSpendingMonth).toMatchObject({ month: 2, expenseCents: 900000 });
+  });
+
+  it('zero elapsed months is an empty, not fabricated, summary', () => {
+    const summary = computeYtdSummary(rows, 2026, 0);
+    expect(summary).toMatchObject({ incomeCents: 0, expenseCents: 0, netCents: 0, highestSpendingMonth: null });
+  });
+});

@@ -9,10 +9,11 @@
  * could quietly drift from the first.
  */
 
-import { and, asc, desc, eq, gte, inArray, lte, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, lte, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { financeAccounts, financeCategories, financeTransactions } from '@/server/db/schema';
+import { monthRange } from '@/server/finance/dashboard';
 import type { GridAggregateRow } from '@/server/finance/grid';
 
 /**
@@ -129,6 +130,215 @@ export async function getCellTransactions(
     .where(and(...conditions))
     .orderBy(asc(financeTransactions.transactionDate))
     .limit(500);
+
+  return rows;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Finance dashboard — stats, trends, and insights on `/finance/monthly`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Same exclusion rule as `gridBaseConditions()` (`confirmed`/`auto` only,
+ * `transfer`/`credit_card_payment` excluded everywhere) but WITHOUT a year
+ * bound — the dashboard's own queries scope by an explicit date range
+ * instead, since a trailing trend window or an all-time scan can span more
+ * than one calendar year. Deliberately NOT `gridBaseConditions()` itself,
+ * which stays scoped to exactly one year for M8's own table — a second copy
+ * of the same three conditions here, not a shared parameter, matching how
+ * `ledgerConditions()` in `db/finance/transactions.ts` already made the
+ * identical call for M9 rather than coupling two independently-evolving
+ * queries together.
+ */
+function dashboardBaseConditions(ownerId: string) {
+  return [
+    eq(financeTransactions.ownerId, ownerId),
+    inArray(financeTransactions.reviewStatus, ['confirmed', 'auto']),
+    ne(financeTransactions.transactionType, 'transfer'),
+    ne(financeTransactions.transactionType, 'credit_card_payment'),
+  ];
+}
+
+export interface MonthlyTotal {
+  readonly year: number;
+  readonly month: number;
+  /** Sign-flipped for display, exactly like M8's own Income column — stored income is negative. */
+  readonly incomeCents: number;
+  /** Every non-income type in scope — expense, refund, fee, adjustment, investment. Identical definition to M8's "Total Expenditure". */
+  readonly expenseCents: number;
+  readonly transactionCount: number;
+}
+
+/**
+ * ONE row per (year, month) that has any activity, across the owner's ENTIRE
+ * history — no category breakdown, so this stays cheap (at most a couple of
+ * rows per month the owner has ever used Burmy) regardless of how many years
+ * of data exist. Reused for the income/expense trend chart, the net cash-flow
+ * chart, month-over-month comparison, and the all-time "highest income/
+ * spending month" / "best net month" insights — one query, four call sites,
+ * rather than four separate ones.
+ */
+export async function getMonthlyTotalsAllTime(ownerId: string): Promise<MonthlyTotal[]> {
+  const yearExpr = sql`extract(year from ${financeTransactions.transactionDate})`;
+  const monthExpr = sql`extract(month from ${financeTransactions.transactionDate})`;
+
+  const rows = await getDb()
+    .select({
+      year: sql<number>`${yearExpr}::int`,
+      month: sql<number>`${monthExpr}::int`,
+      incomeCentsRaw: sql<number>`coalesce(sum(${financeTransactions.amountCents}) filter (where ${financeTransactions.transactionType} = 'income'), 0)::int`,
+      expenseCents: sql<number>`coalesce(sum(${financeTransactions.amountCents}) filter (where ${financeTransactions.transactionType} != 'income'), 0)::int`,
+      transactionCount: sql<number>`count(*)::int`,
+    })
+    .from(financeTransactions)
+    .where(and(...dashboardBaseConditions(ownerId)))
+    .groupBy(yearExpr, monthExpr)
+    .orderBy(yearExpr, monthExpr);
+
+  // Sign-flip income here (DB boundary), not in the pure layer — `withNet()`
+  // and everything downstream expects an already-positive incomeCents, the
+  // same convention `formatInflow`/M8's Income column already use.
+  return rows.map((row) => ({
+    year: row.year,
+    month: row.month,
+    incomeCents: row.incomeCentsRaw === 0 ? 0 : -row.incomeCentsRaw,
+    expenseCents: row.expenseCents,
+    transactionCount: row.transactionCount,
+  }));
+}
+
+export interface CategoryMonthlyTotal {
+  readonly year: number;
+  readonly month: number;
+  /** `null` is the same invariant-violation "unreconciled" bucket M8's grid surfaces — never dropped, never silently folded into another category. */
+  readonly categoryId: string | null;
+  readonly amountCents: number;
+  readonly txnCount: number;
+}
+
+/**
+ * Category-level monthly totals for a trailing window, spending-kind types
+ * only (income excluded — this answers "where did the money go", not
+ * "how much came in"). Reused for both the selected month's category
+ * breakdown (donut/bar chart — the window's LAST month) and the category
+ * trend chart (the whole window). Scoped to a window, not all-time, since
+ * per-category-per-month granularity is the one shape here that actually
+ * grows with history; `getMonthlyTotalsAllTime` above stays all-time because
+ * it never breaks down by category.
+ *
+ * Summing every row for one month (including the `categoryId: null` bucket)
+ * equals that month's `expenseCents` from `getMonthlyTotalsAllTime` exactly
+ * — both queries share `dashboardBaseConditions()` and the same non-income
+ * filter. Proven directly in `tests/integration/finance-dashboard.test.ts`.
+ */
+export async function getCategoryTotalsForWindow(
+  ownerId: string,
+  startDate: string,
+  endDateExclusive: string,
+): Promise<CategoryMonthlyTotal[]> {
+  const yearExpr = sql`extract(year from ${financeTransactions.transactionDate})`;
+  const monthExpr = sql`extract(month from ${financeTransactions.transactionDate})`;
+
+  const rows = await getDb()
+    .select({
+      year: sql<number>`${yearExpr}::int`,
+      month: sql<number>`${monthExpr}::int`,
+      categoryId: financeTransactions.categoryId,
+      amountCents: sql<number>`sum(${financeTransactions.amountCents})::int`,
+      txnCount: sql<number>`count(*)::int`,
+    })
+    .from(financeTransactions)
+    .where(
+      and(
+        ...dashboardBaseConditions(ownerId),
+        ne(financeTransactions.transactionType, 'income'),
+        gte(financeTransactions.transactionDate, startDate),
+        lt(financeTransactions.transactionDate, endDateExclusive),
+      ),
+    )
+    .groupBy(yearExpr, monthExpr, financeTransactions.categoryId);
+
+  return rows;
+}
+
+export interface DailyTotal {
+  readonly day: number;
+  readonly amountCents: number;
+}
+
+/** Spending-kind totals grouped by day-of-month, for the "biggest spending day" insight. Scoped to one month — cheap, no reason to widen it. */
+export async function getDailyTotalsForMonth(
+  ownerId: string,
+  year: number,
+  month: number,
+): Promise<DailyTotal[]> {
+  const dayExpr = sql`extract(day from ${financeTransactions.transactionDate})`;
+  const { start, endExclusive } = monthRange(year, month);
+
+  const rows = await getDb()
+    .select({
+      day: sql<number>`${dayExpr}::int`,
+      amountCents: sql<number>`sum(${financeTransactions.amountCents})::int`,
+    })
+    .from(financeTransactions)
+    .where(
+      and(
+        ...dashboardBaseConditions(ownerId),
+        ne(financeTransactions.transactionType, 'income'),
+        gte(financeTransactions.transactionDate, start),
+        lt(financeTransactions.transactionDate, endExclusive),
+      ),
+    )
+    .groupBy(dayExpr)
+    .orderBy(dayExpr);
+
+  return rows;
+}
+
+export interface TopExpenseRow {
+  readonly id: string;
+  readonly transactionDate: string;
+  readonly normalizedMerchant: string | null;
+  readonly originalDescription: string;
+  readonly categoryName: string | null;
+  readonly amountCents: number;
+}
+
+/**
+ * The `limit` largest spending-kind transactions (expense/refund/fee/
+ * adjustment/investment — the same pool "Expenses" sums, so an investment
+ * genuinely can be "the largest expense" and this list won't mysteriously
+ * disagree with the total) for one month, ordered by amount descending.
+ */
+export async function getTopExpensesForMonth(
+  ownerId: string,
+  year: number,
+  month: number,
+  limit: number,
+): Promise<TopExpenseRow[]> {
+  const { start, endExclusive } = monthRange(year, month);
+
+  const rows = await getDb()
+    .select({
+      id: financeTransactions.id,
+      transactionDate: financeTransactions.transactionDate,
+      normalizedMerchant: financeTransactions.normalizedMerchant,
+      originalDescription: financeTransactions.originalDescription,
+      categoryName: financeCategories.name,
+      amountCents: financeTransactions.amountCents,
+    })
+    .from(financeTransactions)
+    .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
+    .where(
+      and(
+        ...dashboardBaseConditions(ownerId),
+        ne(financeTransactions.transactionType, 'income'),
+        gte(financeTransactions.transactionDate, start),
+        lt(financeTransactions.transactionDate, endExclusive),
+      ),
+    )
+    .orderBy(desc(financeTransactions.amountCents))
+    .limit(limit);
 
   return rows;
 }

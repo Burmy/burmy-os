@@ -49,7 +49,7 @@ export default async function PrivateLayout({
     <div className="flex min-h-screen">
       <Sidebar footer={<ThemeToggle current={theme} />} />
 
-      <div className="flex min-h-screen flex-1 flex-col">
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         <header className="border-b md:hidden">
           <div className="flex items-center gap-2 px-4 py-3">
             <MobileNav />
@@ -60,7 +60,11 @@ export default async function PrivateLayout({
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+        {/* `min-w-0` overrides the flex-item default of `min-width: auto`, which
+            otherwise lets a wide descendant (the monthly grid table, which can
+            run to a dozen+ columns) push this whole flex chain wider than the
+            viewport instead of scrolling inside its own `overflow-x-auto`. */}
+        <main className="mx-auto w-full min-w-0 max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
       </div>
     </div>
   );
