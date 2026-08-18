@@ -9,11 +9,16 @@ import { requireOwner } from '@/server/auth/owner';
 import { listAccounts } from '@/server/db/finance/accounts';
 import { ImportNotReviewableError, NotFoundError } from '@/server/db/finance/errors';
 import {
+  type FinanceImportRowView,
+  type PriorFileUpload,
   type StageRowInput,
   commitImport,
   createStagedImport,
   discardImport,
+  findPriorFileUpload,
   getCommittedCounts,
+  getImportForOwner,
+  getImportRows,
   updateRowDecision,
   MAX_UPLOAD_BYTES,
 } from '@/server/db/finance/imports';
@@ -22,6 +27,7 @@ import { DEDUPE_KEY_VERSION, dedupeKey } from '@/server/finance/dedupe';
 import {
   AccountFormatMismatchError,
   assertAccountCompatible,
+  isAccountCompatible,
 } from '@/server/finance/import/compatibility';
 import { parseBoaCardAddressHint, planStagedDecisions } from '@/server/finance/import/staging';
 import { normalizeMerchant } from '@/server/finance/merchant';
@@ -29,6 +35,7 @@ import { ParseError, detectFormat, parseStatementTolerant } from '@/server/finan
 import {
   type ActionResult,
   type CommitActionResult,
+  type DetectResult,
   type UploadResult,
   fail,
   ok,
@@ -74,6 +81,55 @@ const accountIdSchema = z.string().uuid();
 const importIdSchema = z.string().uuid();
 const rowIdSchema = z.string().uuid();
 
+/** Shared by `detectStatementFormatAction` and `uploadStatementAction` — pure validation, no I/O. */
+function validateFile(file: FormDataEntryValue | null): File | string {
+  if (!(file instanceof File) || file.name === '') return 'Choose a CSV file to upload.';
+  if (file.size === 0) return 'The selected file is empty.';
+  if (file.size > MAX_UPLOAD_BYTES) return 'Files over 10 MB are not accepted.';
+  if (!file.name.toLowerCase().endsWith('.csv')) return 'Only .csv files are accepted.';
+  return file;
+}
+
+/**
+ * Detect a statement's format WITHOUT staging anything — read-only, so the
+ * import Sheet can narrow the account picker to compatible accounts (or
+ * auto-select the one that qualifies) before the owner commits to an account
+ * choice. `uploadStatementAction` re-detects and re-checks compatibility
+ * itself before staging; this is a UX convenience, not the authoritative
+ * check — that one stays exactly where it was.
+ */
+export async function detectStatementFormatAction(formData: FormData): Promise<DetectResult> {
+  const owner = await requireOwner();
+
+  const file = validateFile(formData.get('file'));
+  if (typeof file === 'string') return { ok: false, error: file };
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+
+  let format;
+  try {
+    format = detectFormat(bytes);
+  } catch (error) {
+    return { ok: false, error: describeError(error) };
+  }
+
+  if (format.adapter === 'generic') {
+    return {
+      ok: false,
+      error:
+        "This file's format isn't recognized yet — Burmy currently supports Bank of America " +
+        'checking and credit card exports.',
+    };
+  }
+
+  const accounts = await listAccounts(owner.userId);
+  const compatibleAccountIds = accounts
+    .filter((account) => account.isActive && isAccountCompatible(format.adapter, account.type))
+    .map((account) => account.id);
+
+  return { ok: true, adapter: format.adapter, compatibleAccountIds };
+}
+
 /**
  * Upload, detect, parse, and stage — in memory, start to finish.
  *
@@ -86,16 +142,13 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
   const owner = await requireOwner();
 
   const accountIdRaw = formData.get('accountId');
-  const file = formData.get('file');
+  const file = validateFile(formData.get('file'));
 
   const accountIdResult = accountIdSchema.safeParse(accountIdRaw);
   if (!accountIdResult.success) return failUpload('Choose an account.');
   const accountId = accountIdResult.data;
 
-  if (!(file instanceof File) || file.name === '') return failUpload('Choose a CSV file to upload.');
-  if (file.size === 0) return failUpload('The selected file is empty.');
-  if (file.size > MAX_UPLOAD_BYTES) return failUpload('Files over 10 MB are not accepted.');
-  if (!file.name.toLowerCase().endsWith('.csv')) return failUpload('Only .csv files are accepted.');
+  if (typeof file === 'string') return failUpload(file);
 
   const accounts = await listAccounts(owner.userId);
   const account = accounts.find((candidate) => candidate.id === accountId);
@@ -231,6 +284,34 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
 
   revalidatePath('/finance/import');
   return { ok: true, importId };
+}
+
+export interface ImportContext {
+  readonly rows: FinanceImportRowView[];
+  /** Same file uploaded before, most recent match — see `findPriorFileUpload`. */
+  readonly priorUpload: PriorFileUpload | null;
+}
+
+/**
+ * Read the staged rows (and the file-hash prior-upload check) for an import
+ * the owner just created — the Import Sheet's own follow-up read after
+ * `uploadStatementAction` returns an id, kept as a separate action rather
+ * than folded into that one's return value so `uploadStatementAction`'s
+ * existing shape stays exactly what it was. This is the same
+ * `getImportRows` + `findPriorFileUpload` pair `/finance/import/[importId]`
+ * already reads server-side — the Sheet needs it client-side instead.
+ */
+export async function getImportContextAction(importId: string): Promise<ImportContext> {
+  const owner = await requireOwner();
+  const id = importIdSchema.parse(importId);
+
+  const [rows, importRecord] = await Promise.all([
+    getImportRows(owner.userId, id),
+    getImportForOwner(owner.userId, id),
+  ]);
+  const priorUpload = await findPriorFileUpload(owner.userId, importRecord.fileSha256, id);
+
+  return { rows, priorUpload };
 }
 
 export async function updateRowDecisionAction(

@@ -181,7 +181,7 @@ test.describe('Content Security Policy', () => {
     });
 
     await page.goto('/finance/monthly');
-    await expect(page.getByRole('heading', { name: 'Monthly' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Finance' })).toBeVisible();
 
     // Hydration really happened: this is a client component responding.
     await expect(page.getByRole('button', { name: /^Theme:/ })).toBeEnabled();

@@ -1,5 +1,6 @@
 'use client';
 
+import { ChevronDown } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -20,11 +21,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
+import { Money } from '@/components/finance/money';
 import type { FinanceAccount } from '@/server/db/finance/accounts';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type { ReviewFilters, ReviewTransaction } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, type ManualTransactionType } from '@/server/finance/classify/manual';
-import { cents, format } from '@/server/finance/money';
 import {
   bulkUpdateCategoryAction,
   updateTransactionCategoryAction,
@@ -89,6 +90,17 @@ export function ReviewQueue({
   const [remember, setRemember] = useState<Record<string, boolean>>({});
   const [bulkCategoryId, setBulkCategoryId] = useState<string>('');
   const [pending, startTransition] = useTransition();
+
+  // Open by default only when a non-default filter is already narrowing the
+  // list — otherwise the common case (the plain needs_review queue, usually
+  // one or two rows) starts with no toolbar at all to look past.
+  const hasActiveFilter = Boolean(
+    (filters.status && filters.status !== 'needs_review') ||
+      filters.accountId ||
+      filters.categoryId ||
+      filters.transactionType,
+  );
+  const [filtersOpen, setFiltersOpen] = useState(hasActiveFilter);
 
   // A filter change (URL navigation) or a `router.refresh()` after a mutation
   // both deliver a NEW `transactions` array reference here.
@@ -169,40 +181,55 @@ export function ReviewQueue({
 
   return (
     <div className="mt-8 space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <FilterSelect
-          label="Status"
-          value={filters.status ?? 'needs_review'}
-          onChange={(value) => setFilter('status', value)}
-          options={[
-            ['needs_review', STATUS_LABELS.needs_review!],
-            ['auto', STATUS_LABELS.auto!],
-            ['confirmed', STATUS_LABELS.confirmed!],
-            ['all', STATUS_LABELS.all!],
-          ]}
-        />
-        <FilterSelect
-          label="Account"
-          value={filters.accountId ?? 'all'}
-          onChange={(value) => setFilter('account', value === 'all' ? undefined : value)}
-          options={[['all', 'All accounts'], ...accounts.map((a) => [a.id, a.name] as [string, string])]}
-        />
-        <FilterSelect
-          label="Category"
-          value={filters.categoryId ?? 'all'}
-          onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
-          options={[
-            ['all', 'All categories'],
-            ['uncategorized', 'Uncategorized'],
-            ...categories.map((c) => [c.id, c.name] as [string, string]),
-          ]}
-        />
-        <FilterSelect
-          label="Type"
-          value={filters.transactionType ?? 'all'}
-          onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
-          options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
-        />
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setFiltersOpen((prev) => !prev)}
+          aria-expanded={filtersOpen}
+          className="text-muted-foreground -ml-2 h-8"
+        >
+          Filters
+          <ChevronDown className={`size-3.5 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
+        </Button>
+
+        {filtersOpen ? (
+          <div className="mt-2 flex flex-wrap items-end gap-3">
+            <FilterSelect
+              label="Status"
+              value={filters.status ?? 'needs_review'}
+              onChange={(value) => setFilter('status', value)}
+              options={[
+                ['needs_review', STATUS_LABELS.needs_review!],
+                ['auto', STATUS_LABELS.auto!],
+                ['confirmed', STATUS_LABELS.confirmed!],
+                ['all', STATUS_LABELS.all!],
+              ]}
+            />
+            <FilterSelect
+              label="Account"
+              value={filters.accountId ?? 'all'}
+              onChange={(value) => setFilter('account', value === 'all' ? undefined : value)}
+              options={[['all', 'All accounts'], ...accounts.map((a) => [a.id, a.name] as [string, string])]}
+            />
+            <FilterSelect
+              label="Category"
+              value={filters.categoryId ?? 'all'}
+              onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
+              options={[
+                ['all', 'All categories'],
+                ['uncategorized', 'Uncategorized'],
+                ...categories.map((c) => [c.id, c.name] as [string, string]),
+              ]}
+            />
+            <FilterSelect
+              label="Type"
+              value={filters.transactionType ?? 'all'}
+              onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
+              options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
+            />
+          </div>
+        ) : null}
       </div>
 
       {rows.length === 0 ? (
@@ -273,8 +300,8 @@ export function ReviewQueue({
                       <div className="font-medium">{row.normalizedMerchant}</div>
                       <div className="text-muted-foreground text-xs">{row.originalDescription}</div>
                     </TableCell>
-                    <TableCell className="tabular text-right whitespace-nowrap">
-                      {format(cents(row.amountCents), { signed: true })}
+                    <TableCell>
+                      <Money valueCents={row.amountCents} />
                     </TableCell>
                     <TableCell>
                       <div className="space-y-1">

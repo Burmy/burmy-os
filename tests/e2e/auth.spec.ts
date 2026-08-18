@@ -71,7 +71,7 @@ test.describe('authentication', () => {
     await page.goto('/');
 
     await expect(page).toHaveURL(/\/finance\/monthly$/);
-    await expect(page.getByRole('heading', { name: 'Monthly' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Finance' })).toBeVisible();
   });
 
   test('reaching a deep private route directly also lands there with no sign-in redirect', async ({
@@ -79,11 +79,11 @@ test.describe('authentication', () => {
   }) => {
     await provisionOwner();
 
-    await page.goto('/settings/accounts');
+    await page.goto('/settings/finance/accounts');
 
     // No bounce through /sign-in or /access-denied — the owner row resolves
     // and the page renders exactly where it was asked for.
-    await expect(page).toHaveURL(/\/settings\/accounts$/);
+    await expect(page).toHaveURL(/\/settings\/finance\/accounts$/);
   });
 
   test('an unprovisioned owner sees a simple access-denied page, not a passkey prompt', async ({

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { ReviewQueue } from '@/features/finance/review/review-queue';
 import { requireOwner } from '@/server/auth/owner';
@@ -67,7 +68,10 @@ export default async function ReviewPage({
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Review</h1>
+      <Link href="/finance/monthly" className="text-muted-foreground hover:text-foreground text-sm">
+        ← Finance
+      </Link>
+      <h1 className="mt-2 text-xl font-semibold">Review</h1>
       <p className="text-muted-foreground mt-1 text-sm">
         Anything M6 could not confidently resolve on its own. Fix what needs it; the rest stays out
         of your way.

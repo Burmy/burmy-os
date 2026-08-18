@@ -54,7 +54,7 @@ Violating any of these is a correctness or security bug, not a style preference.
 | Database | PostgreSQL 18 + Drizzle ORM 0.45 |
 | Auth | Cloudflare Access with Google is the **sole** authentication mechanism. No in-app auth library, no session of Burmy's own, no second factor. |
 | UI | Tailwind, shadcn/ui, Lucide |
-| Grids | TanStack Table + Virtual. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
+| Grids | Hand-rolled on the shadcn `Table` primitive, with a thin shared presentation layer in `src/components/finance/`. TanStack Table was originally approved but was never actually installed — the tables in this app are small (dozens of rows, no sort/virtualization need), so it was dropped from the plan during the M8-era UX pass rather than added just because it was once on the list. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
 | Parsing | Papa Parse (CSV), ExcelJS (XLSX, provisional) |
 | Testing | Vitest + React Testing Library, Playwright |
 | Infra | Docker Compose, Cloudflare Tunnel + Access, Tailscale, restic → Backblaze B2 |

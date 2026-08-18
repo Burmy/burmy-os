@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { ImportReviewTable } from '@/features/finance/import/review-table';
@@ -45,7 +46,10 @@ export default async function ImportReviewPage({
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Review import</h1>
+      <Link href="/finance/monthly" className="text-muted-foreground hover:text-foreground text-sm">
+        ← Finance
+      </Link>
+      <h1 className="mt-2 text-xl font-semibold">Review import</h1>
       <p className="text-muted-foreground mt-1 text-sm">
         {importRecord.originalFilename} — {account?.name ?? 'Unknown account'}
       </p>

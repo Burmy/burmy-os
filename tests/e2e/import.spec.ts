@@ -7,9 +7,11 @@ import postgres from 'postgres';
 import { normalizeMerchant } from '../../src/server/finance/merchant';
 
 /**
- * M5's golden path through a real browser: upload → preview → categorize →
- * commit, and the idempotency property that makes re-uploading the same
- * statement safe.
+ * M5's golden path through a real browser, now via the Import Sheet: open →
+ * drop/select a CSV (parsing starts immediately, no separate Upload click) →
+ * a concise ready/duplicate/needs-attention summary → fix only the
+ * exceptions → commit → the Sheet closes and Monthly refreshes. Also covers
+ * the idempotency property that makes re-uploading the same statement safe.
  *
  * `signIntoApp` and `resetAll` are duplicated from shell.spec.ts rather than
  * shared — there is no shared e2e helper module yet, matching that file's own
@@ -74,7 +76,7 @@ async function signIntoApp(page: Page): Promise<void> {
 }
 
 async function addAccount(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/accounts');
+  await page.goto('/settings/finance/accounts');
   await page.getByRole('button', { name: 'Add account' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(name);
@@ -82,9 +84,26 @@ async function addAccount(page: Page, name: string): Promise<void> {
   await expect(page.getByRole('cell', { name, exact: true })).toBeVisible();
 }
 
-async function selectAccount(page: Page, name: string): Promise<void> {
-  await page.getByLabel('Account').click();
-  await page.getByRole('option', { name }).click();
+async function addCategory(page: Page, name: string): Promise<void> {
+  await page.goto('/settings/finance/categories');
+  await page.getByRole('button', { name: 'Add category' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Name').fill(name);
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText(name)).toBeVisible();
+}
+
+/**
+ * Open the Import Sheet from Finance and select a file — with one active
+ * account already provisioned by `addAccount`, no account picker appears;
+ * choosing the file starts parsing immediately, matching the "no separate
+ * Upload click" requirement.
+ */
+async function openSheetAndSelectFile(page: Page, fixture: string): Promise<void> {
+  await page.goto('/finance/monthly');
+  await page.getByRole('button', { name: 'Import statement' }).click();
+  await expect(page.getByRole('dialog', { name: 'Import statement' })).toBeVisible();
+  await page.getByLabel('Statement file').setInputFiles(fixture);
 }
 
 async function getOwnerId(): Promise<string> {
@@ -117,36 +136,29 @@ test.describe('import', () => {
   test('upload, categorize, commit — and a repeat upload adds nothing new', async ({ page }) => {
     await signIntoApp(page);
     await addAccount(page, 'BoA Checking');
+    await addCategory(page, 'Groceries');
 
-    await page.goto('/settings/categories');
-    await page.getByRole('button', { name: 'Add category' }).click();
-    const categoryDialog = page.getByRole('dialog');
-    await categoryDialog.getByLabel('Name').fill('Groceries');
-    await categoryDialog.getByRole('button', { name: 'Save' }).click();
-    await expect(page.getByText('Groceries')).toBeVisible();
+    await openSheetAndSelectFile(page, DEPOSIT_FIXTURE);
 
-    await page.goto('/finance/import');
-    await selectAccount(page, 'BoA Checking');
-    await page.getByLabel('Statement (.csv)').setInputFiles(DEPOSIT_FIXTURE);
-    await page.getByRole('button', { name: 'Upload' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Import statement' });
+    await expect(sheet.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
 
-    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
-    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} new`)).toBeVisible();
-    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} will import`)).toBeVisible();
-
-    // Categorize one row from the ACTUAL statement text, which the preview
-    // shows verbatim beneath the normalized merchant.
-    await expect(page.getByText("LARSEN'S #0366", { exact: false })).toBeVisible();
-    const larsensRow = page.getByRole('row', { name: /LARSEN'S/ });
+    // Merchant memory has nothing for LARSEN'S yet, so that row lands in
+    // "Needs attention" — visible without expanding "Show all rows" — which
+    // is the whole point: only the exception demands a look.
+    await expect(sheet.getByText("LARSEN'S #0366", { exact: false })).toBeVisible();
+    const larsensRow = sheet.getByRole('row', { name: /LARSEN'S/ });
     await larsensRow.getByLabel(/^Category for/).click();
     await page.getByRole('option', { name: 'Groceries' }).click();
 
-    await page
-      .getByRole('button', { name: `Import ${DEPOSIT_TRANSACTION_COUNT} transactions` })
-      .click();
-    await expect(page.getByText('Import complete.')).toBeVisible();
-    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} transactions added`)).toBeVisible();
-    await expect(page.getByText('0 skipped as already imported')).toBeVisible();
+    await sheet.getByRole('button', { name: `Import ${DEPOSIT_TRANSACTION_COUNT} transactions` }).click();
+    await expect(sheet.getByText('Import complete')).toBeVisible();
+    await expect(sheet.getByText(`${DEPOSIT_TRANSACTION_COUNT} transactions added`)).toBeVisible();
+    await expect(sheet.getByText('0 skipped as already imported')).toBeVisible();
+
+    await sheet.getByRole('button', { name: 'Done' }).click();
+    await expect(sheet).not.toBeVisible();
+    await expect(page).toHaveURL(/\/finance\/monthly$/);
 
     const committedCategory = await withDb(async (sql) => {
       const rows = await sql<{ name: string | null }[]>`
@@ -160,16 +172,19 @@ test.describe('import', () => {
 
     // Re-upload the SAME file: every row must show as already imported, and
     // committing must add zero new transactions — the idempotency property.
-    await page.goto('/finance/import');
-    await selectAccount(page, 'BoA Checking');
-    await page.getByLabel('Statement (.csv)').setInputFiles(DEPOSIT_FIXTURE);
-    await page.getByRole('button', { name: 'Upload' }).click();
+    await openSheetAndSelectFile(page, DEPOSIT_FIXTURE);
+    await expect(sheet.getByRole('status')).toContainText('You already imported this exact file');
 
-    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
-    await expect(page.getByText('You already imported this exact file')).toBeVisible();
-    await expect(page.getByText(`${DEPOSIT_TRANSACTION_COUNT} already imported`)).toBeVisible();
-    await expect(page.getByText('0 will import')).toBeVisible();
-    await expect(page.getByRole('button', { name: /^Import \d+ transaction/ })).toBeDisabled();
+    const settledToggle = sheet.getByRole('button', {
+      name: new RegExp(`${DEPOSIT_TRANSACTION_COUNT} more already understood`),
+    });
+    await expect(settledToggle).toBeVisible();
+    await settledToggle.click();
+    await expect(sheet.getByText('Already imported').first()).toBeVisible();
+
+    const commitButton = sheet.getByRole('button', { name: /^Import \d+ transaction/ });
+    await expect(commitButton).toHaveText('Import 0 transactions');
+    await expect(commitButton).toBeDisabled();
 
     const totalCount = await withDb(async (sql) => {
       const rows = await sql<{ n: string }[]>`select count(*)::text as n from "finance_transactions"`;
@@ -181,13 +196,7 @@ test.describe('import', () => {
   test('a merchant confirmed before pre-fills its category automatically', async ({ page }) => {
     await signIntoApp(page);
     await addAccount(page, 'BoA Checking');
-
-    await page.goto('/settings/categories');
-    await page.getByRole('button', { name: 'Add category' }).click();
-    const categoryDialog = page.getByRole('dialog');
-    await categoryDialog.getByLabel('Name').fill('Dining');
-    await categoryDialog.getByRole('button', { name: 'Save' }).click();
-    await expect(page.getByText('Dining')).toBeVisible();
+    await addCategory(page, 'Dining');
 
     // Seed the memory a real M6 commit would have written last month —
     // computed via the real normalizer so the key matches exactly what
@@ -202,22 +211,25 @@ test.describe('import', () => {
       `;
     });
 
-    await page.goto('/finance/import');
-    await selectAccount(page, 'BoA Checking');
-    await page.getByLabel('Statement (.csv)').setInputFiles(DEPOSIT_FIXTURE);
-    await page.getByRole('button', { name: 'Upload' }).click();
+    await openSheetAndSelectFile(page, DEPOSIT_FIXTURE);
+    const sheet = page.getByRole('dialog', { name: 'Import statement' });
 
-    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
+    // Only LARSEN'S has memory — the other 11 merchants in a real statement
+    // are all different, so they legitimately still need attention. LARSEN'S
+    // itself is "Ready" — pre-filled, the owner never touches its category
+    // select — which is exactly the point: memory narrows the exception list
+    // by one row at a time as it learns, not all-or-nothing.
+    await expect(sheet.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
+    const showAll = sheet.getByRole('button', { name: /more already understood/ });
+    await expect(showAll).toHaveText(/^1 more already understood/);
+    await showAll.click();
 
-    // Pre-filled — the owner never touches this row's category select.
-    const larsensRow = page.getByRole('row', { name: /LARSEN'S/ });
+    const larsensRow = sheet.getByRole('row', { name: /LARSEN'S/ });
     await expect(larsensRow.getByLabel(/^Category for/)).toHaveText('Dining');
 
-    await page
-      .getByRole('button', { name: `Import ${DEPOSIT_TRANSACTION_COUNT} transactions` })
-      .click();
-    await expect(page.getByText('Import complete.')).toBeVisible();
-    await expect(page.getByText(/categorized or classified automatically/)).toBeVisible();
+    await sheet.getByRole('button', { name: `Import ${DEPOSIT_TRANSACTION_COUNT} transactions` }).click();
+    await expect(sheet.getByText('Import complete')).toBeVisible();
+    await expect(sheet.getByText(/categorized or classified automatically/)).toBeVisible();
 
     const committed = await withDb(async (sql) => {
       const rows = await sql<{ name: string | null; review_status: string }[]>`
@@ -235,16 +247,13 @@ test.describe('import', () => {
     await signIntoApp(page);
     await addAccount(page, 'BoA Checking');
 
-    await page.goto('/finance/import');
-    await selectAccount(page, 'BoA Checking');
-    await page.getByLabel('Statement (.csv)').setInputFiles(CARD_FIXTURE);
-    await page.getByRole('button', { name: 'Upload' }).click();
+    await openSheetAndSelectFile(page, CARD_FIXTURE);
+    const sheet = page.getByRole('dialog', { name: 'Import statement' });
 
-    // Scoped to a `<p>` because Next's route announcer also carries
-    // `role="alert"` (an empty `<div>`, mounted once a client-side navigation
-    // has occurred) and `page.getByRole('alert')` matches both.
-    await expect(page.locator('p[role="alert"]')).toContainText('credit card export');
-    // No import was staged — the owner is still on the upload form.
-    await expect(page).toHaveURL(/\/finance\/import$/);
+    await expect(sheet.getByRole('alert')).toContainText('credit card export');
+    // No import was staged — the Sheet stays open on its opening state, and
+    // Finance never navigated anywhere.
+    await expect(sheet.getByRole('heading', { name: 'Needs attention' })).not.toBeVisible();
+    await expect(page).toHaveURL(/\/finance\/monthly$/);
   });
 });

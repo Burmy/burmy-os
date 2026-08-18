@@ -65,7 +65,7 @@ export async function createCategoryAction(formData: FormData): Promise<ActionRe
     return toResult(error);
   }
 
-  revalidatePath('/settings/categories');
+  revalidatePath('/settings/finance/categories');
   revalidatePath('/finance/monthly');
   return ok();
 }
@@ -79,7 +79,7 @@ export async function updateCategoryAction(id: string, formData: FormData): Prom
     return toResult(error);
   }
 
-  revalidatePath('/settings/categories');
+  revalidatePath('/settings/finance/categories');
   revalidatePath('/finance/monthly');
   return ok();
 }
@@ -100,7 +100,7 @@ export async function archiveCategoryAction(id: string): Promise<ActionResult> {
     return toResult(error);
   }
 
-  revalidatePath('/settings/categories');
+  revalidatePath('/settings/finance/categories');
   revalidatePath('/finance/monthly');
   return ok();
 }
@@ -114,7 +114,7 @@ export async function restoreCategoryAction(id: string): Promise<ActionResult> {
     return toResult(error);
   }
 
-  revalidatePath('/settings/categories');
+  revalidatePath('/settings/finance/categories');
   revalidatePath('/finance/monthly');
   return ok();
 }
@@ -135,7 +135,7 @@ export async function reorderCategoriesAction(orderedIds: string[]): Promise<Act
     return toResult(error);
   }
 
-  revalidatePath('/settings/categories');
+  revalidatePath('/settings/finance/categories');
   revalidatePath('/finance/monthly');
   return ok();
 }

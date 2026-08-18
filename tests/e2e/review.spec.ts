@@ -63,7 +63,7 @@ async function signIntoApp(page: Page): Promise<void> {
 }
 
 async function addAccount(page: Page, name: string, type: 'Checking' | 'Credit card' = 'Checking'): Promise<void> {
-  await page.goto('/settings/accounts');
+  await page.goto('/settings/finance/accounts');
   await page.getByRole('button', { name: 'Add account' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(name);
@@ -76,7 +76,7 @@ async function addAccount(page: Page, name: string, type: 'Checking' | 'Credit c
 }
 
 async function addCategory(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/categories');
+  await page.goto('/settings/finance/categories');
   await page.getByRole('button', { name: 'Add category' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(name);
@@ -163,8 +163,15 @@ test.describe('review queue', () => {
       normalizedMerchant: "LARSEN'S",
     });
 
-    await page.goto('/finance/review');
-    await expect(page.getByRole('link', { name: /^Review \(1\)/ })).toBeVisible();
+    // The real journey: Finance -> the exception banner -> Review -> fix ->
+    // back to Finance. There is no persistent Review tab to reach this from
+    // anymore, only the banner, so this is what actually proves it works.
+    await page.goto('/finance/monthly');
+    const banner = page.getByRole('status').filter({ hasText: 'need attention' });
+    await expect(banner).toContainText('1 transaction');
+    await banner.getByRole('link', { name: 'Review' }).click();
+    await expect(page).toHaveURL(/\/finance\/review$/);
+
     await expect(page.getByText("LARSEN'S #0366 PURCHASE")).toBeVisible();
 
     const row = page.getByRole('row', { name: /LARSEN'S/ });
@@ -172,6 +179,12 @@ test.describe('review queue', () => {
     await page.getByRole('option', { name: 'Restaurants' }).click();
 
     await expect(page.getByText('Nothing here')).toBeVisible();
+
+    // And the banner is gone once back on Finance — the exception queue
+    // really is empty now, not just the page we happened to be looking at.
+    await page.getByRole('link', { name: '← Finance' }).click();
+    await expect(page).toHaveURL(/\/finance\/monthly$/);
+    await expect(page.getByRole('status').filter({ hasText: 'need attention' })).toHaveCount(0);
 
     const committed = await withDb(async (sql) => {
       const rows = await sql<{ review_status: string; categorization_source: string | null }[]>`
@@ -247,5 +260,46 @@ test.describe('review queue', () => {
     expect(former?.transaction_type).toBe('income');
     expect(former?.type_source).toBe('default');
     expect(former?.counterpart_transaction_id).toBeNull();
+  });
+
+  test('filters stay collapsed by default and expand on request', async ({ page }) => {
+    await signIntoApp(page);
+    await addAccount(page, 'BoA Checking');
+
+    const ownerId = await getOwnerId();
+    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    await seedTransaction({ ownerId, accountId, description: 'ONE THING TO REVIEW' });
+
+    await page.goto('/finance/review');
+    await expect(page.getByText('ONE THING TO REVIEW')).toBeVisible();
+
+    // Plain status=needs_review, no other filter active -> the toolbar starts
+    // closed, so the common (one- or two-row) case has nothing to look past.
+    const toggle = page.getByRole('button', { name: 'Filters' });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.getByRole('combobox', { name: 'Account', exact: true })).not.toBeVisible();
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('combobox', { name: 'Account', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Category', exact: true })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: 'Type', exact: true })).toBeVisible();
+  });
+
+  test('a non-default filter in the URL opens the toolbar automatically', async ({ page }) => {
+    await signIntoApp(page);
+    await addAccount(page, 'BoA Checking');
+
+    const ownerId = await getOwnerId();
+    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    await seedTransaction({ ownerId, accountId, reviewStatus: 'confirmed', description: 'ALREADY CONFIRMED' });
+
+    // status=all differs from the needs_review default -> the toolbar should
+    // already be open, so the active filter is never hidden from view.
+    await page.goto('/finance/review?status=all');
+    await expect(page.getByText('ALREADY CONFIRMED')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toBeVisible();
   });
 });

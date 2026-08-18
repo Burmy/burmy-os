@@ -83,12 +83,18 @@ test.describe('app shell', () => {
 
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
 
+    // Settings is now a real app-level landing, not a redirect straight to
+    // Accounts — the sidebar link goes to the section, not one page in it.
     await page.getByRole('link', { name: 'Settings' }).click();
-    await expect(page).toHaveURL(/\/settings\/accounts$/);
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Accounts' }).click();
+    await expect(page).toHaveURL(/\/settings\/finance\/accounts$/);
     await expect(page.getByRole('heading', { name: 'Accounts' })).toBeVisible();
 
     await page.getByRole('link', { name: 'Categories' }).click();
-    await expect(page).toHaveURL(/\/settings\/categories$/);
+    await expect(page).toHaveURL(/\/settings\/finance\/categories$/);
 
     await page.getByRole('link', { name: 'Finance' }).click();
     await expect(page).toHaveURL(/\/finance\/monthly$/);
@@ -113,6 +119,27 @@ test.describe('app shell', () => {
     // Host-only, like every cookie Burmy sets.
     expect(theme?.domain).toBe('localhost');
   });
+
+  test('navigates via the mobile Sheet at a phone-width viewport', async ({ page }) => {
+    // The desktop Sidebar is `hidden` below `md`; the hamburger + Sheet is
+    // the only way in at this width, and it is a real assertion, not just a
+    // CSS class check — a component that fails to mount would fail here.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await signIntoApp(page);
+
+    // The desktop sidebar's own Nav is not part of the accessibility tree at
+    // this width (display: none), so it does not collide with the Sheet's copy.
+    await expect(page.getByRole('navigation', { name: 'Main' })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    const sheet = page.getByRole('dialog', { name: 'Burmy' });
+    await expect(sheet).toBeVisible();
+
+    await sheet.getByRole('link', { name: 'Settings' }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+    // The Sheet closes itself on navigation rather than lingering open.
+    await expect(sheet).not.toBeVisible();
+  });
 });
 
 test.describe('categories', () => {
@@ -133,7 +160,7 @@ test.describe('categories', () => {
     });
 
     await signIntoApp(page);
-    await page.goto('/settings/categories');
+    await page.goto('/settings/finance/categories');
 
     await page.getByRole('button', { name: 'Add category' }).click();
 
@@ -164,7 +191,7 @@ test.describe('categories', () => {
 
   test('rejects a duplicate name with a field error, not a crash', async ({ page }) => {
     await signIntoApp(page);
-    await page.goto('/settings/categories');
+    await page.goto('/settings/finance/categories');
 
     for (const attempt of [1, 2]) {
       await page.getByRole('button', { name: 'Add category' }).click();
@@ -184,7 +211,7 @@ test.describe('categories', () => {
 
   test('reorders with keyboard-accessible buttons and persists', async ({ page }) => {
     await signIntoApp(page);
-    await page.goto('/settings/categories');
+    await page.goto('/settings/finance/categories');
 
     for (const name of ['Mortgage', 'Gas']) {
       await page.getByRole('button', { name: 'Add category' }).click();
@@ -206,7 +233,7 @@ test.describe('categories', () => {
     const reorderPersisted = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' &&
-        response.url().endsWith('/settings/categories') &&
+        response.url().endsWith('/settings/finance/categories') &&
         response.status() === 200,
     );
     await page.getByRole('button', { name: 'Move Gas up' }).focus();
@@ -229,7 +256,7 @@ test.describe('accounts', () => {
     // Storing the last four of a pasted 16-digit number would mean the full
     // number was accepted by the application, silently.
     await signIntoApp(page);
-    await page.goto('/settings/accounts');
+    await page.goto('/settings/finance/accounts');
 
     await page.getByRole('button', { name: 'Add account' }).click();
     const dialog = page.getByRole('dialog');
@@ -255,7 +282,7 @@ test.describe('accounts', () => {
 
   test('creates an account with only the last four stored', async ({ page }) => {
     await signIntoApp(page);
-    await page.goto('/settings/accounts');
+    await page.goto('/settings/finance/accounts');
 
     await page.getByRole('button', { name: 'Add account' }).click();
     const dialog = page.getByRole('dialog');
@@ -274,7 +301,7 @@ test.describe('accounts', () => {
     // `cash` exists in the database enum from M1, but cash spending is explicitly
     // not tracked in V1 — offering it would invite data the importer cannot make.
     await signIntoApp(page);
-    await page.goto('/settings/accounts');
+    await page.goto('/settings/finance/accounts');
 
     await page.getByRole('button', { name: 'Add account' }).click();
     await page.getByRole('dialog').getByLabel('Type').click();

@@ -95,12 +95,14 @@ export function MonthlyGridTable({
 
   const yearsWithCurrent = years.includes(year) ? years : [year, ...years];
 
+  const clickableCell = 'text-foreground underline-offset-2 hover:underline focus-visible:underline';
+  const stickyMonthCell = 'bg-background sticky left-0 z-10';
+
   return (
-    <div className="mt-6 space-y-4">
+    <div className="mt-3 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="text-muted-foreground text-sm">Year</span>
         <Select value={String(year)} onValueChange={changeYear}>
-          <SelectTrigger aria-label="Year" className="h-8 w-28">
+          <SelectTrigger aria-label="Year" className="h-8 w-24 font-medium">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -116,14 +118,11 @@ export function MonthlyGridTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Month</TableHead>
+            <TableHead className={stickyMonthCell}>Month</TableHead>
             {grid.columns.map((column) => (
               <TableHead key={column.id} className="text-right whitespace-nowrap">
-                <div>
-                  {column.name}
-                  {column.archived ? ' (archived)' : ''}
-                </div>
-                <div className="text-muted-foreground text-[10px] font-normal uppercase">{column.kind}</div>
+                {column.name}
+                {column.archived ? ' (archived)' : ''}
               </TableHead>
             ))}
             <TableHead className="text-right whitespace-nowrap">Total Expenditure</TableHead>
@@ -134,7 +133,9 @@ export function MonthlyGridTable({
         <TableBody>
           {grid.rows.map((row) => (
             <TableRow key={row.month}>
-              <TableCell className="text-muted-foreground whitespace-nowrap">{monthLabel(row.month)}</TableCell>
+              <TableCell className={`text-muted-foreground whitespace-nowrap ${stickyMonthCell}`}>
+                {monthLabel(row.month)}
+              </TableCell>
               {grid.columns.map((column) => {
                 const cell = row.cells[column.id];
                 return (
@@ -142,7 +143,7 @@ export function MonthlyGridTable({
                     {cell ? (
                       <button
                         type="button"
-                        className="hover:underline"
+                        className={clickableCell}
                         onClick={() =>
                           openTransactions(
                             `${column.name} — ${monthLabel(row.month)} ${year}`,
@@ -163,7 +164,7 @@ export function MonthlyGridTable({
               <TableCell className="tabular text-right whitespace-nowrap">
                 <button
                   type="button"
-                  className="hover:underline"
+                  className={clickableCell}
                   onClick={() =>
                     openTransactions(
                       `Total Expenditure — ${monthLabel(row.month)} ${year}`,
@@ -179,7 +180,7 @@ export function MonthlyGridTable({
               <TableCell className="tabular text-right whitespace-nowrap">
                 <button
                   type="button"
-                  className="hover:underline"
+                  className={clickableCell}
                   onClick={() =>
                     openTransactions(`Income — ${monthLabel(row.month)} ${year}`, row.month, { kind: 'income' }, true)
                   }
@@ -190,7 +191,7 @@ export function MonthlyGridTable({
               <TableCell className="tabular text-right whitespace-nowrap">
                 <button
                   type="button"
-                  className="hover:underline"
+                  className={clickableCell}
                   onClick={() => openBreakdown(`Gross Savings — ${monthLabel(row.month)} ${year}`, row.month, row)}
                 >
                   {money(row.grossSavingsCents)}
@@ -199,8 +200,8 @@ export function MonthlyGridTable({
             </TableRow>
           ))}
 
-          <TableRow className="font-medium">
-            <TableCell>Total</TableCell>
+          <TableRow className="bg-muted/40 border-t-2 font-semibold">
+            <TableCell className={`bg-muted/40 ${stickyMonthCell}`}>Total</TableCell>
             {grid.columns.map((column) => {
               const cell = grid.yearTotal.cells[column.id];
               return (
@@ -208,7 +209,7 @@ export function MonthlyGridTable({
                   {cell ? (
                     <button
                       type="button"
-                      className="hover:underline"
+                      className={clickableCell}
                       onClick={() =>
                         openTransactions(
                           `${column.name} — ${year}`,
@@ -229,7 +230,7 @@ export function MonthlyGridTable({
             <TableCell className="tabular text-right whitespace-nowrap">
               <button
                 type="button"
-                className="hover:underline"
+                className={clickableCell}
                 onClick={() => openTransactions(`Total Expenditure — ${year}`, null, { kind: 'expenditure' }, false)}
               >
                 {money(grid.yearTotal.totalExpenditureCents)}
@@ -238,7 +239,7 @@ export function MonthlyGridTable({
             <TableCell className="tabular text-right whitespace-nowrap">
               <button
                 type="button"
-                className="hover:underline"
+                className={clickableCell}
                 onClick={() => openTransactions(`Income — ${year}`, null, { kind: 'income' }, true)}
               >
                 {money(grid.yearTotal.incomeCents)}
@@ -247,7 +248,7 @@ export function MonthlyGridTable({
             <TableCell className="tabular text-right whitespace-nowrap">
               <button
                 type="button"
-                className="hover:underline"
+                className={clickableCell}
                 onClick={() => openBreakdown(`Gross Savings — ${year}`, null, grid.yearTotal)}
               >
                 {money(grid.yearTotal.grossSavingsCents)}

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 
-import { Nav } from '@/features/shell/nav';
+import { MobileNav } from '@/features/shell/mobile-nav';
+import { Sidebar } from '@/features/shell/sidebar';
 import { ThemeToggle } from '@/features/shell/theme-toggle';
 import { SecurityUnavailableError, UnauthorizedError, requireOwner } from '@/server/auth/owner';
 import { readTheme } from '@/server/security/theme';
@@ -45,18 +46,22 @@ export default async function PrivateLayout({
   const theme = await readTheme();
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3 sm:px-6">
-          <span className="text-xs font-semibold tracking-widest uppercase">Burmy</span>
-          <Nav />
-          <div className="ml-auto flex items-center gap-1">
-            <ThemeToggle current={theme} />
-          </div>
-        </div>
-      </header>
+    <div className="flex min-h-screen">
+      <Sidebar footer={<ThemeToggle current={theme} />} />
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+      <div className="flex min-h-screen flex-1 flex-col">
+        <header className="border-b md:hidden">
+          <div className="flex items-center gap-2 px-4 py-3">
+            <MobileNav />
+            <span className="text-xs font-semibold tracking-widest uppercase">Burmy</span>
+            <div className="ml-auto">
+              <ThemeToggle current={theme} />
+            </div>
+          </div>
+        </header>
+
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+      </div>
     </div>
   );
 }

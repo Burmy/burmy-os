@@ -84,7 +84,7 @@ export async function createAccountAction(formData: FormData): Promise<ActionRes
     return toResult(error);
   }
 
-  revalidatePath('/settings/accounts');
+  revalidatePath('/settings/finance/accounts');
   return ok();
 }
 
@@ -97,7 +97,7 @@ export async function updateAccountAction(id: string, formData: FormData): Promi
     return toResult(error);
   }
 
-  revalidatePath('/settings/accounts');
+  revalidatePath('/settings/finance/accounts');
   return ok();
 }
 
@@ -115,6 +115,6 @@ export async function setAccountActiveAction(id: string, isActive: boolean): Pro
     return toResult(error);
   }
 
-  revalidatePath('/settings/accounts');
+  revalidatePath('/settings/finance/accounts');
   return ok();
 }

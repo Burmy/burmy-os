@@ -64,7 +64,7 @@ async function signIntoApp(page: Page): Promise<void> {
 }
 
 async function addAccount(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/accounts');
+  await page.goto('/settings/finance/accounts');
   await page.getByRole('button', { name: 'Add account' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(name);
@@ -73,7 +73,7 @@ async function addAccount(page: Page, name: string): Promise<void> {
 }
 
 async function addCategory(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/categories');
+  await page.goto('/settings/finance/categories');
   await page.getByRole('button', { name: 'Add category' }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Name').fill(name);

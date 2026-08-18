@@ -137,8 +137,8 @@ export function ImportReviewTable({
             </li>
           ) : null}
         </ul>
-        <Button size="sm" onClick={() => router.push('/finance/import')}>
-          Back to Import
+        <Button size="sm" onClick={() => router.push('/finance/monthly')}>
+          Back to Finance
         </Button>
       </div>
     );
@@ -198,7 +198,7 @@ export function ImportReviewTable({
         toast.error(outcome.error);
         return;
       }
-      router.push('/finance/import');
+      router.push('/finance/monthly');
     });
   }
 
