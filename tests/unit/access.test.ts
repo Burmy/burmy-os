@@ -147,6 +147,18 @@ describe('verifyAccessToken', () => {
     );
   });
 
+  it('rejects a structurally malformed token — not a JWT at all', async () => {
+    // Distinct from "tampered payload" below: this string isn't even
+    // shaped like a JWT (no three base64url segments), so `jose` throws a
+    // PARSE error rather than a verification error. The try/catch in
+    // `verifyAccessToken` must collapse that into `AccessDeniedError` too,
+    // not let a parser exception escape as an unhandled 500.
+    await expect(verifyAccessToken('not-a-jwt-at-all', CONFIG, publicKey)).rejects.toThrow(
+      AccessDeniedError,
+    );
+    await expect(verifyAccessToken('..', CONFIG, publicKey)).rejects.toThrow(AccessDeniedError);
+  });
+
   it('rejects a tampered payload', async () => {
     const token = await mintToken();
     const [header, , signature] = token.split('.');
@@ -315,6 +327,50 @@ describe('requireAccessIdentity', () => {
     vi.stubEnv('CF_ACCESS_AUD', undefined);
 
     await expect(requireAccessIdentity(new Headers())).rejects.toThrow(AccessMisconfiguredError);
+  });
+
+  // The four tests below exercise ENFORCED mode end to end — resolveAccessMode
+  // + verifyAccessToken + the owner-email check, together — against a real
+  // locally generated key pair (via the injectable `keyResolver`, never a
+  // network call). The two tests above only cover dev-bypass and the
+  // unconfigured-refusal path; without these, "a validly-signed assertion for
+  // the wrong email" and "a validly-signed assertion for the real owner" were
+  // each proven only in PIECES (raw JWT verification here, pure string
+  // comparison in "owner allowlist" above) and never as the one call a real
+  // request actually makes.
+  const ENFORCED_ENV = {
+    NODE_ENV: 'production',
+    OWNER_EMAIL: OWNER,
+    CF_ACCESS_TEAM_DOMAIN: TEAM,
+    CF_ACCESS_AUD: AUD,
+  };
+
+  it('accepts a validly-signed assertion for the real owner, in enforced mode', async () => {
+    const headers = new Headers({ [ACCESS_JWT_HEADER]: await mintToken() });
+    const identity = await requireAccessIdentity(headers, ENFORCED_ENV, publicKey);
+    expect(identity.email).toBe(OWNER);
+  });
+
+  it('rejects a validly-signed assertion for a real but non-owner email', async () => {
+    const headers = new Headers({
+      [ACCESS_JWT_HEADER]: await mintToken({ email: 'someone-else@burmy.test' }),
+    });
+    await expect(requireAccessIdentity(headers, ENFORCED_ENV, publicKey)).rejects.toThrow(
+      AccessDeniedError,
+    );
+  });
+
+  it('rejects a request with no Access assertion at all, in enforced mode', async () => {
+    await expect(
+      requireAccessIdentity(new Headers(), ENFORCED_ENV, publicKey),
+    ).rejects.toThrow(AccessDeniedError);
+  });
+
+  it('rejects a structurally malformed assertion, in enforced mode', async () => {
+    const headers = new Headers({ [ACCESS_JWT_HEADER]: 'garbage' });
+    await expect(requireAccessIdentity(headers, ENFORCED_ENV, publicKey)).rejects.toThrow(
+      AccessDeniedError,
+    );
   });
 
   /**

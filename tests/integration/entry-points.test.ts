@@ -74,6 +74,7 @@ function toRoute(file: string): string {
 
 let routeHandlers: EntryPoint[] = [];
 let serverActionFiles: EntryPoint[] = [];
+let privatePageFiles: EntryPoint[] = [];
 
 beforeAll(async () => {
   await harness();
@@ -83,6 +84,7 @@ beforeAll(async () => {
 
   const handlers: EntryPoint[] = [];
   const actions: EntryPoint[] = [];
+  const pages: EntryPoint[] = [];
 
   for (const file of files) {
     if (!/\.(ts|tsx)$/.test(file)) continue;
@@ -107,11 +109,25 @@ beforeAll(async () => {
     // exported function as a POST endpoint.
     if (/^\s*(?:\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*['"]use server['"]/.test(source)) {
       actions.push({ route: toRoute(file), file, source, exportedVerbs: ['POST'] });
+      continue;
+    }
+
+    // Server Component pages under the `(private)` route group. The layout
+    // (`(private)/layout.tsx`) already gates every page beneath it structurally
+    // — Next.js cannot render a page without its ancestor layouts, unlike the
+    // proxy `matcher`, which is a URL pattern that can silently drift out of
+    // sync — but CLAUDE.md's own invariant is that pages ALSO call
+    // `requireOwner()` directly, for the owner id, as defense-in-depth. This
+    // enumeration proves that holds, the same way the Route Handler/Server
+    // Action checks above do, rather than trusting it by convention.
+    if ((base === 'page.tsx' || base === 'page.ts') && file.includes(`${path.sep}(private)${path.sep}`)) {
+      pages.push({ route: toRoute(file), file, source, exportedVerbs: [] });
     }
   }
 
   routeHandlers = handlers;
   serverActionFiles = actions;
+  privatePageFiles = pages;
 });
 
 function isAllowlisted(route: string): boolean {
@@ -121,6 +137,16 @@ function isAllowlisted(route: string): boolean {
 function callsGuard(source: string): boolean {
   return /\brequireOwner\s*\(/.test(source);
 }
+
+/**
+ * Pages that render nothing at all — a bare `redirect()` and nothing else —
+ * have no data to protect and no owner id to scope a query with, so calling
+ * `requireOwner()` would be a no-op past the layout's own gate. Growing this
+ * list is the same kind of decision as `UNPROTECTED_ALLOWLIST`: it must be
+ * deliberate and reviewed, not a silent accident, which is what
+ * "allowlisted pages are genuinely pure redirects" below enforces.
+ */
+const PURE_REDIRECT_PAGE_ALLOWLIST = ['/finance/import'] as const;
 
 describe('the unprotected allowlist', () => {
   it('is exactly one entry', () => {
@@ -170,6 +196,31 @@ describe('every Server Action file is guarded', () => {
       .map((entry) => path.relative(process.cwd(), entry.file));
 
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('every private page calls requireOwner(), or is an allowlisted pure redirect', () => {
+  it('found private pages to check', () => {
+    expect(privatePageFiles.length).toBeGreaterThan(0);
+  });
+
+  it('has no unguarded, non-allowlisted private page', () => {
+    const offenders = privatePageFiles
+      .filter((page) => !PURE_REDIRECT_PAGE_ALLOWLIST.includes(page.route as never))
+      .filter((page) => !callsGuard(page.source))
+      .map((page) => `${page.route} (${path.relative(process.cwd(), page.file)})`);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('allowlisted pages are genuinely pure redirects, not silently unguarded', () => {
+    const allowlisted = privatePageFiles.filter((page) =>
+      PURE_REDIRECT_PAGE_ALLOWLIST.includes(page.route as never),
+    );
+    expect(allowlisted.length).toBe(PURE_REDIRECT_PAGE_ALLOWLIST.length);
+    for (const page of allowlisted) {
+      expect(page.source, page.route).toMatch(/\bredirect\s*\(/);
+    }
   });
 });
 
