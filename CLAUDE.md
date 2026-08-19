@@ -76,7 +76,7 @@ pnpm build                            # production build
 
 docker compose -f compose.dev.yml up -d postgres  # local database
 pnpm db:migrate                       # apply migrations — same script CI and production both run
-pnpm db:seed                          # synthetic fixtures
+pnpm db:seed                          # synthetic fixtures — refuses to run off localhost
 ```
 
 ---
@@ -296,6 +296,13 @@ These are verified, not folklore. Do not "fix" them back.
   alone was not sufficient; the intermediate `flex-col` wrapper between `<main>` and the outer sidebar
   row needed `min-w-0` too — every flex boundary in the chain defaults to `min-width: auto`
   independently, so each one needs the override, not just the one closest to the wide content.
+- **`pnpm db:seed` was once run against the real Supabase database by accident**, right after
+  legitimately running `db:migrate`/`db:provision-owner` against it in the same shell — an easy
+  mistake once `DATABASE_URL` is already pointed at production for those two commands. Fixed by
+  `src/server/db/seed-guard.ts`: `db:seed` now refuses to run unless `DATABASE_URL`'s host is
+  `localhost`/`127.0.0.1`/`::1`. Deliberately NOT a `NODE_ENV` check — an ad-hoc operator shell running
+  production commands often has no `NODE_ENV` set at all, so a `NODE_ENV !== 'production'` gate would
+  have silently passed in exactly the scenario that caused the original mistake.
 
 ---
 

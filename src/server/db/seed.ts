@@ -7,6 +7,10 @@
  *
  * Idempotent: safe to run repeatedly.
  *
+ * Refuses to run unless `DATABASE_URL` points at localhost — see
+ * `./seed-guard.ts`. This has nothing to do with `NODE_ENV`, on purpose.
+ *
+
  * ─────────────────────────────────────────────────────────────────────────────
  * THIS SCRIPT NEVER CREATES OR CLAIMS AN AUTH USER.
  *
@@ -30,6 +34,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 
 import * as schema from './schema';
+import { databaseHostname, isLocalDatabaseUrl } from './seed-guard';
 
 /** Mirrors the shape of the owner's real sheet: categories AND merchant-shaped rows. */
 const CATEGORIES: Array<{ name: string; kind: 'spending' | 'income' | 'investment' }> = [
@@ -62,6 +67,23 @@ const slugify = (value: string): string =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+function explainNonLocalDatabase(url: string): void {
+  const hostname = databaseHostname(url);
+  console.error('');
+  console.error(
+    hostname
+      ? `  DATABASE_URL does not point at a local database (host: "${hostname}").`
+      : '  DATABASE_URL could not be parsed as a connection string.',
+  );
+  console.error('');
+  console.error('  db:seed inserts SYNTHETIC data and must never run against a real');
+  console.error('  deployment — this guard exists because that mistake has happened before.');
+  console.error('');
+  console.error('  If this is local development, DATABASE_URL should point at localhost,');
+  console.error('  matching compose.dev.yml / .env.example.');
+  console.error('');
+}
+
 function explainMissingOwner(email: string): void {
   console.error('');
   console.error(`  No owner row found for OWNER_EMAIL=${email}.`);
@@ -85,6 +107,11 @@ async function main(): Promise<void> {
   const email = process.env.OWNER_EMAIL?.trim().toLowerCase();
   if (!email) {
     console.error('OWNER_EMAIL is not set');
+    process.exit(1);
+  }
+
+  if (!isLocalDatabaseUrl(url)) {
+    explainNonLocalDatabase(url);
     process.exit(1);
   }
 
