@@ -1,7 +1,7 @@
 import { cents, format } from '@/server/finance/money';
 
 /** Category series colors — cycles through the 6-color muted palette in `globals.css`, same tokens the breakdown bar chart and the trend lines both read, so a category keeps the same color in both charts. */
-export const CATEGORY_CHART_COLORS = [
+const CATEGORY_CHART_COLORS = [
   'var(--color-chart-cat-1)',
   'var(--color-chart-cat-2)',
   'var(--color-chart-cat-3)',

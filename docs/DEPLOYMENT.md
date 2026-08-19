@@ -327,15 +327,15 @@ DATABASE_URL="$MIGRATION_DATABASE_URL" OWNER_EMAIL="<owner email>" node scripts/
 
 Run manually, deliberately, from a developer machine with network access to Supabase — **never
 automatically on every Netlify deploy; `netlify.toml`'s `command` is plain `pnpm build`, nothing more,
-and there is no build plugin or post-deploy hook wired to run either script.** Both scripts are already
-plain ESM with zero Docker dependency (`scripts/migrate.mjs`'s own header explains why: "It does not
-need the schema types," so no TypeScript/tsx toolchain either) — this workflow needed no code change,
-only a different place to run them from, and a documented name for the credential that keeps it out of
-Netlify's store entirely. `provision-owner.mjs` stays idempotent and safe to re-run.
+and there is no build plugin or post-deploy hook wired to run either script.** Both scripts are plain
+ESM that run directly on whatever host invokes them — no Docker, no build step — so this workflow
+needed no code change, only a different place to run them from, and a documented name for the
+credential that keeps it out of Netlify's store entirely. `provision-owner.mjs` stays idempotent and
+safe to re-run.
 
-Local development is unaffected: `docker compose -f compose.dev.yml up -d postgres` +
-`docker compose -f compose.dev.yml run --rm --build migrate` continue to work exactly as before, against
-the local Postgres container, not Supabase. Drizzle/`drizzle-kit` need no changes — `drizzle.config.ts`
+Local development is unaffected: `docker compose -f compose.dev.yml up -d postgres`, then
+`pnpm db:migrate` — the same plain host script CI and production both use — against the local
+Postgres container, not Supabase. Drizzle/`drizzle-kit` need no changes — `drizzle.config.ts`
 already just reads `DATABASE_URL`.
 
 ---

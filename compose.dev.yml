@@ -1,13 +1,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Local development stack — LOCAL DEVELOPMENT / TESTING ONLY.
+# Local development database — LOCAL DEVELOPMENT / TESTING ONLY.
 #
 #   docker compose -f compose.dev.yml up -d postgres
-#   docker compose -f compose.dev.yml run --rm --build migrate
+#   pnpm db:migrate     <- plain host script, identical to what CI and
+#                          production both already run; no image to build
 #   pnpm dev            <- the app itself runs on the host for fast HMR
 #
 # Production is Netlify + Supabase — no Docker at all (see docs/DEPLOYMENT.md).
-# This file is the entire remaining Docker Compose surface in the repo; there
-# is no separate production compose file to keep in sync with it.
+# Integration tests don't use this file either — they start their own
+# throwaway Postgres via Testcontainers (tests/integration/global-setup.ts).
+# This one `postgres` service, for browsing the app locally, is the entire
+# remaining Docker Compose surface in the repo.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: burmy-dev
@@ -42,19 +45,6 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-    networks: [burmy_dev]
-
-  migrate:
-    build:
-      context: .
-      target: migrator
-    environment:
-      DATABASE_URL: postgres://burmy:burmy@postgres:5432/burmy
-    depends_on:
-      postgres:
-        condition: service_healthy
-    # One-shot: runs, applies migrations, exits.
-    restart: 'no'
     networks: [burmy_dev]
 
 networks:

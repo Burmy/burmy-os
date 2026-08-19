@@ -5,11 +5,7 @@
 # `endOfLine: lf` and produces whole-file diffs that hide the real change.
 * text=auto eol=lf
 
-# Shell scripts MUST be LF — a CRLF shebang fails inside a container with an
-# unhelpful "no such file or directory".
-*.sh text eol=lf
 *.mjs text eol=lf
-Dockerfile text eol=lf
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PARSER FIXTURES ARE BYTE-EXACT. Do not let Git touch their line endings.

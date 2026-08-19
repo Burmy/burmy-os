@@ -403,7 +403,7 @@ the totals are recomputed after redaction.
 | Dates | `Posted Date` only. Populates **both** `transaction_date` and `posted_date`, because the column is `NOT NULL` and the monthly grid buckets on it. Inventing an earlier transaction date would be fabricating data. |
 | Amounts | Unquoted, **no thousands separator in the sample**. No value reached four figures, so behaviour above 999.99 is an **assumption**; `parseMoney` accepts both forms and fixtures cover each. |
 | Sign | Negative = purchase. Inverted, as above. |
-| `Address` | `city` left-justified in 14 columns, then the state, then a trailing space. Empty on payment rows. **Discarded at parse** (plan §18 keeps address fragments out of staging), read transiently as an exact location hint for merchant normalization. |
+| `Address` | `city` left-justified in 14 columns, then the state, then a trailing space. Empty on payment rows. **Discarded at parse** (never persisted to staging), read transiently as an exact location hint for merchant normalization. |
 | `Payee` | Truncated to ~22 characters. City and state are appended, sometimes **fused with no separator** (`BAY HARBOURCA`, `Sunset ValleyTX`) and sometimes spaced (`SPRINGFIELD TX`) — in the same file. One payee had its spaces stripped entirely. |
 | Row order | **Descending**, the opposite of the deposit export. No stage assumes ordering. |
 | Processor prefixes | `TST*`, `SQ *`, `NPO* `, `YSI*`, `PADDLE.NET* `, `OPENAI *`, `ROVER.COM* ` |
@@ -689,7 +689,7 @@ overrule a category decision the owner already made.
 identical mechanism, unverified for BoA's inter-account-transfer token format
 specifically — if the pattern doesn't hold, the transaction simply stays
 default-classified rather than being guessed. `COUNTERPART_WINDOW_DAYS = 7`
-matches the window `IMPLEMENTATION_PLAN.md` §39 already specified for M6.
+matches the window specified for M6 during planning.
 
 ### Never overwrites a manual decision, by construction
 

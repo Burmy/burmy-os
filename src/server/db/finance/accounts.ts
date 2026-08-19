@@ -27,8 +27,8 @@ import { DuplicateNameError, NotFoundError, isUniqueViolation } from './errors';
  * The types the UI offers.
  *
  * `cash` exists in the database enum from M1 but is deliberately NOT here: cash
- * spending is explicitly not tracked in V1 (docs/HANDOFF.md §3), so offering the
- * option would invite data the importer has no way to produce.
+ * spending is explicitly not tracked in V1, so offering the option would invite
+ * data the importer has no way to produce.
  */
 export const ACCOUNT_TYPES = ['checking', 'savings', 'credit_card', 'brokerage'] as const;
 

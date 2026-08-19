@@ -59,19 +59,6 @@ function init(): Db {
   return instance;
 }
 
-/** Explicit accessor, for code that wants the connection point to be obvious. */
 export function getDb(): Db {
   return init();
 }
-
-/**
- * Ergonomic handle. Behaves like a normal Drizzle instance but defers the
- * connection until the first property access.
- */
-export const db = new Proxy({} as Db, {
-  get(_target, prop, receiver) {
-    return Reflect.get(init(), prop, receiver) as unknown;
-  },
-}) as Db;
-
-export { schema };

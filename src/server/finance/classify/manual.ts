@@ -49,8 +49,6 @@ export type ManualTransactionType = (typeof MANUAL_TRANSACTION_TYPES)[number];
 
 export const EXCLUSIONARY_TRANSACTION_TYPES = ['transfer', 'credit_card_payment', 'investment'] as const;
 
-export type ExclusionaryTransactionType = (typeof EXCLUSIONARY_TRANSACTION_TYPES)[number];
-
 export function isExclusionaryType(transactionType: string): boolean {
   return (EXCLUSIONARY_TRANSACTION_TYPES as readonly string[]).includes(transactionType);
 }

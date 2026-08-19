@@ -116,10 +116,10 @@ function stripProcessorPrefix(value: string): string {
  * which makes the suffix knowable rather than guessable. Handles both the spaced
  * and fused forms, since the payee column varies while the address column does not.
  *
- * The Address column itself is never persisted (plan §18 keeps address fragments
- * out of staging); it is read transiently to improve this one derivation. The
- * import pipeline in M5 supplies it from `ParseResult.rows`, which still carries
- * the source fields alongside the candidates.
+ * The Address column itself is never persisted — it is read transiently to
+ * improve this one derivation. The import pipeline supplies it from
+ * `ParseResult.rows`, which still carries the source fields alongside the
+ * candidates.
  */
 function stripLocationWithHint(value: string, hint: LocationHint): string {
   const city = hint.city.trim();

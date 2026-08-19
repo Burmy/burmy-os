@@ -26,7 +26,7 @@ import { cookies } from 'next/headers';
 
 export const THEME_COOKIE = 'burmy.theme';
 
-export const THEMES = ['system', 'light', 'dark'] as const;
+const THEMES = ['system', 'light', 'dark'] as const;
 
 export type Theme = (typeof THEMES)[number];
 

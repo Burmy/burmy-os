@@ -32,7 +32,7 @@ export interface GridAggregateRow {
   readonly txnCount: number;
 }
 
-export interface GridCell {
+interface GridCell {
   readonly amountCents: number;
   readonly txnCount: number;
 }
@@ -59,7 +59,7 @@ export interface GridRowTotals {
   readonly unreconciledCents: number;
 }
 
-export interface GridMonthRow extends GridRowTotals {
+interface GridMonthRow extends GridRowTotals {
   readonly month: number;
 }
 
@@ -73,7 +73,7 @@ export interface GridMonthRow extends GridRowTotals {
  * represents, so the UI can say so rather than let the totals and the visible
  * columns silently disagree.
  */
-export interface UnreconciledSummary {
+interface UnreconciledSummary {
   readonly count: number;
   readonly totalCents: number;
 }

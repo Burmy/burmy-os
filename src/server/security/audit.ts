@@ -51,13 +51,13 @@ export const AUDIT_EVENT = {
   ACCESS_MISCONFIGURED: 'auth.access.misconfigured',
 } as const;
 
-export type AuditEventType = (typeof AUDIT_EVENT)[keyof typeof AUDIT_EVENT];
+type AuditEventType = (typeof AUDIT_EVENT)[keyof typeof AUDIT_EVENT];
 
 /**
  * Metadata is restricted to primitives on purpose. Nesting is how a whole
  * transaction row ends up in an audit record "temporarily".
  */
-export type AuditMetadata = Readonly<Record<string, string | number | boolean | null>>;
+type AuditMetadata = Readonly<Record<string, string | number | boolean | null>>;
 
 export interface AuditEventInput {
   readonly eventType: AuditEventType;

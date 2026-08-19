@@ -41,7 +41,7 @@ export interface SourceRow {
 }
 
 /** Why a line produced no transaction. Reported, never silently dropped. */
-export type SkipReason =
+type SkipReason =
   | 'blank-line'
   | 'preamble'
   | 'header'
@@ -76,13 +76,6 @@ export interface ParseResult {
   /** Present only when the source carried a reconcilable summary block. */
   readonly summary: StatementSummary | null;
 }
-
-/** Which way the SOURCE signs its amounts. Burmy's own convention is the inverse. */
-export type SourceSignConvention =
-  /** One signed column where a negative number means money left the account. */
-  | 'negative-is-outflow'
-  /** Separate Debit and Credit columns. */
-  | 'debit-credit-columns';
 
 /**
  * A candidate transaction: typed, normalized, and not yet judged.

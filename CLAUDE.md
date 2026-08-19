@@ -7,10 +7,11 @@ Private, single-user personal web application. Deployed to `app.burmy.me`. The p
 operating system and not a platform. Do not build Notes, Files, Sheets, Inbox, Bookmarks, Garage,
 Receipts or Subscriptions. Do not build abstractions in anticipation of them.
 
-The full approved plan is `docs/IMPLEMENTATION_PLAN.md`. Read it before making architectural changes.
-Its Finance-domain and milestone-sequencing content is current; its original infrastructure sections
-(VPS/Tunnel/systemd/restic) are superseded — see that document's own banner and `docs/DEPLOYMENT.md`
-for the actual current deployment.
+`docs/FINANCE.md` is the canonical Finance-domain reference (money model, categorization, dedup,
+reconciliation). `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md` and
+`docs/BACKUP_RESTORE.md` are canonical for their own areas. `docs/ROADMAP.md` is authoritative on
+current milestone status. If any of these disagree with the code, the code is authoritative — that's
+a bug to resolve, not a discrepancy to document around.
 
 ---
 
@@ -58,9 +59,9 @@ Violating any of these is a correctness or security bug, not a style preference.
 | Auth | Cloudflare Access with Google is the **sole** authentication mechanism. No in-app auth library, no session of Burmy's own, no second factor. |
 | UI | Tailwind, shadcn/ui, Lucide |
 | Grids | Hand-rolled on the shadcn `Table` primitive, with a thin shared presentation layer in `src/components/finance/`. TanStack Table was originally approved but was never actually installed — the tables in this app are small (dozens of rows, no sort/virtualization need), so it was dropped from the plan during the M8-era UX pass rather than added just because it was once on the list. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
-| Parsing | Papa Parse (CSV), ExcelJS (XLSX, provisional) |
-| Testing | Vitest + React Testing Library, Playwright |
-| Infra | **Production:** Netlify (hosting) + Supabase (managed Postgres) + Cloudflare (DNS; proxied for `app.burmy.me` only, DNS-only for `burmy.me`/`www.burmy.me`). Auth stays Cloudflare Access, unchanged — see `docs/DEPLOYMENT.md`, "Authentication." **Local dev:** Docker Compose (`compose.dev.yml`) + local Postgres — the entire remaining Docker surface in the repo. The earlier self-hosted VPS/Cloudflare Tunnel/restic→B2 path was removed (2026-08-18) once Netlify + Supabase proved viable; it is fully recoverable from git history if self-hosting is ever revisited, but nothing in the working tree depends on it. |
+| Parsing | Papa Parse (CSV). XLSX import was planned but never built — there is no ExcelJS dependency and no XLSX adapter; don't assume one exists. |
+| Testing | Vitest + React Testing Library, Playwright, Testcontainers (integration tests only — see Commands) |
+| Infra | **Production:** Netlify (hosting) + Supabase (managed Postgres) + Cloudflare (DNS; proxied for `app.burmy.me` only, DNS-only for `burmy.me`/`www.burmy.me`). Auth stays Cloudflare Access, unchanged — see `docs/DEPLOYMENT.md`, "Authentication." **Local dev:** Docker Compose (`compose.dev.yml`) runs one `postgres` service — the entire remaining Docker surface in the repo. Migrations run as a plain host script (`pnpm db:migrate`), identical to what CI and production both do; there is no Dockerfile and no migrator image. The earlier self-hosted VPS/Cloudflare Tunnel/restic→B2 path was removed (2026-08-18) once Netlify + Supabase proved viable; it is fully recoverable from git history if self-hosting is ever revisited, but nothing in the working tree depends on it. |
 
 ---
 
@@ -73,8 +74,8 @@ pnpm test                             # Vitest
 pnpm test:e2e                         # Playwright
 pnpm build                            # production build
 
-docker compose -f compose.dev.yml up -d postgres         # local database
-docker compose -f compose.dev.yml run --rm --build migrate  # migrations run IN the image, never host pnpm
+docker compose -f compose.dev.yml up -d postgres  # local database
+pnpm db:migrate                       # apply migrations — same script CI and production both run
 pnpm db:seed                          # synthetic fixtures
 ```
 
@@ -102,8 +103,6 @@ These are verified, not folklore. Do not "fix" them back.
 - **Postgres 18 changed its Docker volume layout.** `PGDATA` is `/var/lib/postgresql/18/docker` and
   the declared `VOLUME` is `/var/lib/postgresql`. Mounting the pre-18 `/var/lib/postgresql/data`
   **starts cleanly, reports healthy, and silently loses the data** on recreate.
-- **Never `pnpm add xlsx`.** The npm SheetJS package is abandoned at 0.18.5 with unfixed prototype
-  pollution and ReDoS advisories. Use ExcelJS.
 - **`dedupe_key` and `merchant_key` are different things and must stay that way.** `dedupe_key` is
   immutable identity from the *raw* description under a frozen versioned algorithm, computed once and
   persisted. `merchant_key` is expected to evolve. Deriving identity from `merchant_key` would mean
@@ -114,9 +113,6 @@ These are verified, not folklore. Do not "fix" them back.
   boundary. Unprotected endpoints are an explicit allowlist, exactly one entry: `/api/health`.
   `requireOwner()` verifies the Cloudflare Access JWT and RESOLVES the owner row by verified email —
   it never creates one. See "Owner provisioning" in `docs/SECURITY.md`.
-- **The deploy script never restores the database automatically.** On healthcheck failure it rolls
-  back the *image* only and leaves Postgres untouched. A failed healthcheck usually means a bad build,
-  not bad data, and the database may hold newer writes.
 - **BoA deposit exports validate themselves — never bypass that check.** The five-line preamble states
   beginning balance, total credits, total debits and ending balance, and the transaction rows reconcile
   to it TO THE CENT (verified against a real export). `assertDepositTotals` and
@@ -182,23 +178,13 @@ These are verified, not folklore. Do not "fix" them back.
   violations. Diagnose CSP problems by capturing `securitypolicyviolation` DOM events
   (`effectiveDirective` + `sourceFile`), not by reading console text — the console message names the
   fallback directive and sends you after the wrong cause.
-- **Adding a migration requires rebuilding the migrator image — `--build` is not optional.** The
-  Dockerfile copies `drizzle/` *into* the image, so `docker compose run --rm migrate` against a stale
-  image prints **"Migrations complete." and applies nothing**. It is a silent no-op: exit 0, reassuring
-  output, schema unchanged. Always
-  `docker compose -f compose.dev.yml run --rm --build migrate` after `pnpm db:generate`, and verify by
-  counting tables rather than trusting the message. This cost real time during M2.
 - **`scripts/migrate.mjs` is plain ESM on purpose — do not convert it to TypeScript.** Applying
   migrations only needs to execute the generated SQL, so writing it in TS would drag
-  tsx → esbuild → a platform-native binary into an image whose whole job is running a few
-  `CREATE TABLE`s. As `.mjs` it needs only production dependencies, letting the migrator image build
-  with `--prod --ignore-scripts`.
-- **Docker builds use `pnpm install --ignore-scripts`.** pnpm blocks dependency install scripts by
-  default; rather than granting arbitrary code execution at build time, we decline them explicitly.
-  Neither `next build` nor the migrator needs a native postinstall. If a dependency ever genuinely
-  does, that is a decision to revisit in the Dockerfile — not a default to inherit.
+  tsx → esbuild → a platform-native binary into a script whose whole job is running a few
+  `CREATE TABLE`s. As `.mjs` it needs only production dependencies and runs identically on the host,
+  in CI, and in production — `node scripts/migrate.mjs` (or `pnpm db:migrate` locally), no build step.
 - **Never write JSON config with PowerShell `Set-Content -Encoding utf8`** — it emits a UTF-8 BOM, and
-  `pnpm` inside the container fails with `Invalid package.json`. Use
+  `pnpm` then fails to parse it with `Invalid package.json`. Use
   `[System.IO.File]::WriteAllText(path, text, [System.Text.UTF8Encoding]::new($false))`.
 - **`exactOptionalPropertyTypes` is on.** Assigning `undefined` to an optional property is an error;
   omit the key instead (`...(cond ? { key: value } : {})`). This caught a real issue in
@@ -289,20 +275,6 @@ These are verified, not folklore. Do not "fix" them back.
   which is real reconciliation logic this page deliberately does not build. If a future feature genuinely
   needs a dollar figure for `transaction_type IN ('transfer', 'credit_card_payment')`, that is pair-matching
   work, not a `SUM`/`ABS` choice — do not reach for either as a shortcut.
-- **`output: 'standalone'` + pnpm does not reliably trace `@swc/helpers` into the runner image, and
-  `pnpm build`/`next build` never catch it.** M10 was the first time anyone actually ran the built
-  `runner` stage end to end (`docker compose up web`) rather than `pnpm dev` on the host — it
-  crash-looped immediately with `Cannot find module '.../@swc/helpers/esm/_interop_require_default.js'`,
-  a documented Next.js + pnpm interaction, not specific to this app. The trace resolves against a
-  specific pnpm-hashed instance of `next` (varies by which peer packages, including devDependencies
-  like `@playwright/test`, are present at build time) and misses a conditionally-loaded ESM interop
-  helper for that instance. Fixed two ways together: `@swc/helpers` promoted from transitive to a
-  **direct** dependency (`package.json`), and `outputFileTracingIncludes: { '**/*':
-  ['./node_modules/@swc/helpers/**/*'] }` in `next.config.ts` to force the whole package into
-  `.next/standalone` regardless — Node's directory-walk module resolution then finds it from any
-  nested pnpm instance. If a similar `MODULE_NOT_FOUND` appears for some other package after `output:
-  standalone`, this is the pattern: promote to a direct dependency AND force-include it in tracing:
-  fixing only one of the two did not resolve it in testing.
 - **`formatInflow()` expects a still-negative, RAW stored value — calling it on a figure that is
   already sign-flipped double-flips it back negative.** `getMonthlyTotalsAllTime()` (M11) sign-flips
   income to a positive display figure at the DB boundary itself, exactly like M8's `GridRowTotals
@@ -337,7 +309,7 @@ src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only
-scripts/                  migrate.mjs (Docker migrator entrypoint), provision-owner.mjs
+scripts/                  migrate.mjs, provision-owner.mjs — plain host-run Node scripts
 docs/                     the approved plan and supporting documents
 ```
 

@@ -17,11 +17,11 @@ import { hasAllColumns, normalizeHeaderName } from './signature';
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-/** ≤50k rows, per plan §21. Beyond this a file is not a monthly statement. */
-export const MAX_ROWS = 50_000;
+/** ≤50k rows. Beyond this a file is not a monthly statement. */
+const MAX_ROWS = 50_000;
 
-/** ≤4KB per cell, per plan §21. */
-export const MAX_CELL_LENGTH = 4096;
+/** ≤4KB per cell. */
+const MAX_CELL_LENGTH = 4096;
 
 /**
  * Decode as UTF-8 and strip a leading BOM.
@@ -31,7 +31,7 @@ export const MAX_CELL_LENGTH = 4096;
  * a stream decoded in one shot. Stripping explicitly is the reliable form, and it
  * is asserted by a fixture whose bytes begin with EF BB BF.
  */
-export function decodeUtf8(bytes: Uint8Array): string {
+function decodeUtf8(bytes: Uint8Array): string {
   const text = new TextDecoder('utf-8').decode(bytes);
   return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }

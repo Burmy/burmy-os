@@ -1,21 +1,20 @@
 /**
  * Migration runner — plain ESM, deliberately NOT TypeScript.
  *
- * Runs INSIDE the container image (`docker compose run --rm migrate`), never
- * from a host toolchain, so the migration runtime is byte-identical between
- * development and production.
+ * Runs directly on whatever host invokes it — `node scripts/migrate.mjs` (or
+ * `pnpm db:migrate` locally) — identically in CI, local development, and the
+ * manual production migration step (see docs/DEPLOYMENT.md). No Docker image,
+ * no build step, nothing to keep in sync.
  *
  * Why plain .mjs rather than TypeScript via tsx:
  *
  *   Applying migrations only needs to read the generated SQL in drizzle/ and
- *   execute it. It does not need the schema types. Writing it in TypeScript
- *   would drag tsx -> esbuild -> a platform-native binary into an image whose
- *   entire job is running a few CREATE TABLE statements.
+ *   execute it. It does not need the schema types, so dragging in
+ *   tsx -> esbuild -> a platform-native binary just to run a few
+ *   `CREATE TABLE` statements would be needless weight for what this does.
  *
  *   As plain ESM it depends on nothing but `drizzle-orm` and `postgres`, both
- *   production dependencies that ship real JavaScript. That lets the migrator
- *   image install with `--prod --ignore-scripts`, which is both smaller and a
- *   meaningfully tighter supply-chain posture.
+ *   already production dependencies.
  */
 
 import { drizzle } from 'drizzle-orm/postgres-js';

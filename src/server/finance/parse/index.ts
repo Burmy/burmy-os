@@ -153,7 +153,7 @@ export function parseStatement(bytes: Uint8Array, now?: Date): StatementParse {
   return { format, result, candidates };
 }
 
-export interface NormalizeFailure {
+interface NormalizeFailure {
   readonly lineNumber: number;
   readonly message: string;
 }
@@ -205,5 +205,4 @@ export function parseStatementTolerant(bytes: Uint8Array, now?: Date): TolerantS
   return { format, result, candidates, failures };
 }
 
-export { detectFormat as detect };
 export * from './types';

@@ -72,13 +72,3 @@ export const ADAPTER_COLUMNS = {
   'boa-card': ['posted_date', 'payee', 'amount'],
 } as const;
 
-/**
- * Column names that mark the SUMMARY header in a BoA deposit export, which sits
- * above the real one and must not be mistaken for it.
- *
- * `Description,,Summary Amt.` normalizes to `description` + `summary_amt`. Note
- * it shares `description` with the real header — which is exactly why the real
- * header is identified by having ALL of `date`/`description`/`amount`, and this
- * one is skipped for lacking `date`.
- */
-export const DEPOSIT_SUMMARY_COLUMNS = ['description', 'summary_amt'] as const;

@@ -30,8 +30,6 @@ import { inject } from 'vitest';
  */
 
 export const OWNER_EMAIL = 'owner@burmy.test';
-export const NON_OWNER_EMAIL = 'someone-else@elsewhere.test';
-export const BASE_URL = 'http://localhost:3000';
 
 interface Harness {
   readonly sql: import('postgres').Sql;
@@ -89,14 +87,6 @@ export async function provisionOwner(email: string = OWNER_EMAIL): Promise<strin
     values (${id}, ${email}, ${email}, true)
   `;
   return id;
-}
-
-export async function findOwner(): Promise<{ id: string; email: string } | null> {
-  const { sql } = await harness();
-  const rows = await sql<{ id: string; email: string }[]>`
-    select "id", "email" from "user" limit 1
-  `;
-  return rows[0] ?? null;
 }
 
 export async function countRows(table: string): Promise<number> {

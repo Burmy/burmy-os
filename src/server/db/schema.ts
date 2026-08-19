@@ -1,7 +1,7 @@
 /**
  * Burmy database schema.
  *
- * Mirrors docs/IMPLEMENTATION_PLAN.md §18. Where the two disagree, one of them
+ * Mirrors docs/FINANCE.md's data model. Where the two disagree, one of them
  * is a bug — fix it, do not let them drift.
  *
  * Conventions used throughout:

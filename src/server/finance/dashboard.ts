@@ -12,6 +12,7 @@
  */
 
 import type { CategoryMonthlyTotal, MonthlyTotal } from '@/server/db/finance/grid';
+import { MONTH_ABBREVIATIONS } from './grid';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Date math
@@ -137,10 +138,6 @@ export interface TrendPoint {
   readonly expenseCents: number;
   readonly netCents: number;
 }
-
-const MONTH_ABBREVIATIONS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-] as const;
 
 /**
  * The trailing `monthsBack` months ending at (`endYear`, `endMonth`)
@@ -401,7 +398,7 @@ export function buildAnnualCategoryBreakdown(
 /** Chart-display-only stack key for everything past the top series — never written back to a real category. */
 const OTHER_SERIES_KEY = '__other__';
 
-export interface YearlyBreakdownMonth {
+interface YearlyBreakdownMonth {
   readonly month: number;
   readonly label: string;
   readonly totalCents: number;
@@ -409,7 +406,7 @@ export interface YearlyBreakdownMonth {
   readonly segments: Readonly<Record<string, number>>;
 }
 
-export interface YearlyBreakdownSeries {
+interface YearlyBreakdownSeries {
   readonly key: string;
   readonly name: string;
 }

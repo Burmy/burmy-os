@@ -331,8 +331,8 @@ describe('BoA card export', () => {
   });
 
   it('REFUSES a card export in which every row is an inflow', async () => {
-    // The loud failure plan §22 requires. A card statement cannot look like this,
-    // and inverting a month of spending silently is the alternative.
+    // A card statement cannot look like this, and inverting a month of
+    // spending silently is the alternative to catching it loudly.
     const inverted = await bytes('boa-card-all-inflows.csv');
     expect(() => parseStatement(inverted, NOW)).toThrow(ParseError);
     expect(() => parseStatement(inverted, NOW)).toThrow(/sign convention/i);

@@ -21,13 +21,12 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node scripts/migrate.mjs",
-    "db:provision-owner": "node scripts/provision-owner.mjs",
+    "db:migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "db:provision-owner": "node --env-file-if-exists=.env scripts/provision-owner.mjs",
     "db:studio": "drizzle-kit studio",
     "db:seed": "tsx src/server/db/seed.ts"
   },
   "dependencies": {
-    "@swc/helpers": "0.5.23",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "drizzle-orm": "0.45.2",

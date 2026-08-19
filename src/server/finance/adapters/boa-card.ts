@@ -38,9 +38,6 @@ import {
 
 export const BOA_CARD_ADAPTER = 'boa-card' as const;
 
-/** A purchase is negative here too. Burmy's convention is the inverse. */
-export const BOA_CARD_SIGN = 'negative-is-outflow' as const;
-
 export function parseBoaCard(bytes: Uint8Array): ParseResult {
   const { rows } = splitCells(bytes);
 
@@ -91,9 +88,9 @@ export function parseBoaCard(bytes: Uint8Array): ParseResult {
 /**
  * A card statement of nothing but inflows is the signature of an inverted parse.
  *
- * This is the loud failure plan §22 asks for. The deposit export gets a far
- * stronger guarantee from its summary block; a card export has no arithmetic to
- * check against, so this is the available assertion.
+ * This is the loud failure to prefer over a silently inverted parse. The
+ * deposit export gets a far stronger guarantee from its summary block; a card
+ * export has no arithmetic to check against, so this is the available assertion.
  *
  * It is deliberately weak in one direction: an all-OUTFLOW card statement is
  * perfectly normal (a month with purchases and no payment), so only the

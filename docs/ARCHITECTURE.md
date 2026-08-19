@@ -1,7 +1,7 @@
 # Architecture
 
-Companion to `IMPLEMENTATION_PLAN.md`. That document explains *what* we decided and *why*; this one
-explains how the pieces fit and where the boundaries are.
+Explains how the pieces fit and where the boundaries are. `docs/FINANCE.md` explains the domain rules
+in depth; `docs/ROADMAP.md` explains what decided and why, milestone by milestone.
 
 ---
 
@@ -75,12 +75,9 @@ directory under `finance/`; that has been corrected.
 The one flow worth understanding end to end.
 
 ```
-1. UPLOAD      Multi-file batch (checking + card + savings together).
+1. UPLOAD      One file, one account, per import — never a multi-file batch.
                Validated, held only in memory as the request's own bytes — never written to disk,
                never to any statically served path. Nothing to delete because nothing was written.
-
-               ── Why multi-file: transfers and credit-card payments have TWO legs.
-                  Matching them requires both files present in one batch.
 
 2. HASH        Already-committed file_sha256? Warn before parsing.
 
@@ -94,8 +91,11 @@ The one flow worth understanding end to end.
 6. DEDUPE      Source id if proven reliable; otherwise count reconciliation
                against committed history.
 
-7. CLASSIFY    Transfers / card payments / investments — matched against this batch
-               AND committed history (±7 days). Ambiguity produces a review item.
+7. CLASSIFY    Transfers / card payments / investments — a batch is single-account by
+               construction, so both legs of a pair can never be in the same import.
+               Matched against COMMITTED history only (±7 days), in either import order,
+               including a retroactive update to an already-committed transaction from a
+               prior import. Ambiguity produces a review item.
 
 8. CATEGORIZE  rules → merchant memory → history → source category → heuristics → review.
 
@@ -127,13 +127,14 @@ finance_transactions
   GROUP BY category, month  →  SUM(amount_cents)
         │
         ▼
-  Pivot in TypeScript, split sections on category.kind
-        │
-        ├─ kind = spending|investment  →  Spending section
-        └─ kind = income               →  Income section (sign flipped for DISPLAY only)
+  Pivot in TypeScript — one flat column per category, in the owner's own
+  configured sort_order. NEVER regrouped into Spending/Investment/Income
+  blocks (an owner instruction that overrides the original mockup);
+  category.kind shows only as a small non-reordering label for context.
+  Income is sign-flipped for DISPLAY only.
         │
         ▼
-  Expenses · Investments · Total Outflow · Total Income · Net
+  Total Expenditure · Income · Gross Savings (Income − Total Expenditure)
 ```
 
 Nothing is cached. Nothing is stored. ~40 categories × 12 months is a trivial query, and computing it

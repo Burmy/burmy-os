@@ -1,7 +1,7 @@
 # Roadmap
 
-Living status tracker. Full milestone definitions — goals, dependencies, tests, Definition of Done —
-are in `IMPLEMENTATION_PLAN.md` §39.
+Living status tracker and the project's sole history record. Milestones 1–9 are complete; each
+section below documents its own goals, deviations, and Definition of Done as it shipped.
 
 **Working agreement:** one milestone at a time. Stop and report at the end of each before starting the
 next. Never mark anything complete without having run the verification and seen the output.
@@ -315,7 +315,7 @@ the project has, and it exists only because a real file was read.
 The checking leg carries `Confirmation# <token>`; the card leg carries
 `CONF#<token>` — the same token, opposite signs, a day apart, on two independent
 payments. That is far stronger evidence than the keyword-plus-amount-plus-date
-signal plan §24 designed, and it only appeared in real data.
+signal originally planned, and it only appeared in real data.
 
 M4 **preserves** it and stops there; extracting and matching is M6's job, because
 doing it in the parser would put classification inside a stage that must not
@@ -661,7 +661,7 @@ run.
 
 Not a numbered milestone: a deliberate product/security-model change the owner
 requested directly, between accepting M8 and starting M9, after using the app
-with real statements for the first time (see "M8 usage checkpoint" below).
+with real statements for the first time.
 
 **What changed:** Burmy's M2-era two-factor design (Cloudflare Access + an
 in-app Better Auth passkey) was replaced with Cloudflare Access alone —
@@ -1025,6 +1025,23 @@ every script, if self-hosting is ever revisited. The repository's current,
 actual shape is: local dev = Next.js + local Postgres (optionally via
 `compose.dev.yml`); production = Cloudflare Access → Netlify → Supabase;
 backup = a manual logical Postgres dump. No shadow production architecture.
+
+### Aggressive minimalism pass (2026-08-19): the Dockerfile is gone too
+
+**Superseded, same subsection, one day later.** The three-stage `Dockerfile` described just above
+turned out to be redundant, not minimal: its one remaining job — running `scripts/migrate.mjs` inside
+a built image — was already exactly what `node scripts/migrate.mjs` does directly on the host, which
+CI and the manual production migration step (`docs/DEPLOYMENT.md`) had been doing all along with zero
+Docker involved. Building an image to do the same thing a second, more complicated way had no current
+value, so the `Dockerfile` and `compose.dev.yml`'s `migrate` service were deleted; `pnpm db:migrate`
+(now `node --env-file-if-exists=.env scripts/migrate.mjs`, so it picks up local `.env` automatically)
+replaced `docker compose run --rm --build migrate` in every doc and script that mentioned it.
+`compose.dev.yml` now runs exactly one service — `postgres`, for local dev isolation — which is the
+only genuine reason Docker is still involved in local development at all (integration tests don't use
+it either; they provision their own throwaway Postgres via Testcontainers). `next.config.ts`'s
+`output: 'standalone'` and its `@swc/helpers` tracing workaround, both added solely to fix a crash in
+the now-long-gone Docker `runner` image, were removed along with `@swc/helpers` as a direct dependency.
+`.dockerignore` had nothing left to ignore for and was deleted too.
 
 ## Carried forward
 

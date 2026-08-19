@@ -1,4 +1,4 @@
-import { type Cents, negate, parseMoney } from '@/server/finance/money';
+import { negate, parseMoney } from '@/server/finance/money';
 import {
   ParseError,
   type NormalizedCandidate,
@@ -13,7 +13,7 @@ import {
  * MEANS: no category, no type, no duplicate judgement, no database.
  */
 
-/** Reject a date more than a year ahead, per plan §21's sanity rules. */
+/** Reject a date more than a year ahead. */
 const MAX_FUTURE_DAYS = 365;
 
 /** Reject a date more than thirty years back. */
@@ -36,7 +36,7 @@ const MAX_PAST_YEARS = 30;
  * previous or next month. See the note in schema.ts.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-export function normalizeDate(raw: string, lineNumber: number, now: Date = new Date()): string {
+function normalizeDate(raw: string, lineNumber: number, now: Date = new Date()): string {
   const value = raw.trim();
 
   const slashed = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
@@ -195,5 +195,3 @@ export function sourceAmounts(result: ParseResult, amountField: string): number[
     (row) => parseMoney(row.fields[amountField] ?? '') as unknown as number,
   );
 }
-
-export type { Cents };

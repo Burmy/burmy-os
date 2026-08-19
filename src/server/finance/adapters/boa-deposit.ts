@@ -45,9 +45,6 @@ import {
 
 export const BOA_DEPOSIT_ADAPTER = 'boa-deposit' as const;
 
-/** BoA signs a debit negative. Burmy's convention is the inverse. */
-export const BOA_DEPOSIT_SIGN = 'negative-is-outflow' as const;
-
 const SUMMARY_LABELS = {
   beginning: /^beginning balance as of/i,
   ending: /^ending balance as of/i,
