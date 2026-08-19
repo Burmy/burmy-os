@@ -1,7 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
-import { Button } from '@/components/ui/button';
 import { FinanceDashboard } from '@/features/finance/dashboard/finance-dashboard';
 import { ImportSheet } from '@/features/finance/import/import-sheet';
 import { MonthlyGridTable } from '@/features/finance/monthly/monthly-grid-table';
@@ -144,7 +143,6 @@ export default async function MonthlyPage({
   }));
 
   const grid = buildMonthlyGrid(aggregateRows, categoryMeta);
-  const liveCategories = categories.filter((category) => category.archivedAt === null);
 
   // ── Dashboard numbers — pure functions from `server/finance/dashboard.ts` only, same DB-free boundary `buildMonthlyGrid` already crosses. ──
 
@@ -219,14 +217,10 @@ export default async function MonthlyPage({
   // 6 series max: 5 real categories + "Other" — matches the 6-color chart palette exactly.
   const yearlyBreakdown = buildYearlyBreakdown(yearCategoryTotals, year, categoryMetaForBreakdown, 6);
 
-  const actions = (
-    <>
-      <Button variant="outline" size="sm" asChild>
-        <Link href="/finance/transactions">Transactions</Link>
-      </Button>
-      <ImportSheet accounts={accounts} categories={liveCategories} inProgressImports={inProgressImports} />
-    </>
-  );
+  // The "Transactions" toolbar button was removed once Transactions became
+  // a SubNav tab (see the (tabs) route group's layout) — a second way to
+  // reach the same page would be redundant, not extra convenience.
+  const actions = <ImportSheet accounts={accounts} inProgressImports={inProgressImports} />;
 
   return (
     <div>

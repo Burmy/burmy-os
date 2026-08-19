@@ -198,7 +198,10 @@ test.describe('transactions ledger', () => {
     await expect(page.getByText("LARSEN'S #0366 PURCHASE")).toBeVisible();
     await expect(page.getByText('VIA 313 PURCHASE')).not.toBeVisible();
 
-    await page.getByRole('link', { name: '← Finance' }).click();
+    // The page's own back-link was removed once Transactions became a
+    // SubNav tab (see the (tabs) route group's layout) — "Monthly" is now
+    // the way back.
+    await page.getByRole('link', { name: 'Monthly' }).click();
     await expect(page).toHaveURL(/\/finance\/monthly$/);
   });
 

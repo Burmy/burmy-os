@@ -164,8 +164,9 @@ test.describe('review queue', () => {
     });
 
     // The real journey: Finance -> the exception banner -> Review -> fix ->
-    // back to Finance. There is no persistent Review tab to reach this from
-    // anymore, only the banner, so this is what actually proves it works.
+    // back to Finance via the SubNav's Monthly tab (Review is also always
+    // reachable as its own tab now, but the banner is the more direct path
+    // when there's actually something to review).
     await page.goto('/finance/monthly');
     const banner = page.getByRole('status').filter({ hasText: 'need attention' });
     await expect(banner).toContainText('1 transaction');
@@ -182,7 +183,7 @@ test.describe('review queue', () => {
 
     // And the banner is gone once back on Finance — the exception queue
     // really is empty now, not just the page we happened to be looking at.
-    await page.getByRole('link', { name: '← Finance' }).click();
+    await page.getByRole('link', { name: 'Monthly' }).click();
     await expect(page).toHaveURL(/\/finance\/monthly$/);
     await expect(page.getByRole('status').filter({ hasText: 'need attention' })).toHaveCount(0);
 

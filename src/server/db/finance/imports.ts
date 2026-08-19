@@ -14,6 +14,7 @@
 import { and, asc, desc, eq, gte, ilike, inArray, lte, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
+import type { AccountType } from '@/server/db/finance/accounts';
 import {
   financeAccounts,
   financeImportFiles,
@@ -24,10 +25,13 @@ import {
 } from '@/server/db/schema';
 import {
   COUNTERPART_WINDOW_DAYS,
+  type QualifiedCounterpart,
   dateWindow,
   extractConfirmationToken,
   findQualifyingCounterpart,
+  isKnownCardPaymentReceived,
 } from '@/server/finance/classify/counterpart';
+import { type ManualTransactionType, reviewStatusForCorrection } from '@/server/finance/classify/manual';
 import {
   defaultTransactionType,
   planStagedDecisions,
@@ -127,6 +131,58 @@ export async function getCommittedCounts(
   return new Map(rows.map((row) => [row.dedupeKey, { count: row.count, sampleTransactionId: row.sampleId }]));
 }
 
+/**
+ * Staging-time PREVIEW only — `commitImport()` re-derives this for real
+ * inside its own transaction and is authoritative. A second copy of the
+ * candidate query (against `getDb()`, not a tx) rather than a shared helper —
+ * see `getCommittedCounts()`'s comment above for why tx/non-tx query code
+ * stays duplicated in this file. If the WHERE clause here changes, change it
+ * in `commitImport()`'s matching loop too.
+ *
+ * Falls back to `isKnownCardPaymentReceived()` when no committed counterpart
+ * exists yet (e.g. the card statement is being imported before its matching
+ * checking statement) — same fallback `commitImport()` itself applies at
+ * commit, so the preview and the eventual real classification agree.
+ */
+export async function previewCounterpartType(
+  ownerId: string,
+  accountId: string,
+  accountType: AccountType,
+  description: string,
+  transactionDate: string,
+  amountCents: number,
+): Promise<'transfer' | 'credit_card_payment' | null> {
+  const token = extractConfirmationToken(description);
+  if (!token) return null;
+
+  const { start, end } = dateWindow(transactionDate, COUNTERPART_WINDOW_DAYS);
+
+  const candidates = await getDb()
+    .select({
+      id: financeTransactions.id,
+      amountCents: financeTransactions.amountCents,
+      description: financeTransactions.originalDescription,
+      accountType: financeAccounts.type,
+    })
+    .from(financeTransactions)
+    .innerJoin(financeAccounts, eq(financeAccounts.id, financeTransactions.accountId))
+    .where(
+      and(
+        eq(financeTransactions.ownerId, ownerId),
+        eq(financeTransactions.typeSource, 'default'),
+        ne(financeTransactions.accountId, accountId),
+        gte(financeTransactions.transactionDate, start),
+        lte(financeTransactions.transactionDate, end),
+        ilike(financeTransactions.originalDescription, `%${token}%`),
+      ),
+    );
+
+  const match = findQualifyingCounterpart(token, amountCents, accountType, candidates);
+  if (match) return match.transactionType;
+
+  return isKnownCardPaymentReceived(accountType, description, amountCents) ? 'credit_card_payment' : null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Staging
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,6 +207,8 @@ export interface StageRowInput {
   /** M6: from merchant memory at staging, or the owner's own pick via `updateRowDecision`. */
   readonly suggestedCategoryId: string | null;
   readonly categorizationSource: 'manual' | 'merchant_memory' | null;
+  /** `previewCounterpartType()`'s staging-time guess, or the owner's own override — see `typeOverridden`. */
+  readonly suggestedType: 'transfer' | 'credit_card_payment' | null;
 }
 
 export interface StageImportInput {
@@ -233,6 +291,7 @@ export async function createStagedImport(
           parseError: row.parseError,
           suggestedCategoryId: row.suggestedCategoryId,
           categorizationSource: row.categorizationSource,
+          suggestedType: row.suggestedType,
         })),
       );
     }
@@ -317,6 +376,11 @@ export interface FinanceImportRowView {
   readonly decisionOverridden: boolean;
   readonly duplicateOfTransactionId: string | null;
   readonly categoryId: string | null;
+  /** Distinguishes an owner's own pick from a merchant-memory suggestion left untouched — see `reviewStatusFor`. */
+  readonly categorizationSource: 'manual' | 'merchant_memory' | null;
+  readonly suggestedType: 'transfer' | 'credit_card_payment' | null;
+  readonly typeOverridden: boolean;
+  readonly reviewNote: string | null;
   readonly parseError: string | null;
 }
 
@@ -343,13 +407,24 @@ export async function getImportRows(
       decisionOverridden: financeImportRows.decisionOverridden,
       duplicateOfTransactionId: financeImportRows.duplicateOfTransactionId,
       categoryId: financeImportRows.suggestedCategoryId,
+      categorizationSource: financeImportRows.categorizationSource,
+      suggestedType: financeImportRows.suggestedType,
+      typeOverridden: financeImportRows.typeOverridden,
+      reviewNote: financeImportRows.reviewNote,
       parseError: financeImportRows.parseError,
     })
     .from(financeImportRows)
     .where(eq(financeImportRows.importId, importId))
     .orderBy(asc(financeImportRows.rowNumber));
 
-  return rows;
+  // Narrowed by construction: staging.ts/updateRowDecision never write
+  // anything else into either column — same reasoning as commitImport()'s
+  // own cast below.
+  return rows.map((row) => ({
+    ...row,
+    categorizationSource: row.categorizationSource as 'manual' | 'merchant_memory' | null,
+    suggestedType: row.suggestedType as 'transfer' | 'credit_card_payment' | null,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,12 +434,26 @@ export async function getImportRows(
 export interface RowDecisionUpdate {
   readonly decision?: 'include' | 'exclude';
   readonly categoryId?: string | null;
+  /** Display-name correction only — never touches `dedupeKey` (derived from `description`) or `merchantKey`. */
+  readonly normalizedMerchant?: string;
+  readonly reviewNote?: string | null;
+  /**
+   * The owner's own type pick, made during import review before commit — sets
+   * `typeOverridden`, exactly mirroring `decision`/`decisionOverridden`. A
+   * `null` value here is not meaningful (there is no "un-pick" for a type the
+   * way there is for a note) so this is never sent as `null`; the type only
+   * ever narrows further, same as `decision`.
+   */
+  readonly typeOverride?: ManualTransactionType;
 }
 
 /**
  * Setting `decision` here is what marks the row `decisionOverridden` — the flag
  * `commitImport()` reads to decide whether a fresh Tier 2 re-check applies to
- * it. Setting only `categoryId` does not touch that flag.
+ * it. Setting only `categoryId` does not touch that flag. Setting
+ * `typeOverride` marks `typeOverridden` the same way, for the same reason:
+ * `commitImport()` must never let its own auto-classification silently
+ * replace an owner's explicit pre-commit pick.
  */
 export async function updateRowDecision(
   ownerId: string,
@@ -383,6 +472,18 @@ export async function updateRowDecision(
   if ('categoryId' in update) {
     setValues.suggestedCategoryId = update.categoryId ?? null;
     setValues.categorizationSource = update.categoryId ? 'manual' : null;
+  }
+  if (update.normalizedMerchant !== undefined) {
+    const trimmed = update.normalizedMerchant.trim();
+    setValues.normalizedMerchant = trimmed === '' ? null : trimmed;
+  }
+  if ('reviewNote' in update) {
+    const trimmed = update.reviewNote?.trim() ?? null;
+    setValues.reviewNote = trimmed === '' ? null : trimmed;
+  }
+  if (update.typeOverride !== undefined) {
+    setValues.suggestedType = update.typeOverride;
+    setValues.typeOverridden = true;
   }
 
   const conditions = [eq(financeImportRows.id, rowId), eq(financeImportRows.importId, importId)];
@@ -419,6 +520,71 @@ export interface CommitResult {
    * counterpart match, or both. M6's whole point, made visible.
    */
   readonly autoClassifiedCount: number;
+}
+
+/**
+ * Type/review-status precedence for one row about to be inserted, in order:
+ * an owner's own pre-commit pick (`typeOverridden`) is authoritative and
+ * skips everything else; then a real cross-account counterpart match (found
+ * by the loop above); then the narrow local BoA card-payment pattern (see
+ * `isKnownCardPaymentReceived`); then the plain sign-based default. Only the
+ * override and match paths get a `typeSource` that blocks future automation
+ * — the pattern fallback deliberately stays `'default'` so a real
+ * counterpart, once it exists, can still link this row for real later (it
+ * looks identical to any other unmatched `type_source = 'default'` row to
+ * that query).
+ */
+function classifyRow(
+  row: typeof financeImportRows.$inferSelect,
+  // The wider, Drizzle-inferred enum (matches `financeAccounts.type` as
+  // actually selected in `commitImport()`) — not the narrower `AccountType`
+  // from `db/finance/accounts`, which excludes `cash` and is only ever
+  // reachable via manual entry, never an import.
+  accountType: 'checking' | 'savings' | 'credit_card' | 'brokerage' | 'cash',
+  match: QualifiedCounterpart | undefined,
+  categoryId: string | null,
+  categorizationSource: 'manual' | 'merchant_memory' | null,
+): {
+  readonly transactionType: ManualTransactionType;
+  readonly typeSource: 'default' | 'counterpart_match' | 'manual_confirmation';
+  readonly reviewStatus: 'confirmed' | 'auto' | 'needs_review';
+  /** True only via `isKnownCardPaymentReceived` — required zero manual input, same as a real match. */
+  readonly viaLocalFallback: boolean;
+} {
+  if (row.typeOverridden) {
+    const transactionType = row.suggestedType as ManualTransactionType;
+    return {
+      transactionType,
+      typeSource: 'manual_confirmation',
+      reviewStatus: reviewStatusForCorrection(categoryId, transactionType),
+      viaLocalFallback: false,
+    };
+  }
+
+  if (match) {
+    return {
+      transactionType: match.transactionType,
+      typeSource: 'counterpart_match',
+      reviewStatus: 'auto',
+      viaLocalFallback: false,
+    };
+  }
+
+  if (isKnownCardPaymentReceived(accountType, row.description!, row.amountCents!)) {
+    return {
+      transactionType: 'credit_card_payment',
+      typeSource: 'default',
+      reviewStatus: 'auto',
+      viaLocalFallback: true,
+    };
+  }
+
+  return {
+    transactionType: defaultTransactionType(fromDb(row.amountCents)),
+    typeSource: 'default',
+    reviewStatus: reviewStatusFor(categoryId, categorizationSource),
+    viaLocalFallback: false,
+  };
 }
 
 /**
@@ -557,6 +723,12 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
     >();
 
     for (const row of toInsert) {
+      // An owner's own pre-commit type pick is authoritative — never a
+      // candidate for auto-matching, and therefore never linked as anyone
+      // else's counterpart either. Same reasoning as the `type_source =
+      // 'default'` SQL filter below, one step earlier.
+      if (row.typeOverridden) continue;
+
       const token = extractConfirmationToken(row.description!);
       if (!token) continue;
 
@@ -596,6 +768,7 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
     }
 
     let autoClassifiedCount = 0;
+    const fallbackClassifiedIds = new Set<string>();
 
     if (toInsert.length > 0) {
       const inserted = await tx
@@ -607,6 +780,8 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
             // Narrowed by construction: `staging.ts`/`updateRowDecision` never
             // write anything else into this column.
             const categorizationSource = row.categorizationSource as 'manual' | 'merchant_memory' | null;
+            const classified = classifyRow(row, accountType, match, categoryId, categorizationSource);
+            if (classified.viaLocalFallback) fallbackClassifiedIds.add(row.id);
 
             return {
               ownerId,
@@ -617,18 +792,16 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
               originalDescription: row.description!,
               normalizedMerchant: row.normalizedMerchant,
               amountCents: row.amountCents!,
-              transactionType: match ? match.transactionType : defaultTransactionType(fromDb(row.amountCents)),
+              transactionType: classified.transactionType,
               categoryId,
               sourceTransactionId: row.sourceTransactionId,
-              // A counterpart match is its own strong evidence — 'auto'
-              // regardless of category, since an excluded transfer/card
-              // payment genuinely has no spending category to pick.
-              reviewStatus: match ? ('auto' as const) : reviewStatusFor(categoryId, categorizationSource),
+              reviewStatus: classified.reviewStatus,
               categorizationSource,
-              typeSource: match ? ('counterpart_match' as const) : ('default' as const),
+              typeSource: classified.typeSource,
               counterpartTransactionId: match?.id ?? null,
               dedupeKey: row.dedupeKey!,
               dedupeKeyVersion: row.dedupeKeyVersion,
+              notes: row.reviewNote,
             };
           }),
         )
@@ -693,7 +866,10 @@ export async function commitImport(ownerId: string, importId: string): Promise<C
       }
 
       autoClassifiedCount = toInsert.filter(
-        (row) => matchByRowId.has(row.id) || row.categorizationSource === 'merchant_memory',
+        (row) =>
+          matchByRowId.has(row.id) ||
+          fallbackClassifiedIds.has(row.id) ||
+          row.categorizationSource === 'merchant_memory',
       ).length;
     }
 

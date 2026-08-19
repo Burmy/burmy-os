@@ -1,0 +1,1 @@
+ALTER TABLE "finance_import_rows" ADD COLUMN "type_overridden" boolean DEFAULT false NOT NULL;

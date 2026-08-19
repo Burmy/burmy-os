@@ -1,3 +1,5 @@
+import { BOA_CARD_PAYMENT_RECEIVED_PATTERN } from '@/server/finance/adapters/boa-card';
+
 /**
  * The full account-type enum, including `cash` — unlike
  * `import/compatibility.ts`'s `AccountType`, which deliberately excludes it
@@ -100,4 +102,29 @@ export function findQualifyingCounterpart(
   const isCardPayment = thisAccountType === 'credit_card' || match.accountType === 'credit_card';
 
   return { id: match.id, transactionType: isCardPayment ? 'credit_card_payment' : 'transfer' };
+}
+
+/**
+ * A narrower LOCAL fallback for when `findQualifyingCounterpart` cannot yet
+ * resolve anything — e.g. the card statement was imported before its
+ * matching checking statement exists at all, so there is genuinely no
+ * committed counterpart to cross-reference yet. Unlike that function, this
+ * never cross-references another transaction: it recognizes BoA's own exact
+ * "payment received" description format on a credit-card account, requiring
+ * the inflow direction to match too. Still deterministic — an exact anchored
+ * pattern against text the bank itself generates, not a merchant name — but
+ * a strictly weaker guarantee than a real cross-account match, so callers
+ * must only use this once `findQualifyingCounterpart` has already returned
+ * null, never in place of it.
+ */
+export function isKnownCardPaymentReceived(
+  accountType: AccountType,
+  description: string,
+  amountCents: number, // Burmy's own convention: positive = outflow
+): boolean {
+  return (
+    accountType === 'credit_card' &&
+    amountCents < 0 &&
+    BOA_CARD_PAYMENT_RECEIVED_PATTERN.test(description.trim())
+  );
 }

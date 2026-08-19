@@ -19,10 +19,13 @@ import {
   getCommittedCounts,
   getImportForOwner,
   getImportRows,
+  previewCounterpartType,
   updateRowDecision,
   MAX_UPLOAD_BYTES,
 } from '@/server/db/finance/imports';
 import { getMerchantMemoryForKeys } from '@/server/db/finance/merchant-memory';
+import { MANUAL_TRANSACTION_TYPES } from '@/server/finance/classify/manual';
+import { extractConfirmationToken } from '@/server/finance/classify/counterpart';
 import { DEDUPE_KEY_VERSION, dedupeKey } from '@/server/finance/dedupe';
 import {
   AccountFormatMismatchError,
@@ -212,12 +215,14 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
       dedupeKeyVersion: DEDUPE_KEY_VERSION,
       // Placeholders — decision/duplicateOfTransactionId replaced once Tier 2
       // reconciliation runs; suggestedCategoryId/categorizationSource once
-      // merchant memory is looked up. Both below.
+      // merchant memory is looked up; suggestedType once the counterpart
+      // preview runs. All below.
       decision: 'exclude',
       duplicateOfTransactionId: null,
       parseError: null,
       suggestedCategoryId: null,
       categorizationSource: null,
+      suggestedType: null,
     };
   });
 
@@ -239,6 +244,7 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
     parseError: failure.message,
     suggestedCategoryId: null,
     categorizationSource: null,
+    suggestedType: null,
   }));
 
   const keys = candidateRows
@@ -274,12 +280,32 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
     };
   });
 
+  // Staging-time PREVIEW only (item 2) — `commitImport()` re-derives this for
+  // real and is authoritative. Only rows carrying BoA's confirmation token
+  // are worth the extra query; that's the small minority (transfers/card
+  // payments) on a typical monthly statement.
+  const typedRows: StageRowInput[] = await Promise.all(
+    decidedRows.map(async (row) => {
+      if (row.description === null || !extractConfirmationToken(row.description)) return row;
+
+      const suggestedType = await previewCounterpartType(
+        owner.userId,
+        accountId,
+        account.type,
+        row.description,
+        row.transactionDate!,
+        row.amountCents!,
+      );
+      return { ...row, suggestedType };
+    }),
+  );
+
   const { importId } = await createStagedImport(owner.userId, {
     accountId,
     originalFilename: file.name,
     fileSha256,
     adapter: format.adapter,
-    rows: [...decidedRows, ...failureRows].sort((a, b) => a.rowNumber - b.rowNumber),
+    rows: [...typedRows, ...failureRows].sort((a, b) => a.rowNumber - b.rowNumber),
   });
 
   revalidatePath('/finance/import');
@@ -343,6 +369,71 @@ export async function updateRowCategoryAction(
   try {
     await updateRowDecision(owner.userId, importIdSchema.parse(importId), rowIdSchema.parse(rowId), {
       categoryId: categoryId === null ? null : z.string().uuid().parse(categoryId),
+    });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath(`/finance/import/${importId}`);
+  return ok();
+}
+
+/** Display-name correction only — see `RowDecisionUpdate.normalizedMerchant`'s own doc comment. */
+export async function updateRowMerchantAction(
+  importId: string,
+  rowId: string,
+  normalizedMerchant: string,
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await updateRowDecision(owner.userId, importIdSchema.parse(importId), rowIdSchema.parse(rowId), {
+      normalizedMerchant: z.string().max(200).parse(normalizedMerchant),
+    });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath(`/finance/import/${importId}`);
+  return ok();
+}
+
+export async function updateRowNoteAction(
+  importId: string,
+  rowId: string,
+  note: string | null,
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await updateRowDecision(owner.userId, importIdSchema.parse(importId), rowIdSchema.parse(rowId), {
+      reviewNote: note === null ? null : z.string().max(2000).parse(note),
+    });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath(`/finance/import/${importId}`);
+  return ok();
+}
+
+/**
+ * The owner's own pre-commit type pick — same 7-value list
+ * (`MANUAL_TRANSACTION_TYPES`) the post-commit Review queue already
+ * validates against, including `transfer`/`credit_card_payment`: an explicit
+ * review confirmation is one of CLAUDE.md invariant 5's permitted paths, and
+ * `/finance/review` already allows exactly this after commit.
+ */
+export async function updateRowTypeAction(
+  importId: string,
+  rowId: string,
+  transactionType: string,
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await updateRowDecision(owner.userId, importIdSchema.parse(importId), rowIdSchema.parse(rowId), {
+      typeOverride: z.enum(MANUAL_TRANSACTION_TYPES).parse(transactionType),
     });
   } catch (error) {
     return toResult(error);

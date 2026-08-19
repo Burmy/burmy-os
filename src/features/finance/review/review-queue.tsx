@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 import { Money } from '@/components/finance/money';
+import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
 import type { FinanceAccount } from '@/server/db/finance/accounts';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type { ReviewFilters, ReviewTransaction } from '@/server/db/finance/transactions';
@@ -47,6 +48,13 @@ const STATUS_LABELS: Record<string, string> = {
   auto: 'Auto-classified',
   confirmed: 'Confirmed',
   all: 'All',
+};
+
+/** Same tone convention `transactions-table.tsx` already uses — one visual language for review_status everywhere it appears. */
+const STATUS_TONE: Record<string, StatusTone> = {
+  needs_review: 'attention',
+  auto: 'neutral',
+  confirmed: 'positive',
 };
 
 /**
@@ -357,7 +365,14 @@ export function ReviewQueue({
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{explainReview(row)}</TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <StatusBadge tone={STATUS_TONE[row.reviewStatus] ?? 'muted'}>
+                          {STATUS_LABELS[row.reviewStatus] ?? row.reviewStatus}
+                        </StatusBadge>
+                        <span className="text-muted-foreground text-sm">{explainReview(row)}</span>
+                      </div>
+                    </TableCell>
                   </TableRow>
                 );
               })}

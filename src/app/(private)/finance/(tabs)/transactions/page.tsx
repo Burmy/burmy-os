@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 
 import { TransactionsTable } from '@/features/finance/transactions/transactions-table';
 import { parseLedgerFilters } from '@/features/finance/transactions/filters';
@@ -87,10 +86,7 @@ export default async function TransactionsPage({
 
   return (
     <div>
-      <Link href="/finance/monthly" className="text-muted-foreground hover:text-foreground text-sm">
-        ← Finance
-      </Link>
-      <h1 className="mt-2 text-xl font-semibold">Transactions</h1>
+      <h1 className="text-xl font-semibold">Transactions</h1>
       <p className="text-muted-foreground mt-1 text-sm">
         The complete transaction ledger behind the monthly grid — search, filter, correct history, and
         export.

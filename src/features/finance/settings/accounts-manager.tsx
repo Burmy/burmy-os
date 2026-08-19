@@ -35,6 +35,7 @@ import type { AccountType, FinanceAccount } from '@/server/db/finance/accounts';
 import type { ActionResult } from './action-result';
 import {
   createAccountAction,
+  quickStartBoaAccountsAction,
   setAccountActiveAction,
   updateAccountAction,
 } from './account-actions';
@@ -69,6 +70,14 @@ export function AccountsManager({
     });
   }
 
+  function quickStart(): void {
+    startTransition(async () => {
+      const result = await quickStartBoaAccountsAction();
+      if (!result.ok) toast.error(result.error);
+      else toast.success('BoA Checking and BoA Credit Card added');
+    });
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -96,7 +105,12 @@ export function AccountsManager({
       </div>
 
       {accounts.length === 0 ? (
-        <p className="text-muted-foreground mt-8 text-sm">No accounts yet.</p>
+        <div className="mt-8 space-y-3">
+          <p className="text-muted-foreground text-sm">No accounts yet.</p>
+          <Button size="sm" variant="outline" disabled={pending} onClick={quickStart}>
+            Set up Bank of America (Checking + Credit Card)
+          </Button>
+        </div>
       ) : (
         <Table className="mt-6">
           <TableHeader>

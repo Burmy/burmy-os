@@ -33,7 +33,14 @@ const LINKS = [
  * "grouped links" prop: there are exactly two destinations by design (see
  * above), so a generic grouping API would serve a case that doesn't exist.
  */
-export function Nav({ onNavigate }: { readonly onNavigate?: () => void }): React.ReactElement {
+export function Nav({
+  onNavigate,
+  iconOnly,
+}: {
+  readonly onNavigate?: () => void;
+  /** Collapsed desktop sidebar only — `MobileNav`'s drawer never passes this. */
+  readonly iconOnly?: boolean;
+}): React.ReactElement {
   const pathname = usePathname();
 
   return (
@@ -50,15 +57,17 @@ export function Nav({ onNavigate }: { readonly onNavigate?: () => void }): React
               href={href}
               aria-current={active ? 'page' : undefined}
               {...(onNavigate ? { onClick: onNavigate } : {})}
+              {...(iconOnly ? { title: label } : {})}
               className={cn(
                 'flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
+                iconOnly ? 'justify-center px-2' : '',
                 active
                   ? 'bg-secondary text-secondary-foreground font-medium'
                   : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
               )}
             >
               <Icon className="size-4" />
-              {label}
+              {iconOnly ? null : label}
             </Link>
           </div>
         );
@@ -68,21 +77,23 @@ export function Nav({ onNavigate }: { readonly onNavigate?: () => void }): React
 }
 
 /**
- * Sub-navigation within Settings.
+ * Sub-navigation within a section — Settings' Accounts/Categories, and
+ * Finance's Monthly/Transactions/Review.
  *
  * Separate from the primary nav so the two do not have to share highlight logic;
- * `startsWith` on the primary would light up "Settings" for all of these anyway.
+ * `startsWith` on the primary would light up "Settings"/"Finance" for all of
+ * these anyway.
  */
 export function SubNav({
   links,
 }: {
-  readonly links: ReadonlyArray<{ href: string; label: string }>;
+  readonly links: ReadonlyArray<{ href: string; label: string; badge?: number }>;
 }): React.ReactElement {
   const pathname = usePathname();
 
   return (
     <nav aria-label="Section" className="flex gap-1 border-b">
-      {links.map(({ href, label }) => {
+      {links.map(({ href, label, badge }) => {
         const active = pathname === href;
         return (
           <Link
@@ -90,13 +101,18 @@ export function SubNav({
             href={href}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              '-mb-px border-b-2 px-3 py-2 text-sm transition-colors',
+              '-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors',
               active
                 ? 'border-foreground text-foreground font-medium'
                 : 'text-muted-foreground hover:text-foreground border-transparent',
             )}
           >
             {label}
+            {badge ? (
+              <span className="bg-secondary text-secondary-foreground tabular rounded-full px-1.5 py-0.5 text-xs">
+                {badge}
+              </span>
+            ) : null}
           </Link>
         );
       })}

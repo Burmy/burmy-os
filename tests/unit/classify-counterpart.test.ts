@@ -5,6 +5,7 @@ import {
   dateWindow,
   extractConfirmationToken,
   findQualifyingCounterpart,
+  isKnownCardPaymentReceived,
 } from '@/server/finance/classify/counterpart';
 
 describe('extractConfirmationToken', () => {
@@ -104,5 +105,58 @@ describe('findQualifyingCounterpart', () => {
   it('returns null when more than one candidate qualifies — ambiguous, so no classification at all', () => {
     const duplicate: CounterpartCandidate = { ...checkingLeg, id: 'card-txn-2' };
     expect(findQualifyingCounterpart('4p9dnrwz6', 8815, 'checking', [checkingLeg, duplicate])).toBeNull();
+  });
+});
+
+describe('isKnownCardPaymentReceived', () => {
+  it('recognizes the real, observed BoA card-payment shape on a credit-card account, inflow', () => {
+    expect(isKnownCardPaymentReceived('credit_card', 'PAYMENT FROM CHK 2288 CONF#4p9dnrwz6', -8815)).toBe(
+      true,
+    );
+    expect(isKnownCardPaymentReceived('credit_card', 'PAYMENT FROM CHK 2288 CONF#7k2mabx31', -54025)).toBe(
+      true,
+    );
+  });
+
+  it('is case-insensitive on the whole pattern, like extractConfirmationToken', () => {
+    expect(isKnownCardPaymentReceived('credit_card', 'payment from chk 2288 conf#4p9dnrwz6', -8815)).toBe(
+      true,
+    );
+  });
+
+  it('tolerates surrounding whitespace', () => {
+    expect(isKnownCardPaymentReceived('credit_card', '  PAYMENT FROM CHK 2288 CONF#4p9dnrwz6  ', -8815)).toBe(
+      true,
+    );
+  });
+
+  it('refuses a non-credit-card account, even with the exact description', () => {
+    expect(isKnownCardPaymentReceived('checking', 'PAYMENT FROM CHK 2288 CONF#4p9dnrwz6', -8815)).toBe(false);
+    expect(isKnownCardPaymentReceived('savings', 'PAYMENT FROM CHK 2288 CONF#4p9dnrwz6', -8815)).toBe(false);
+  });
+
+  it('refuses an outflow — a real payment received always reduces what is owed', () => {
+    expect(isKnownCardPaymentReceived('credit_card', 'PAYMENT FROM CHK 2288 CONF#4p9dnrwz6', 8815)).toBe(
+      false,
+    );
+  });
+
+  it('refuses a merchant name that merely contains "PAYMENT" — the anchor is exact, not a substring test', () => {
+    expect(isKnownCardPaymentReceived('credit_card', 'PAYMENT SOLUTIONS INC SPRINGFIELD TX', -1000)).toBe(
+      false,
+    );
+    expect(
+      isKnownCardPaymentReceived('credit_card', 'ONLINE PAYMENT FROM CHK 2288 CONF#4p9dnrwz6', -8815),
+    ).toBe(false); // extra leading text breaks the ^ anchor
+    expect(
+      isKnownCardPaymentReceived('credit_card', 'PAYMENT FROM CHK 2288 CONF#4p9dnrwz6 EXTRA', -8815),
+    ).toBe(false); // extra trailing text breaks the $ anchor
+  });
+
+  it('refuses a near-miss format — last-four must be exactly 4 digits, token must be alphanumeric', () => {
+    expect(isKnownCardPaymentReceived('credit_card', 'PAYMENT FROM CHK 228 CONF#4p9dnrwz6', -8815)).toBe(
+      false,
+    );
+    expect(isKnownCardPaymentReceived('credit_card', 'PAYMENT FROM CHK 2288 CONF#', -8815)).toBe(false);
   });
 });

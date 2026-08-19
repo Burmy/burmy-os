@@ -94,6 +94,7 @@ function makeCandidateRow(
     parseError: null,
     suggestedCategoryId: null,
     categorizationSource: null,
+    suggestedType: null,
     ...overrides,
   };
 }

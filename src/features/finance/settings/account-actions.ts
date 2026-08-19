@@ -118,3 +118,36 @@ export async function setAccountActiveAction(id: string, isActive: boolean): Pro
   revalidatePath('/settings/finance/accounts');
   return ok();
 }
+
+/**
+ * One-click setup for the common case: a BoA checking account plus a BoA
+ * credit card, the two the import pipeline actually supports adapters for.
+ * Idempotent — a `DuplicateNameError` on either means it already exists, not
+ * a failure, so it is swallowed rather than surfaced. Does not touch anything
+ * else, and does not replace the manual Add/Edit account flow.
+ */
+export async function quickStartBoaAccountsAction(): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  const targets: ReadonlyArray<{ name: string; type: (typeof ACCOUNT_TYPES)[number] }> = [
+    { name: 'BoA Checking', type: 'checking' },
+    { name: 'BoA Credit Card', type: 'credit_card' },
+  ];
+
+  for (const target of targets) {
+    try {
+      await createAccount(owner.userId, {
+        name: target.name,
+        type: target.type,
+        institution: 'Bank of America',
+        lastFour: null,
+      });
+    } catch (error) {
+      if (!(error instanceof DuplicateNameError)) return toResult(error);
+    }
+  }
+
+  revalidatePath('/settings/finance/accounts');
+  revalidatePath('/finance/monthly');
+  return ok();
+}

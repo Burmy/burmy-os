@@ -4,6 +4,7 @@ import { MobileNav } from '@/features/shell/mobile-nav';
 import { Sidebar } from '@/features/shell/sidebar';
 import { ThemeToggle } from '@/features/shell/theme-toggle';
 import { SecurityUnavailableError, UnauthorizedError, requireOwner } from '@/server/auth/owner';
+import { readSidebarCollapsed } from '@/server/security/sidebar';
 import { readTheme } from '@/server/security/theme';
 
 /**
@@ -43,11 +44,11 @@ export default async function PrivateLayout({
 
   if (destination) redirect(destination);
 
-  const theme = await readTheme();
+  const [theme, sidebarCollapsed] = await Promise.all([readTheme(), readSidebarCollapsed()]);
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar footer={<ThemeToggle current={theme} />} />
+      <Sidebar footer={<ThemeToggle current={theme} />} collapsed={sidebarCollapsed} />
 
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         <header className="border-b md:hidden">

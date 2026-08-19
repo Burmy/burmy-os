@@ -3,7 +3,9 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
+import { StatusBadge } from '@/components/finance/status-badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -27,33 +29,21 @@ import type {
   ImportStatus,
   PriorFileUpload,
 } from '@/server/db/finance/imports';
+import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS } from '@/server/finance/classify/manual';
 import { cents, format } from '@/server/finance/money';
 import {
   commitImportAction,
   discardImportAction,
   updateRowCategoryAction,
   updateRowDecisionAction,
+  updateRowMerchantAction,
+  updateRowNoteAction,
+  updateRowTypeAction,
 } from './actions';
+import { BUCKET_LABELS, BUCKET_TONE, type RowBucket, rowBucket, rowReason } from './row-status';
 
-type RowLabel = 'new' | 'duplicate' | 'failed';
-
-function rowLabel(row: FinanceImportRowView): RowLabel {
-  if (row.parseError !== null) return 'failed';
-  if (row.duplicateOfTransactionId !== null) return 'duplicate';
-  return 'new';
-}
-
-const STATUS_STYLES: Record<RowLabel, string> = {
-  new: 'text-green-700 dark:text-green-400',
-  duplicate: 'text-muted-foreground',
-  failed: 'text-destructive',
-};
-
-const STATUS_TEXT: Record<RowLabel, string> = {
-  new: 'New',
-  duplicate: 'Already imported',
-  failed: 'Needs attention',
-};
+/** The Type select's "no override" state — never sent to the server; picking a real type is. */
+const AUTO_TYPE = '__auto__';
 
 /**
  * Only a `committed` prior upload is ever called "already imported" — a
@@ -76,16 +66,17 @@ function priorUploadMessage(prior: PriorFileUpload): string {
 }
 
 /**
- * The M5 review screen: preview, categorize, include/exclude, commit.
+ * The M5 review screen: preview, edit, include/exclude, commit — the one
+ * canonical import review UI (see `import-sheet.tsx`'s own doc comment for
+ * why the Sheet no longer renders this inline).
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * Each row shows the normalized merchant AND the raw statement description
- * beneath it — a categorization decision needs the real text, and the merchant
- * name has already been stripped of location and reference noise.
- *
  * `willImport` recomputes from local state on every render rather than being
- * server-supplied, so toggling a row's checkbox updates the commit button's
- * count immediately.
+ * server-supplied, so any edit updates the commit button's count immediately.
+ *
+ * Merchant and note edits save on blur, not per keystroke — both are free
+ * text, unlike the discrete category/type/decision choices, which save
+ * immediately on selection.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function ImportReviewTable({
@@ -103,6 +94,7 @@ export function ImportReviewTable({
 }): React.ReactElement {
   const router = useRouter();
   const [rows, setRows] = useState(initialRows);
+  const [filter, setFilter] = useState<'all' | RowBucket>('all');
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<CommitResult | null>(null);
 
@@ -155,26 +147,73 @@ export function ImportReviewTable({
     return <p className="text-muted-foreground mt-8 text-sm">This import was discarded.</p>;
   }
 
+  function patchRow(rowId: string, patch: Partial<FinanceImportRowView>): void {
+    setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  }
+
   function setDecision(rowId: string, decision: 'include' | 'exclude'): void {
-    setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, decision } : row)));
+    patchRow(rowId, { decision, decisionOverridden: true });
     startTransition(async () => {
       const outcome = await updateRowDecisionAction(importId, rowId, decision);
       if (!outcome.ok) {
         toast.error(outcome.error);
         const reverted = decision === 'include' ? 'exclude' : 'include';
-        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, decision: reverted } : row)));
+        patchRow(rowId, { decision: reverted });
       }
     });
   }
 
   function setCategory(rowId: string, categoryId: string | null): void {
     const previous = rows.find((row) => row.id === rowId)?.categoryId ?? null;
-    setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, categoryId } : row)));
+    patchRow(rowId, {
+      categoryId,
+      categorizationSource: categoryId === null ? null : 'manual',
+    });
     startTransition(async () => {
       const outcome = await updateRowCategoryAction(importId, rowId, categoryId);
       if (!outcome.ok) {
         toast.error(outcome.error);
-        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, categoryId: previous } : row)));
+        patchRow(rowId, { categoryId: previous });
+      }
+    });
+  }
+
+  function setType(rowId: string, value: string): void {
+    if (value === AUTO_TYPE) return; // display-only sentinel — never sent, see AUTO_TYPE's own comment.
+    const type = value as (typeof MANUAL_TRANSACTION_TYPES)[number];
+    const previous = rows.find((row) => row.id === rowId);
+    patchRow(rowId, { suggestedType: type as 'transfer' | 'credit_card_payment' | null, typeOverridden: true });
+    startTransition(async () => {
+      const outcome = await updateRowTypeAction(importId, rowId, type);
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        if (previous) patchRow(rowId, { suggestedType: previous.suggestedType, typeOverridden: previous.typeOverridden });
+      }
+    });
+  }
+
+  function saveMerchant(rowId: string, value: string): void {
+    const previous = rows.find((row) => row.id === rowId)?.normalizedMerchant ?? null;
+    const trimmed = value.trim();
+    if (trimmed === (previous ?? '')) return; // nothing actually changed — don't fire a needless save.
+    startTransition(async () => {
+      const outcome = await updateRowMerchantAction(importId, rowId, value);
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        patchRow(rowId, { normalizedMerchant: previous });
+      }
+    });
+  }
+
+  function saveNote(rowId: string, value: string): void {
+    const previous = rows.find((row) => row.id === rowId)?.reviewNote ?? null;
+    const trimmed = value.trim();
+    if (trimmed === (previous ?? '')) return;
+    startTransition(async () => {
+      const outcome = await updateRowNoteAction(importId, rowId, trimmed === '' ? null : trimmed);
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        patchRow(rowId, { reviewNote: previous });
       }
     });
   }
@@ -202,25 +241,36 @@ export function ImportReviewTable({
     });
   }
 
-  const counts = {
-    new: rows.filter((row) => rowLabel(row) === 'new').length,
-    duplicate: rows.filter((row) => rowLabel(row) === 'duplicate').length,
-    failed: rows.filter((row) => rowLabel(row) === 'failed').length,
-  };
+  const bucketed = rows.map((row) => ({ row, bucket: rowBucket(row) }));
+  const counts: Record<RowBucket, number> = { ready: 0, attention: 0, duplicate: 0, excluded: 0 };
+  for (const { bucket } of bucketed) counts[bucket] += 1;
+
+  const visible = filter === 'all' ? bucketed : bucketed.filter((entry) => entry.bucket === filter);
   const willImport = rows.filter((row) => row.decision === 'include' && row.parseError === null).length;
 
   return (
-    <div className="mt-8 space-y-4">
+    <div className="space-y-4">
       {priorUpload ? (
         <div role="status" className="bg-muted/50 rounded-md border p-3 text-sm">
           {priorUploadMessage(priorUpload)}
         </div>
       ) : null}
 
-      <p className="text-muted-foreground text-sm">
-        {counts.new} new · {counts.duplicate} already imported · {counts.failed} need attention ·{' '}
-        {willImport} will import
-      </p>
+      <div className="bg-background sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b py-3">
+        <FilterTab label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
+        {(Object.keys(BUCKET_LABELS) as RowBucket[]).map((bucket) => (
+          <FilterTab
+            key={bucket}
+            label={BUCKET_LABELS[bucket]}
+            count={counts[bucket]}
+            active={filter === bucket}
+            onClick={() => setFilter(bucket)}
+          />
+        ))}
+        <span className="text-muted-foreground ml-auto text-sm">
+          {filter === 'all' ? 'Showing all rows' : `Showing ${BUCKET_LABELS[filter]} only`}
+        </span>
+      </div>
 
       <Table>
         <TableHeader>
@@ -231,13 +281,18 @@ export function ImportReviewTable({
             <TableHead className="text-right">Amount</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Category</TableHead>
+            <TableHead>Type</TableHead>
+            <TableHead>Note</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((row) => {
-            const label = rowLabel(row);
-            const failed = label === 'failed';
+          {visible.map(({ row, bucket }) => {
+            const failed = row.parseError !== null;
             const rowName = row.normalizedMerchant ?? row.description ?? `row ${row.rowNumber}`;
+            // Pre-fills with item 2/2a's preview when present, editable either
+            // way — picking any value here (even re-confirming the same one)
+            // sets typeOverridden via setType().
+            const typeValue = row.suggestedType ?? AUTO_TYPE;
 
             return (
               <TableRow key={row.id}>
@@ -253,21 +308,31 @@ export function ImportReviewTable({
                 <TableCell className="text-muted-foreground whitespace-nowrap">
                   {row.transactionDate ?? '—'}
                 </TableCell>
-                <TableCell>
+                <TableCell className="w-64">
                   {failed ? (
                     <span className="text-destructive">{row.parseError}</span>
                   ) : (
-                    <div>
-                      <div className="font-medium">{row.normalizedMerchant}</div>
+                    <div className="max-w-64 space-y-1">
+                      <Input
+                        defaultValue={row.normalizedMerchant ?? ''}
+                        aria-label={`Merchant for ${rowName}`}
+                        className="h-8"
+                        disabled={pending}
+                        onBlur={(event) => saveMerchant(row.id, event.target.value)}
+                      />
                       {/* The raw statement text, so a categorization decision can be made from it directly. */}
-                      <div className="text-muted-foreground text-xs">{row.description}</div>
+                      <div className="text-muted-foreground truncate text-xs" title={row.description ?? undefined}>
+                        {row.description}
+                      </div>
                     </div>
                   )}
                 </TableCell>
                 <TableCell className="tabular text-right whitespace-nowrap">
                   {row.amountCents === null ? '—' : format(cents(row.amountCents), { signed: true })}
                 </TableCell>
-                <TableCell className={STATUS_STYLES[label]}>{STATUS_TEXT[label]}</TableCell>
+                <TableCell>
+                  <StatusBadge tone={BUCKET_TONE[bucket]}>{rowReason(row, bucket)}</StatusBadge>
+                </TableCell>
                 <TableCell>
                   <Select
                     value={row.categoryId ?? 'none'}
@@ -287,13 +352,38 @@ export function ImportReviewTable({
                     </SelectContent>
                   </Select>
                 </TableCell>
+                <TableCell>
+                  <Select value={typeValue} disabled={failed} onValueChange={(value) => setType(row.id, value)}>
+                    <SelectTrigger aria-label={`Type for ${rowName}`} className="h-8 w-44">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={AUTO_TYPE}>Automatic</SelectItem>
+                      {MANUAL_TRANSACTION_TYPES.map((type) => (
+                        <SelectItem key={type} value={type}>
+                          {TRANSACTION_TYPE_LABELS[type]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="min-w-40">
+                  <Input
+                    defaultValue={row.reviewNote ?? ''}
+                    aria-label={`Note for ${rowName}`}
+                    placeholder="Optional"
+                    className="h-8"
+                    disabled={failed || pending}
+                    onBlur={(event) => saveNote(row.id, event.target.value)}
+                  />
+                </TableCell>
               </TableRow>
             );
           })}
         </TableBody>
       </Table>
 
-      <div className="flex gap-2">
+      <div className="bg-background sticky bottom-0 flex gap-2 border-t py-3">
         <Button onClick={commit} disabled={pending || willImport === 0}>
           {pending ? 'Working…' : `Import ${willImport} transaction${willImport === 1 ? '' : 's'}`}
         </Button>
@@ -302,5 +392,30 @@ export function ImportReviewTable({
         </Button>
       </div>
     </div>
+  );
+}
+
+function FilterTab({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  readonly label: string;
+  readonly count: number;
+  readonly active: boolean;
+  readonly onClick: () => void;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+        active ? 'bg-foreground text-background border-foreground' : 'hover:bg-muted/50'
+      }`}
+    >
+      {label} <span className="tabular">{count}</span>
+    </button>
   );
 }

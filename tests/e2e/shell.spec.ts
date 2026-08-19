@@ -120,6 +120,57 @@ test.describe('app shell', () => {
     expect(theme?.domain).toBe('localhost');
   });
 
+  test('navigates between Monthly, Transactions, and Review via the Finance SubNav', async ({ page }) => {
+    await signIntoApp(page);
+
+    // Fixes a real discoverability gap: before this pass, Review was reachable
+    // only via a conditional banner that disappeared once nothing needed
+    // review, and Transactions only via a toolbar button. Both are now
+    // always-visible tabs, exactly like Settings' own Accounts/Categories.
+    await expect(page.getByRole('navigation', { name: 'Section' })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Transactions', exact: true }).click();
+    await expect(page).toHaveURL(/\/finance\/transactions$/);
+    await expect(page.getByRole('heading', { name: 'Transactions' })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Review', exact: false }).click();
+    await expect(page).toHaveURL(/\/finance\/review$/);
+    await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
+
+    await page.getByRole('link', { name: 'Monthly' }).click();
+    await expect(page).toHaveURL(/\/finance\/monthly$/);
+  });
+
+  test('collapses and expands the sidebar, and the choice persists across reload', async ({ page }) => {
+    await signIntoApp(page);
+
+    const nav = page.getByRole('navigation', { name: 'Main' });
+    await expect(nav.getByRole('link', { name: 'Finance' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Collapse sidebar' }).click();
+    // The visible text label disappears in icon-rail mode, but the link
+    // itself is still there and still reachable by role — its accessible
+    // name now comes from the `title` attribute (an ARIA fallback) instead
+    // of visible text content, which is exactly what makes it screen-reader
+    // and hover-tooltip accessible despite having no rendered label.
+    await expect(nav.getByText('Finance', { exact: true })).toHaveCount(0);
+    await expect(nav.getByRole('link', { name: 'Finance' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
+
+    await page.reload();
+    // Server-rendered from the cookie, same no-flash reasoning as the theme
+    // cookie test above — present on the very first render, not applied after.
+    await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
+
+    const cookies = await page.context().cookies();
+    const collapsed = cookies.find((cookie) => cookie.name === 'burmy.sidebar-collapsed');
+    expect(collapsed?.value).toBe('1');
+
+    await page.getByRole('button', { name: 'Expand sidebar' }).click();
+    await expect(nav.getByRole('link', { name: 'Finance' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Collapse sidebar' })).toBeVisible();
+  });
+
   test('navigates via the mobile Sheet at a phone-width viewport', async ({ page }) => {
     // The desktop Sidebar is `hidden` below `md`; the hamburger + Sheet is
     // the only way in at this width, and it is a real assertion, not just a

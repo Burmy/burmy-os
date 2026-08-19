@@ -498,6 +498,15 @@ export const financeImportRows = pgTable(
      * already claimed the surplus. See docs/FINANCE.md.
      */
     decisionOverridden: boolean('decision_overridden').notNull().default(false),
+    /**
+     * Did the OWNER explicitly pick `suggestedType` (vs. it being M6-era
+     * staging preview — see `previewCounterpartType` in `db/finance/imports.ts`)?
+     * Mirrors `decisionOverridden` exactly. `commitImport()` skips an
+     * overridden row entirely when searching for a counterpart match — an
+     * explicit owner pick is authoritative and must never be silently
+     * replaced by automation running in the same commit.
+     */
+    typeOverridden: boolean('type_overridden').notNull().default(false),
     reviewNote: text('review_note'),
     /** Message only. NEVER the offending row content — that would leak into logs. */
     parseError: text('parse_error'),

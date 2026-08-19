@@ -88,6 +88,7 @@ function makeCandidateRow(rowNumber: number, overrides: Partial<StageRowInput> =
     parseError: null,
     suggestedCategoryId: null,
     categorizationSource: null,
+    suggestedType: null,
     ...overrides,
   };
 }
@@ -398,8 +399,15 @@ describe('counterpart matching — credit card payments', () => {
     await imports.commitImport(bob, bobImport);
 
     const bobTxn = await getTransactionByDedupeKey('bob-leg');
+    // Proof of isolation: Bob's row is never linked to Alice's — no cross-owner
+    // counterpart match, so `typeSource` stays 'default' and there is no
+    // `counterpartTransactionId`. It IS still `credit_card_payment`, but via
+    // item 2a's local, single-row pattern fallback (isKnownCardPaymentReceived)
+    // — recognizing BoA's own "PAYMENT FROM CHK" shape on a credit-card
+    // account never reads another owner's data, so this is not a leak.
     expect(bobTxn?.typeSource).toBe('default');
-    expect(bobTxn?.transactionType).not.toBe('credit_card_payment');
+    expect(bobTxn?.counterpartTransactionId).toBeNull();
+    expect(bobTxn?.transactionType).toBe('credit_card_payment');
   });
 });
 
@@ -551,6 +559,131 @@ describe('automatic classification never overwrites a manual decision', () => {
     const newLeg = await getTransactionByDedupeKey('would-have-matched');
     expect(newLeg?.typeSource).toBe('default');
     expect(newLeg?.transactionType).toBe('expense');
+  });
+});
+
+describe('item 2a — local card-payment fallback when no counterpart exists yet', () => {
+  it('classifies a card payment correctly on the FIRST import, with no checking data committed at all', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const cardId = await makeAccountId(owner, 'credit_card', 'Card');
+
+    const cardImport = await stageRows(owner, cardId, [
+      makeCandidateRow(1, {
+        dedupeKey: 'first-import-card-leg',
+        description: 'PAYMENT FROM CHK 2288 CONF#firstimport',
+        amountCents: -8815,
+        transactionDate: '2026-05-19',
+      }),
+    ]);
+    const result = await imports.commitImport(owner, cardImport);
+
+    // Grid exclusion itself is proven by gridBaseConditions()'s own tests
+    // (tests/integration/finance-grid.test.ts) — every row with this
+    // transactionType is excluded there regardless of how it got classified.
+    // This test proves the classification itself is correct on a first
+    // import, with no cross-account data to link to at all.
+    const txn = await getTransactionByDedupeKey('first-import-card-leg');
+    expect(txn?.transactionType).toBe('credit_card_payment');
+    expect(txn?.typeSource).toBe('default');
+    expect(txn?.reviewStatus).toBe('auto');
+    expect(txn?.counterpartTransactionId).toBeNull();
+    expect(result.autoClassifiedCount).toBe(1);
+  });
+
+  it('a real counterpart, committed later, still links for real — the fallback never blocks the authoritative match', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const checkingId = await makeAccountId(owner, 'checking', 'Checking');
+    const cardId = await makeAccountId(owner, 'credit_card', 'Card');
+
+    const cardImport = await stageRows(owner, cardId, [
+      makeCandidateRow(1, {
+        dedupeKey: 'later-link-card-leg',
+        description: 'PAYMENT FROM CHK 2288 CONF#laterlink',
+        amountCents: -8815,
+        transactionDate: '2026-05-19',
+      }),
+    ]);
+    await imports.commitImport(owner, cardImport);
+
+    // Confirm the fallback fired first, exactly as the previous test proves.
+    const beforeLink = await getTransactionByDedupeKey('later-link-card-leg');
+    expect(beforeLink?.typeSource).toBe('default');
+
+    const checkingImport = await stageRows(owner, checkingId, [
+      makeCandidateRow(1, {
+        dedupeKey: 'later-link-checking-leg',
+        description: 'Online Banking payment to CRD 9903 Confirmation# laterlink',
+        amountCents: 8815,
+        transactionDate: '2026-05-14',
+      }),
+    ]);
+    await imports.commitImport(owner, checkingImport);
+
+    const cardTxn = await getTransactionByDedupeKey('later-link-card-leg');
+    const checkingTxn = await getTransactionByDedupeKey('later-link-checking-leg');
+
+    // The retroactive-update code path — completely unmodified by item 2a —
+    // correctly upgrades the fallback-classified row to a real link, because
+    // it looks identical to any other type_source='default' candidate.
+    expect(cardTxn?.transactionType).toBe('credit_card_payment');
+    expect(cardTxn?.typeSource).toBe('counterpart_match');
+    expect(cardTxn?.counterpartTransactionId).toBe(checkingTxn?.id);
+    expect(checkingTxn?.transactionType).toBe('credit_card_payment');
+    expect(checkingTxn?.typeSource).toBe('counterpart_match');
+    expect(checkingTxn?.counterpartTransactionId).toBe(cardTxn?.id);
+  });
+});
+
+describe('type override (item 3c) — an owner pre-commit pick is authoritative', () => {
+  it('an overridden row is never a candidate for auto-matching, and gets manual_confirmation', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const checkingId = await makeAccountId(owner, 'checking', 'Checking');
+    const cardId = await makeAccountId(owner, 'credit_card', 'Card');
+
+    // The checking leg commits first, exactly as in the ordinary linking test —
+    // this row WOULD qualify as a real counterpart for the card leg below.
+    const checkingImport = await stageRows(owner, checkingId, [
+      makeCandidateRow(1, {
+        dedupeKey: 'override-checking-leg',
+        description: 'Online Banking payment to CRD 9903 Confirmation# overridetest',
+        amountCents: 8815,
+        transactionDate: '2026-05-14',
+      }),
+    ]);
+    await imports.commitImport(owner, checkingImport);
+
+    // The card leg's owner manually override it to 'expense' BEFORE commit —
+    // simulating the import-review type picker (updateRowDecision's
+    // typeOverride path). It carries a token that WOULD otherwise match.
+    const cardImport = await stageRows(owner, cardId, [
+      makeCandidateRow(1, {
+        dedupeKey: 'override-card-leg',
+        description: 'PAYMENT FROM CHK 2288 CONF#overridetest',
+        amountCents: -8815,
+        transactionDate: '2026-05-19',
+      }),
+    ]);
+    const { sql } = await harness();
+    await sql`
+      update "finance_import_rows"
+      set "suggested_type" = 'expense', "type_overridden" = true
+      where "import_id" = ${cardImport}
+    `;
+
+    await imports.commitImport(owner, cardImport);
+
+    const cardTxn = await getTransactionByDedupeKey('override-card-leg');
+    const checkingTxn = await getTransactionByDedupeKey('override-checking-leg');
+
+    // The override wins outright: not classified as a card payment, not
+    // linked, and the checking leg — which would otherwise have been a valid
+    // counterpart — is left completely untouched (still 'default', not
+    // retroactively linked to a row it can't see was ever excluded).
+    expect(cardTxn?.transactionType).toBe('expense');
+    expect(cardTxn?.typeSource).toBe('manual_confirmation');
+    expect(cardTxn?.counterpartTransactionId).toBeNull();
+    expect(checkingTxn?.typeSource).toBe('default');
+    expect(checkingTxn?.counterpartTransactionId).toBeNull();
   });
 });
 

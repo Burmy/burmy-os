@@ -6,8 +6,6 @@ import { useRouter } from 'next/navigation';
 import { useRef, useState, useTransition } from 'react';
 
 import { EmptyState } from '@/components/finance/empty-state';
-import { Money } from '@/components/finance/money';
-import { StatusBadge } from '@/components/finance/status-badge';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -20,92 +18,34 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetFooter,
   SheetHeader,
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 import type { FinanceAccount } from '@/server/db/finance/accounts';
-import type { FinanceCategory } from '@/server/db/finance/categories';
-import type {
-  CommitResult,
-  FinanceImportRowView,
-  FinanceImportSummary,
-  PriorFileUpload,
-} from '@/server/db/finance/imports';
-import {
-  commitImportAction,
-  detectStatementFormatAction,
-  discardImportAction,
-  getImportContextAction,
-  updateRowCategoryAction,
-  updateRowDecisionAction,
-  uploadStatementAction,
-} from './actions';
-
-/**
- * Only a `committed` prior upload is ever called "already imported" — a
- * `review` or `discarded` match was never actually imported, and saying so
- * would be a lie the owner has no way to check. See docs/FINANCE.md. Same
- * wording as `review-table.tsx`'s `priorUploadMessage` (the resume-path
- * page), duplicated rather than shared — matching this codebase's existing
- * e2e-helper convention of light duplication over a shared module for
- * something this small.
- */
-function priorUploadMessage(prior: PriorFileUpload): string {
-  switch (prior.status) {
-    case 'committed': {
-      const when = prior.committedAt ? new Date(prior.committedAt).toLocaleDateString() : 'earlier';
-      return `You already imported this exact file, on ${when}.`;
-    }
-    case 'review':
-      return 'You already uploaded this exact file — that import is still awaiting review.';
-    case 'discarded':
-      return 'You uploaded this exact file before and discarded that import.';
-    default:
-      return '';
-  }
-}
+import type { FinanceImportSummary } from '@/server/db/finance/imports';
+import { quickStartBoaAccountsAction } from '../settings/account-actions';
+import { detectStatementFormatAction, uploadStatementAction } from './actions';
 
 const LAST_ACCOUNT_STORAGE_KEY = 'burmy:lastImportAccountId';
 
-type RowGroup = 'attention' | 'ready' | 'duplicate';
-
 /**
- * A row's presentation group inside the Sheet — distinct from `decision` and
- * `duplicateOfTransactionId`, which are the M5/M6 data this is read FROM, not
- * a replacement for it.
- *
- * "attention" = a parse failure (nothing to fix, just worth seeing) OR a new
- * row merchant memory could not suggest a category for. The second half is a
- * deliberate UX choice, not an M5/M6 rule: that row will become
- * `needs_review` the moment it is committed anyway, so surfacing it now — one
- * click away from a category — avoids a second, separate visit to
- * /finance/review for the exact same transaction.
+ * Upload only — a short-lived step, not a review UI. Staging a file
+ * immediately navigates to `/finance/import/[importId]` (the full-page
+ * review, `review-table.tsx`), which is the one canonical place to preview,
+ * edit, and commit an import. This Sheet used to render that review inline
+ * in its own scrollable pane — a Table nested inside an `overflow-y-auto`
+ * div, itself inside a fixed-height side panel — which is exactly the
+ * nested-scroll problem the full-page route was built to avoid. Keeping
+ * upload and review as two separate surfaces removes that nesting
+ * structurally instead of trying to patch the Sheet's internal layout.
  */
-function rowGroup(row: FinanceImportRowView): RowGroup {
-  if (row.parseError !== null) return 'attention';
-  if (row.duplicateOfTransactionId !== null) return 'duplicate';
-  if (row.categoryId === null) return 'attention';
-  return 'ready';
-}
-
 export function ImportSheet({
   accounts,
-  categories,
   inProgressImports,
 }: {
   readonly accounts: readonly FinanceAccount[];
-  readonly categories: readonly FinanceCategory[];
   readonly inProgressImports: readonly FinanceImportSummary[];
 }): React.ReactElement {
   const router = useRouter();
@@ -127,21 +67,11 @@ export function ImportSheet({
   const [confirmingAccount, setConfirmingAccount] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
-  const [importId, setImportId] = useState<string | null>(null);
-  const [rows, setRows] = useState<FinanceImportRowView[]>([]);
-  const [priorUpload, setPriorUpload] = useState<PriorFileUpload | null>(null);
-  const [showAll, setShowAll] = useState(false);
-  const [result, setResult] = useState<CommitResult | null>(null);
 
   const activeAccounts = accounts.filter((account) => account.isActive);
 
   function resetForOpen(): void {
     setError(null);
-    setImportId(null);
-    setRows([]);
-    setPriorUpload(null);
-    setShowAll(false);
-    setResult(null);
     setPendingFile(null);
     setCompatibleAccountIds(null);
     setConfirmingAccount(false);
@@ -164,7 +94,7 @@ export function ImportSheet({
     if (typeof window !== 'undefined') window.localStorage.setItem(LAST_ACCOUNT_STORAGE_KEY, id);
   }
 
-  /** Stage the file against a known account — the real, authoritative call. */
+  /** Stage the file against a known account, then hand off to the review page. */
   function stage(file: File, forAccountId: string): void {
     setError(null);
     startTransition(async () => {
@@ -178,11 +108,8 @@ export function ImportSheet({
         return;
       }
       rememberAccount(forAccountId);
-      const context = await getImportContextAction(outcome.importId);
-      setRows(context.rows);
-      setPriorUpload(context.priorUpload);
-      setImportId(outcome.importId);
-      setPendingFile(null);
+      setOpen(false);
+      router.push(`/finance/import/${outcome.importId}`);
     });
   }
 
@@ -260,67 +187,13 @@ export function ImportSheet({
     stage(pendingFile, accountId);
   }
 
-  function setDecision(rowId: string, decision: 'include' | 'exclude'): void {
-    setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, decision } : row)));
-    if (!importId) return;
+  function quickStart(): void {
     startTransition(async () => {
-      const outcome = await updateRowDecisionAction(importId, rowId, decision);
-      if (!outcome.ok) {
-        toast.error(outcome.error);
-        const reverted = decision === 'include' ? 'exclude' : 'include';
-        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, decision: reverted } : row)));
-      }
+      const outcome = await quickStartBoaAccountsAction();
+      if (!outcome.ok) toast.error(outcome.error);
+      else router.refresh();
     });
   }
-
-  function setCategory(rowId: string, categoryId: string | null): void {
-    const previous = rows.find((row) => row.id === rowId)?.categoryId ?? null;
-    setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, categoryId } : row)));
-    if (!importId) return;
-    startTransition(async () => {
-      const outcome = await updateRowCategoryAction(importId, rowId, categoryId);
-      if (!outcome.ok) {
-        toast.error(outcome.error);
-        setRows((prev) => prev.map((row) => (row.id === rowId ? { ...row, categoryId: previous } : row)));
-      }
-    });
-  }
-
-  function commit(): void {
-    if (!importId) return;
-    startTransition(async () => {
-      const outcome = await commitImportAction(importId);
-      if (!outcome.ok) {
-        toast.error(outcome.error);
-        return;
-      }
-      setResult(outcome.summary);
-      router.refresh();
-    });
-  }
-
-  function discard(): void {
-    if (!importId) return;
-    startTransition(async () => {
-      const outcome = await discardImportAction(importId);
-      if (!outcome.ok) {
-        toast.error(outcome.error);
-        return;
-      }
-      handleOpenChange(false);
-    });
-  }
-
-  function finish(): void {
-    handleOpenChange(false);
-  }
-
-  const grouped = {
-    attention: rows.filter((row) => rowGroup(row) === 'attention'),
-    ready: rows.filter((row) => rowGroup(row) === 'ready'),
-    duplicate: rows.filter((row) => rowGroup(row) === 'duplicate'),
-  };
-  const willImport = rows.filter((row) => row.decision === 'include' && row.parseError === null).length;
 
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
@@ -339,57 +212,25 @@ export function ImportSheet({
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto p-4">
-          {result ? (
-            <ImportDone result={result} />
-          ) : importId ? (
-            <ImportReview
-              rows={rows}
-              grouped={grouped}
-              categories={categories}
-              priorUpload={priorUpload}
-              showAll={showAll}
-              onShowAll={() => setShowAll(true)}
-              onDecision={setDecision}
-              onCategory={setCategory}
-              pending={pending}
-            />
-          ) : (
-            <ImportPicker
-              activeAccounts={activeAccounts}
-              accountId={accountId}
-              onAccountChange={setAccountId}
-              confirmingAccount={confirmingAccount}
-              compatibleAccountIds={compatibleAccountIds}
-              pendingFile={pendingFile}
-              error={error}
-              pending={pending}
-              inProgressImports={inProgressImports}
-              accounts={accounts}
-              onDrop={onDrop}
-              onBrowse={() => fileInputRef.current?.click()}
-              fileInputRef={fileInputRef}
-              onFileInputChange={onFileInputChange}
-              onConfirmAccount={confirmAccountAndStage}
-            />
-          )}
+          <ImportPicker
+            activeAccounts={activeAccounts}
+            accountId={accountId}
+            onAccountChange={setAccountId}
+            confirmingAccount={confirmingAccount}
+            compatibleAccountIds={compatibleAccountIds}
+            pendingFile={pendingFile}
+            error={error}
+            pending={pending}
+            inProgressImports={inProgressImports}
+            accounts={accounts}
+            onDrop={onDrop}
+            onBrowse={() => fileInputRef.current?.click()}
+            fileInputRef={fileInputRef}
+            onFileInputChange={onFileInputChange}
+            onConfirmAccount={confirmAccountAndStage}
+            onQuickStart={quickStart}
+          />
         </div>
-
-        {importId && !result ? (
-          <SheetFooter>
-            <Button variant="ghost" onClick={discard} disabled={pending}>
-              Discard
-            </Button>
-            <Button onClick={commit} disabled={pending || willImport === 0}>
-              {pending ? 'Working…' : `Import ${willImport} transaction${willImport === 1 ? '' : 's'}`}
-            </Button>
-          </SheetFooter>
-        ) : null}
-
-        {result ? (
-          <SheetFooter>
-            <Button onClick={finish}>Done</Button>
-          </SheetFooter>
-        ) : null}
       </SheetContent>
     </Sheet>
   );
@@ -411,6 +252,7 @@ function ImportPicker({
   fileInputRef,
   onFileInputChange,
   onConfirmAccount,
+  onQuickStart,
 }: {
   readonly activeAccounts: readonly FinanceAccount[];
   readonly accounts: readonly FinanceAccount[];
@@ -427,11 +269,17 @@ function ImportPicker({
   readonly fileInputRef: React.RefObject<HTMLInputElement | null>;
   readonly onFileInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   readonly onConfirmAccount: () => void;
+  readonly onQuickStart: () => void;
 }): React.ReactElement {
   if (activeAccounts.length === 0) {
     return (
       <EmptyState>
-        Add an account under Settings → Finance → Accounts before importing a statement.
+        <div className="space-y-3">
+          <p>Add an account before importing a statement.</p>
+          <Button size="sm" variant="outline" disabled={pending} onClick={onQuickStart}>
+            Set up Bank of America (Checking + Credit Card)
+          </Button>
+        </div>
       </EmptyState>
     );
   }
@@ -542,225 +390,6 @@ function ImportPicker({
           </ul>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ImportReview({
-  rows,
-  grouped,
-  categories,
-  priorUpload,
-  showAll,
-  onShowAll,
-  onDecision,
-  onCategory,
-  pending,
-}: {
-  readonly rows: readonly FinanceImportRowView[];
-  readonly grouped: Record<RowGroup, readonly FinanceImportRowView[]>;
-  readonly categories: readonly FinanceCategory[];
-  readonly priorUpload: PriorFileUpload | null;
-  readonly showAll: boolean;
-  readonly onShowAll: () => void;
-  readonly onDecision: (rowId: string, decision: 'include' | 'exclude') => void;
-  readonly onCategory: (rowId: string, categoryId: string | null) => void;
-  readonly pending: boolean;
-}): React.ReactElement {
-  const settled = grouped.ready.length + grouped.duplicate.length;
-
-  return (
-    <div className="space-y-6">
-      {priorUpload ? (
-        <div role="status" className="bg-muted/50 rounded-md border p-3 text-sm">
-          {priorUploadMessage(priorUpload)}
-        </div>
-      ) : null}
-
-      <div className="grid grid-cols-3 gap-3 text-center">
-        <SummaryStat label="Ready" value={grouped.ready.length} tone="positive" />
-        <SummaryStat label="Duplicates" value={grouped.duplicate.length} tone="muted" />
-        <SummaryStat label="Needs attention" value={grouped.attention.length} tone="attention" />
-      </div>
-
-      {grouped.attention.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold">Needs attention</h3>
-          <RowTable
-            rows={grouped.attention}
-            categories={categories}
-            onDecision={onDecision}
-            onCategory={onCategory}
-            pending={pending}
-            showStatus
-          />
-        </div>
-      ) : null}
-
-      {settled > 0 ? (
-        showAll ? (
-          <div className="space-y-2">
-            <h3 className="text-sm font-semibold">Everything else ({settled})</h3>
-            <RowTable
-              rows={[...grouped.ready, ...grouped.duplicate]}
-              categories={categories}
-              onDecision={onDecision}
-              onCategory={onCategory}
-              pending={pending}
-              showStatus
-            />
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={onShowAll}
-            className="text-muted-foreground hover:text-foreground w-full rounded-md border border-dashed p-3 text-center text-sm transition-colors"
-          >
-            {settled} more already understood — no action needed. Show all rows
-          </button>
-        )
-      ) : null}
-
-      {rows.length === 0 ? <EmptyState>This file has no rows.</EmptyState> : null}
-    </div>
-  );
-}
-
-function SummaryStat({
-  label,
-  value,
-  tone,
-}: {
-  readonly label: string;
-  readonly value: number;
-  readonly tone: 'positive' | 'muted' | 'attention';
-}): React.ReactElement {
-  const toneClass =
-    tone === 'positive'
-      ? 'text-green-700 dark:text-green-400'
-      : tone === 'attention'
-        ? 'text-amber-700 dark:text-amber-400'
-        : 'text-muted-foreground';
-  return (
-    <div className="rounded-md border p-3">
-      <div className={`tabular text-xl font-semibold ${toneClass}`}>{value}</div>
-      <div className="text-muted-foreground text-xs">{label}</div>
-    </div>
-  );
-}
-
-function RowTable({
-  rows,
-  categories,
-  onDecision,
-  onCategory,
-  pending,
-  showStatus,
-}: {
-  readonly rows: readonly FinanceImportRowView[];
-  readonly categories: readonly FinanceCategory[];
-  readonly onDecision: (rowId: string, decision: 'include' | 'exclude') => void;
-  readonly onCategory: (rowId: string, categoryId: string | null) => void;
-  readonly pending: boolean;
-  readonly showStatus: boolean;
-}): React.ReactElement {
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead className="w-8" />
-          <TableHead>Date</TableHead>
-          <TableHead>Merchant</TableHead>
-          <TableHead className="text-right">Amount</TableHead>
-          <TableHead>Category</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {rows.map((row) => {
-          const failed = row.parseError !== null;
-          const duplicate = row.duplicateOfTransactionId !== null;
-          const rowName = row.normalizedMerchant ?? row.description ?? `row ${row.rowNumber}`;
-
-          return (
-            <TableRow key={row.id}>
-              <TableCell>
-                <input
-                  type="checkbox"
-                  aria-label={`Include ${rowName}`}
-                  checked={row.decision === 'include'}
-                  disabled={failed || pending}
-                  onChange={(event) => onDecision(row.id, event.target.checked ? 'include' : 'exclude')}
-                />
-              </TableCell>
-              <TableCell className="text-muted-foreground whitespace-nowrap">
-                {row.transactionDate ?? '—'}
-              </TableCell>
-              <TableCell>
-                {failed ? (
-                  <span className="text-destructive text-sm">{row.parseError}</span>
-                ) : (
-                  <div>
-                    <div className="font-medium">{row.normalizedMerchant}</div>
-                    <div className="text-muted-foreground text-xs">{row.description}</div>
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>{row.amountCents === null ? null : <Money valueCents={row.amountCents} />}</TableCell>
-              <TableCell>
-                {failed ? (
-                  showStatus ? <StatusBadge tone="attention">Skipped</StatusBadge> : null
-                ) : duplicate ? (
-                  showStatus ? <StatusBadge tone="muted">Already imported</StatusBadge> : null
-                ) : (
-                  <Select
-                    value={row.categoryId ?? 'none'}
-                    onValueChange={(value) => onCategory(row.id, value === 'none' ? null : value)}
-                  >
-                    <SelectTrigger aria-label={`Category for ${rowName}`} className="h-8 w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Uncategorized</SelectItem>
-                      {categories.map((category) => (
-                        <SelectItem key={category.id} value={category.id}>
-                          {category.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
-  );
-}
-
-function ImportDone({ result }: { readonly result: CommitResult }): React.ReactElement {
-  return (
-    <div className="space-y-3 rounded-md border p-4 text-sm">
-      <p className="flex items-center gap-2 font-medium">Import complete</p>
-      <ul className="text-muted-foreground list-disc space-y-1 pl-4">
-        <li>
-          {result.importedCount} transaction{result.importedCount === 1 ? '' : 's'} added
-        </li>
-        <li>{result.skippedDuplicateCount} skipped as already imported</li>
-        {result.autoClassifiedCount > 0 ? (
-          <li>{result.autoClassifiedCount} categorized or classified automatically — nothing to review</li>
-        ) : null}
-        {result.skippedFailedCount > 0 ? (
-          <li>{result.skippedFailedCount} needed attention and were not imported</li>
-        ) : null}
-        {result.demotedByRaceCount > 0 ? (
-          <li>
-            {result.demotedByRaceCount} row{result.demotedByRaceCount === 1 ? '' : 's'} turned out to already be
-            imported by another import committed at the same time, and{' '}
-            {result.demotedByRaceCount === 1 ? 'was' : 'were'} skipped.
-          </li>
-        ) : null}
-      </ul>
     </div>
   );
 }

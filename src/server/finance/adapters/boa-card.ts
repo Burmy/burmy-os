@@ -38,6 +38,16 @@ import {
 
 export const BOA_CARD_ADAPTER = 'boa-card' as const;
 
+/**
+ * BoA's own exact, system-generated shape for a payment received on this
+ * card — e.g. "PAYMENT FROM CHK 2288 CONF#4p9dnrwz6" — never a merchant name.
+ * Verified against every card-payment row across every real (redacted)
+ * fixture this adapter has: zero deviation from this exact shape. Anchored
+ * full-string match, not a prefix/substring test — see
+ * `classify/counterpart.ts`'s `isKnownCardPaymentReceived`, the one consumer.
+ */
+export const BOA_CARD_PAYMENT_RECEIVED_PATTERN = /^PAYMENT FROM CHK \d{4} CONF#[A-Za-z0-9]+$/i;
+
 export function parseBoaCard(bytes: Uint8Array): ParseResult {
   const { rows } = splitCells(bytes);
 
