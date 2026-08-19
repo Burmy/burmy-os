@@ -1,10 +1,11 @@
 # Deployment
 
-> **Status (2026-08-18): the default production architecture changed.** Burmy-OS's production target
-> is now **Netlify (hosting) + Supabase (managed Postgres) + Cloudflare (DNS only)** — not a VPS. The
-> VPS/Docker/Tunnel/B2 design below is fully preserved and still works, but it is now the **optional
-> self-hosting path**, not the default. See "Why the VPS was dropped" for the reasoning and "Optional:
-> self-hosting on a VPS" for everything that moved there unchanged.
+> **Status (2026-08-18): the default production architecture changed, and the authentication question
+> is decided.** Burmy-OS's production target is now **Netlify (hosting) + Supabase (managed Postgres)
+> + Cloudflare (DNS, and a proxy in front of exactly one hostname)** — not a VPS. The VPS/Docker/
+> Tunnel/B2 design below is fully preserved and still works, but it is now the **optional self-hosting
+> path**, not the default. See "Why the VPS was dropped" for the reasoning and "Optional: self-hosting
+> on a VPS" for everything that moved there unchanged.
 >
 > **External state, as it actually exists today** (owner-reported, not independently verified by
 > Claude): the Cloudflare DNS migration for `burmy.me` is complete and the zone is Active; Cloudflare
@@ -12,9 +13,13 @@
 > Oracle Cloud VPS was attempted and abandoned after repeated capacity failures — **no VPS was ever
 > created, nothing was ever deployed to Oracle.** See "External state" below for the full detail.
 >
-> **One open decision blocks going live and is called out explicitly in "Authentication — the open
-> decision": how the owner authenticates to a Netlify-hosted app, now that Cloudflare Access no longer
-> sits in the request path by default.** Nothing else in this document is blocked on it.
+> **Authentication decision: keep Cloudflare Access exactly as built (Option A).** `requireOwner()`
+> stays unchanged. `burmy.me` and `www.burmy.me` stay DNS-only, untouched. `app.burmy.me` alone gets
+> proxied through Cloudflare once its Netlify deployment is verified healthy, specifically so the
+> already-configured Access application can enforce Google auth + the exact-email Allow policy in
+> front of it. See "Authentication" and "Deployment sequence" below for the exact, order-sensitive
+> rollout — the naive "verify everything on the temporary `*.netlify.app` URL" sequence does **not**
+> work for the authenticated parts of the app, since that hostname never passes through Access.
 
 ---
 
@@ -46,17 +51,34 @@ intact if self-hosting is ever wanted again.
 ## Target topology
 
 ```
-Browser ──HTTPS──▶ Netlify (app.burmy.me)
-                        │  Next.js 16 — Netlify's Next.js Runtime (OpenNext-based)
-                        │  Server Components, Server Actions, Route Handlers as
-                        │  Netlify Functions; src/proxy.ts as a Netlify Edge Function
-                        ▼
-                  Supabase Postgres
-                    (Supavisor pooler, transaction mode, for the app runtime;
-                     direct connection for migrations, run manually)
-
-Namecheap (registrar) ──▶ Cloudflare (authoritative DNS only, DNS-only/grey-cloud records)
+Namecheap (registrar) ──▶ Cloudflare (authoritative DNS)
+                              │
+                              ├── burmy.me      ──DNS only──▶ Netlify (existing portfolio, untouched)
+                              ├── www.burmy.me  ──DNS only──▶ Netlify (existing portfolio, untouched)
+                              │
+                              └── app.burmy.me  ──Proxied───▶ Cloudflare Access
+                                                                 │ Google OAuth, exact-email Allow policy
+                                                                 ▼
+                                                               Netlify (Burmy-OS)
+                                                                 │  Next.js 16 — Netlify's Next.js Runtime
+                                                                 │  (OpenNext-based). Server Components,
+                                                                 │  Server Actions, Route Handlers as
+                                                                 │  Netlify Functions; src/proxy.ts as a
+                                                                 │  Netlify Edge Function. requireOwner()
+                                                                 │  re-verifies the Access JWT itself —
+                                                                 │  the proxy is defense-in-depth, not the
+                                                                 │  boundary, same as always.
+                                                                 ▼
+                                                               Supabase Postgres
+                                                                 (Supavisor pooler, transaction mode, for
+                                                                  the app runtime; direct connection for
+                                                                  migrations, run manually)
 ```
+
+**Only `app.burmy.me` is proxied.** The existing portfolio (`burmy.me`, `www.burmy.me`) stays exactly
+DNS-only, exactly as it is today — proxying it was never asked for and would change nothing but risk.
+Proxying `app.burmy.me` specifically is what puts Cloudflare's edge, and therefore Access, in front of
+the one hostname that needs it.
 
 No VPS. No Cloudflare Tunnel. No production Docker host. No systemd. No mandatory Backblaze B2.
 
@@ -88,19 +110,21 @@ Supabase, or any VPS provider.**
   step-by-step migration checklist) is preserved in git history rather than repeated here — see commits
   `dc70a6b`, `1b1e186`, `3318170`, `3f7d70f` for the complete record if it's ever needed again.
 
-### Cloudflare Zero Trust / Access (configured, not currently in the request path)
+### Cloudflare Zero Trust / Access (configured, will gate `app.burmy.me` once proxied)
 
 - A Cloudflare Zero Trust **Free** organization exists.
 - Google is configured as the identity provider and a live authentication test against it succeeded.
 - A Burmy-OS Access application exists: intended hostname `app.burmy.me`, Google as the only identity
   provider, an exact-email Allow policy, 24-hour application session, Instant Authentication, Cloudflare
   One Client disabled.
-- **This configuration is real and complete, but nothing routes traffic through it today.** Access only
-  intercepts a request when Cloudflare's edge actually sits in front of it — either via a Tunnel (the
-  original, now-abandoned VPS design) or a *proxied* ("orange cloud") DNS record pointed at an origin
-  Access is told to protect. `app.burmy.me` has no DNS record at all yet (see "`app.burmy.me`" below),
-  so there is currently nothing for Access to gate. See "Authentication — the open decision" — this is
-  the one thing that has to be decided, not silently assumed either way.
+- **Decision: this stays exactly as built, and Burmy-OS keeps `requireOwner()`'s existing Cloudflare
+  Access JWT verification unchanged (Option A) — no Supabase Auth, no Netlify Identity, no second OAuth
+  implementation, no password auth, no new session framework.** Access only intercepts a request when
+  Cloudflare's edge actually sits in front of it — a Tunnel (the original, now-abandoned VPS design) or
+  a *proxied* ("orange cloud") DNS record pointed at an origin Access is told to protect. `app.burmy.me`
+  has no DNS record yet; per "Deployment sequence" below, it gets one — DNS-only at first, so Netlify can
+  verify the domain and provision HTTPS, THEN switched to Proxied once that's healthy — specifically so
+  Access starts gating it. See "Authentication" below for the reasoning this decision is based on.
 
 ### Oracle VPS (abandoned, nothing created)
 
@@ -112,50 +136,41 @@ was ever deployed.** See "Why the VPS was dropped" above for what this triggered
 
 ---
 
-## Authentication — the open decision
+## Authentication
 
-**This is the one thing blocking a real production deploy. Nothing else in this document depends on
-it, and it is not decided here — it needs the owner's explicit call.**
+**Decided: Option A. Cloudflare Access, exactly as already configured, stays the sole authentication
+mechanism. No code change to `requireOwner()`/`src/server/auth/*`, no new auth system.**
 
 `requireOwner()` (`src/server/auth/owner.ts`) has exactly one identity-verification path in
 production: a Cloudflare Access JWT, checked against `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD`
 (`src/server/auth/access.ts`). There is no in-app credential, no session, no fallback — see
-`docs/SECURITY.md`, "Authentication," which is still an accurate description of how the *code* behaves.
-The dev bypass triggers only when `NODE_ENV` is exactly `development`; Netlify sets `NODE_ENV=production`
-for a production deploy, so the bypass does not apply there.
+`docs/SECURITY.md`, "Authentication," which remains an accurate description of how the *code* behaves,
+unchanged by this decision. The dev bypass triggers only when `NODE_ENV` is exactly `development`;
+Netlify sets `NODE_ENV=production` for a production deploy, so the bypass does not apply there.
 
-**The direct consequence: if Netlify serves `app.burmy.me` with Cloudflare's DNS record for it left
-DNS-only (grey cloud, not proxied), Access never sees the request, `Cf-Access-Jwt-Assertion` is never
-present, and `requireOwner()` fails closed on every single request — including the owner's own.** Not a
-bug; exactly the fail-closed behavior `docs/SECURITY.md` documents and wants. But it means the app is
-unusable, by anyone, until this is resolved one of two ways:
+**Why this works despite dropping the VPS/Tunnel:** Cloudflare Access can protect a *proxied* DNS
+record pointed at any public origin, including Netlify — this does **not** require a Tunnel; Tunnel was
+only ever needed for the original VPS design because that origin had no public route of its own.
+Proxying `app.burmy.me` alone (leaving `burmy.me`/`www.burmy.me` untouched, still DNS-only) puts
+Cloudflare's edge in front of just that one hostname, which is exactly what the already-completed
+Access application, Google IdP, and exact-email Allow policy were built for. **Reuses 100% of the
+external configuration already in place, at zero new services, zero new code.**
 
-**Option A — keep Cloudflare Access, proxy the `app.burmy.me` record.** Cloudflare Access can protect a
-*proxied* DNS record pointed at any public origin, including Netlify — this does **not** require a
-Tunnel; Tunnel was only needed for the original VPS because that origin had no public route at all.
-Turning on the orange cloud for `app.burmy.me` alone (leaving the apex/`www` portfolio records
-untouched, still DNS-only) puts Cloudflare's edge in front of just that one hostname, which is exactly
-what the already-completed Access application, Google IdP, and Allow policy were built for. **Reuses
-100% of the external configuration already in place, at zero new services** — the cost is one Cloudflare
-setting (DNS-only → Proxied) on one record, which is the "strong verified reason" the owner's own
-instructions asked for before forcing the orange cloud on anything.
+**Explicitly rejected, per owner instruction:** Supabase Auth, Netlify Identity, a second OAuth
+implementation, password authentication, any other new session/auth framework. Building an independent
+owner-auth mechanism inside Burmy-OS was the alternative (Option B) considered and declined — Cloudflare
+Access already does this correctly, and a second implementation would only be a second thing to keep
+secure for no functional gain.
 
-**Option B — build a minimal owner-auth path inside Burmy-OS itself**, independent of Cloudflare Access,
-so the app can authenticate the owner even with Cloudflare staying DNS-only everywhere. This is real
-application work (a new verification mechanism, new tests, a new attack surface to review) — not a
-config toggle — and is explicitly what "Burmy-OS's own authentication remains the application security
-layer" would require if Access is to stay unused going forward, since right now there *is no other*
-Burmy-OS authentication mechanism to fall back on; Cloudflare Access **is** Burmy-OS's authentication
-today, not a separate layer in front of one.
-
-**Recommendation: Option A.** It requires no new code, no new external service, and no new security
-review — only confirming the one Cloudflare record. Option B is a legitimate choice if the owner would
-rather Burmy-OS not depend on Cloudflare Access at all going forward, but it should be a deliberate
-decision made knowing it's genuinely new authentication work, not a smaller change than it looks.
-
-**Until this is decided, `docs/SECURITY.md`'s "Authentication" section stays accurate as a description
-of the code — it does not need to change either way.** What's undecided is purely the deployment-side
-question of whether Access sits in front of the request.
+**The one sequencing hazard this creates, and why "Deployment sequence" below is written the way it
+is:** `app.burmy.me` cannot be proxied from the start — Netlify needs the domain DNS-only first to
+verify ownership and provision its own HTTPS certificate. That means there is a window where the
+Burmy-OS Netlify deployment exists but is not yet behind Access. The authenticated parts of the app
+(everything behind `requireOwner()` — which is everything except `/api/health`) **cannot be verified
+during that window**, including on the temporary `*.netlify.app` URL, which never passes through
+Cloudflare at all and so never carries the Access JWT `requireOwner()` needs. Only build/runtime/public
+health (`/api/health`) can be checked before the DNS cutover; the sequence below reflects that
+explicitly rather than assuming the temporary URL proves more than it does.
 
 ---
 
@@ -165,8 +180,8 @@ question of whether Access sits in front of the request.
 | --- | --- | --- |
 | `DATABASE_URL` | Supabase **pooled** connection string (Supavisor, transaction mode, port `6543`, `?pgbouncer=true`) | The app runtime's connection — see "Database — Supabase Postgres" below for why pooled, not direct. |
 | `OWNER_EMAIL` | the owner's Google account email | Same meaning as today — checked against the verified identity on every request. |
-| `CF_ACCESS_TEAM_DOMAIN` | the Cloudflare Zero Trust team domain | Needed **only if Option A is chosen** above. Omit entirely if Option B. |
-| `CF_ACCESS_AUD` | the Burmy-OS Access application's Audience tag | Same conditionality as `CF_ACCESS_TEAM_DOMAIN`. |
+| `CF_ACCESS_TEAM_DOMAIN` | the Cloudflare Zero Trust team domain | **Required** — Option A is decided; `requireOwner()` always needs this to verify the Access JWT. |
+| `CF_ACCESS_AUD` | the Burmy-OS Access application's Audience tag | **Required**, same as above. |
 | `NODE_ENV` | `production` | Set by Netlify automatically for production deploys — not something to set manually, listed here only so its presence is never assumed away. |
 
 Not needed at all under the new architecture (all VPS/Docker-only): `POSTGRES_USER`/`POSTGRES_PASSWORD`/
@@ -230,58 +245,98 @@ already just reads `DATABASE_URL`.
 
 ## Backup strategy (simplified)
 
-Supabase's **Free** plan includes no managed backups or point-in-time recovery at all — that starts at
-Pro (7 days of daily backups) and PITR is a paid add-on above that. The old restic→B2 pipeline
+**Per Supabase's own documentation as of this writing, the Free plan does not include managed daily
+backups or point-in-time recovery** (Pro and above add daily backups; PITR is a further paid add-on on
+top of that) — stated here as what Supabase's docs currently say, not as a permanent guarantee, since
+plan terms can change. The old restic→B2 pipeline
 (`scripts/backup.sh`/`maintenance.sh`/`restore.sh`/`restore-verify-weekly.sh`/`verify.sh`,
 `deploy/systemd/burmy-{backup,maintenance,restore-verify}.*`) is real, tested, working code — but it is
 VPS-shaped infrastructure (a host to run the timers on) that this architecture no longer has, and
 building an equivalent automated pipeline just to protect a Free-tier database was explicitly ruled out
 as its own new infrastructure stack.
 
-**Proposed minimal strategy — a manual `pg_dump`, run periodically, no new infrastructure:**
+**Policy: maintain an independent logical backup, initially as a manual periodic operation, no new
+infrastructure.** Either of these is a compatible logical (not physical) dump, so either is fine —
+the Supabase CLI's own wrapper, or plain `pg_dump` directly against the **direct** (non-pooled)
+connection string:
 
 ```bash
+# Supabase CLI (wraps pg_dump; requires the CLI linked to the project) —
+supabase db dump -f "burmy-$(date +%Y-%m-%d).sql"
+
+# …or plain pg_dump directly, no CLI dependency:
 pg_dump "<supabase direct connection string>" -Fc -f "burmy-$(date +%Y-%m-%d).dump"
 ```
 
 Run by hand — after a real import, or on whatever cadence feels right for how infrequently the data
 actually changes (this is a single-user app; a monthly statement import is the only thing that
 meaningfully changes the database) — and saved wherever the owner already keeps things safe (a synced
-folder, an external drive, anywhere off the Supabase project itself). Restore is the ordinary
-`pg_restore` counterpart, same as `scripts/restore.sh`'s own restore step already does locally.
+folder, an external drive, anywhere off the Supabase project itself).
 
-This is intentionally the simplest thing that provides real protection, not the final word — if Supabase
-Free's lack of PITR becomes a real concern later, the options in order of effort are: enable it via a
-Supabase Pro upgrade, or a small scheduled job (a Netlify Scheduled Function, or literally a line in the
-owner's own crontab) running the `pg_dump` above automatically. Neither is built now, per explicit
-instruction not to stand up new infrastructure preemptively.
+**Restore procedure** (documented here since there's no `scripts/restore.sh` equivalent for Supabase):
+
+```bash
+# Plain-SQL dump (from `supabase db dump`):
+psql "<supabase direct connection string>" -f burmy-2026-08-19.sql
+
+# Custom-format dump (from `pg_dump -Fc`):
+pg_restore -d "<supabase direct connection string>" --clean --if-exists burmy-2026-08-19.dump
+```
+
+Test a restore into a disposable local Postgres (`docker compose -f compose.dev.yml up -d postgres`)
+before ever trusting a dump file, the same verification spirit as the old `scripts/verify.sh` — a dump
+that was never actually restored is not a proven backup.
+
+**This is intentionally the simplest thing that provides real, independent protection, not the final
+word.** If a manual cadence turns out to be too easy to forget, or the lack of managed PITR becomes a
+real concern given actual usage, the options in order of effort are: a Supabase Pro upgrade, or a small
+scheduled job (a Netlify Scheduled Function, or a line in the owner's own crontab) running the dump
+command above automatically. Neither is built now — automation is deferred until actual usage justifies
+it, per explicit instruction not to stand up new infrastructure preemptively.
 
 ---
 
 ## Deployment sequence
 
-1. Create the Supabase project (external, owner-performed — not done by Claude).
-2. Run migrations + owner provisioning against Supabase's **direct** connection string (see "Database"
-   above).
-3. Create the Burmy-OS Netlify site, pointed at this repository, with the environment variables from
-   "Environment variables" above (using Supabase's **pooled** connection string for `DATABASE_URL`).
-   `netlify.toml` pins the build command and Node version; no `publish` directory is set, deliberately
-   — Netlify's Next.js Runtime wires up SSR/Server Actions/Edge middleware itself.
-4. Deploy and verify on the temporary `*.netlify.app` URL, before touching any DNS:
-   - Supabase connectivity (the app actually loads and queries succeed)
-   - Authentication (resolve the "Authentication — the open decision" question above **first** — this
-     step cannot be verified otherwise)
-   - CSV import end to end
-   - The Finance dashboard renders real data correctly
-   - Migrations applied correctly (schema matches `drizzle/`)
-5. Only once all of the above is confirmed working: add/update the Cloudflare DNS record for
-   `app.burmy.me` pointed at the Netlify site — DNS-only unless Option A (above) was chosen, in which
-   case it's proxied specifically so Access can gate it.
-6. Verify HTTPS and production auth against the real `app.burmy.me` hostname.
+Order-sensitive, and corrected from an earlier draft that assumed the temporary `*.netlify.app` URL
+could verify the whole app — it can't, since Cloudflare Access never sits in front of that hostname
+(see "Authentication" above for why). Split explicitly below into what the temporary URL CAN prove
+(build, runtime, public health) and what only the real `app.burmy.me` hostname, proxied, can prove
+(everything behind `requireOwner()`):
+
+1. Create/configure the Supabase project (external, owner-performed — not done by Claude).
+2. Run migrations against Supabase's **direct** connection string, then owner provisioning (see
+   "Database — Supabase Postgres" above):
+   `DATABASE_URL="<direct>" node scripts/migrate.mjs`, then
+   `DATABASE_URL="<direct>" OWNER_EMAIL="<owner email>" node scripts/provision-owner.mjs`.
+3. Create the Burmy-OS Netlify site, pointed at this repository.
+4. Configure its production environment variables (see "Environment variables (Netlify)" above) —
+   `DATABASE_URL` here is Supabase's **pooled** connection string, not the direct one from step 2.
+5. Deploy.
+6. Verify build/runtime/public health **on the temporary `*.netlify.app` URL only, and only where
+   authentication is not required** — concretely: the build succeeded, the app boots, and
+   `/api/health` responds. Do **not** try to verify the Finance dashboard, import, or anything else
+   behind `requireOwner()` here; it will correctly fail closed, since Access isn't in front of this
+   hostname at all.
+7. Add `app.burmy.me` as the custom domain in Netlify.
+8. In Cloudflare, create the required `app` CNAME pointed at the Burmy-OS `*.netlify.app` hostname —
+   **DNS only** at first, not proxied yet. (`burmy.me`/`www.burmy.me` are untouched throughout — see
+   "Target topology" above.)
+9. Wait until Netlify reports DNS verification and HTTPS/certificate provisioning healthy for
+   `app.burmy.me`.
+10. Change **only** the `app` DNS record to **Proxied** (orange cloud). This is the one moment Access
+    starts gating the hostname.
+11. Verify visiting `https://app.burmy.me` invokes Cloudflare Access (a Google sign-in prompt, not the
+    app directly).
+12. Sign in through Google using the allowed owner email; verify `requireOwner()` accepts the resulting
+    Cloudflare Access JWT (the app loads, rather than `/access-denied`).
+13. **Only now**, with Access confirmed working end to end, perform full production verification behind
+    real authentication: Finance dashboard, transactions, accounts/categories, CSV import,
+    categorization, duplicate handling, Month/Year views.
 
 The existing `burmy.me`/`www.burmy.me` portfolio deployment is untouched by any of this — it remains
-exactly `→ Netlify` as it is today, and the new Burmy-OS Netlify site is a separate, independent Netlify
-project, not a change to the existing one.
+exactly `→ Netlify`, DNS-only, as it is today, and the new Burmy-OS Netlify site is a separate,
+independent Netlify project, not a change to the existing one.
 
 ---
 
@@ -550,8 +605,8 @@ untouched by the Netlify/Supabase move.
 
 Real financial data does not touch production until every item below is demonstrated, not assumed:
 
-1. The "Authentication — the open decision" question above is resolved (Option A or B), and confirmed
-   working end to end on the deployed app, not just configured.
+1. Cloudflare Access (Option A) is confirmed working end to end on the deployed app via the "Deployment
+   sequence" above (steps 11–12) — not just configured, actually invoked and passed.
 2. Netlify build succeeds against this repo with no configuration beyond `netlify.toml` and the
    environment variables in "Environment variables (Netlify)".
 3. Migrations applied correctly against Supabase (`scripts/migrate.mjs`, direct connection) — schema
@@ -561,11 +616,11 @@ Real financial data does not touch production until every item below is demonstr
 5. `app.burmy.me` resolves to the Netlify deployment and HTTPS is healthy.
 6. Unauthorized access fails closed (confirmed against the real deployed app, not just unit tests).
 7. CSV import, categorization, and the Finance dashboard all work correctly against real Supabase data.
-8. A manual `pg_dump` against the live Supabase database succeeds and is verified restorable
-   (`pg_restore` into a scratch database, same verification spirit as the old `scripts/verify.sh`).
+8. A manual logical backup (`supabase db dump` or `pg_dump`) against the live Supabase database
+   succeeds and is verified restorable into a scratch database — see "Backup strategy" above.
 9. All application test/build gates remain green: `pnpm typecheck` / `lint` / `test` / `test:integration`
    / `test:e2e` / `build`.
 
-If self-hosting is chosen instead (Option B or a future reversal back to a VPS), the original 13-point
-VPS launch checklist is preserved in git history (this file, before this rewrite) and in
+If self-hosting is chosen instead of Netlify + Supabase (a future reversal back to a VPS), the original
+13-point VPS launch checklist is preserved in git history (this file, before this rewrite) and in
 `docs/BACKUP_RESTORE.md`'s own DR checklist, which was never specific to any one hosting path.

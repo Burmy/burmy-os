@@ -17,7 +17,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M7** | Review queue | ✅ Complete |
 | **M8** | Monthly grid & drill-down *(the product)* | ✅ Complete |
 | **M9** | Transactions ledger, reconciliation & export | ✅ Complete |
-| M10 | Deployment, hardening, launch | 🔵 In progress — architecture simplified to Netlify + Supabase (VPS path preserved as optional self-host); one open auth decision blocks launch |
+| M10 | Deployment, hardening, launch | 🔵 In progress — architecture simplified to Netlify + Supabase (VPS path preserved as optional self-host); Cloudflare Access retained via a proxied `app.burmy.me` record; awaiting the actual external rollout |
 
 Legend: ⚪ not started · 🔵 in progress · 🟡 blocked · ✅ complete
 
@@ -977,13 +977,17 @@ maintenance, Docker host, `ufw`/SSH hardening, Postgres administration,
 `cloudflared`, systemd timers, a restic→B2 backup pipeline) was judged to
 be infrastructure sized for a problem this app doesn't have. The new
 default production target: **Netlify (hosting) + Supabase (managed
-Postgres) + Cloudflare (DNS only, no VPS, no Tunnel)**. Full detail —
-target topology, the one still-open authentication decision this created
-(Cloudflare Access has no request path to sit in without a VPS Tunnel or a
-proxied Netlify record), environment variables, the Supabase connection-
-pooling code change, migration workflow, and a simplified backup strategy
-— now lives in `docs/DEPLOYMENT.md`, which was restructured around this as
-the primary path.
+Postgres) + Cloudflare (DNS; proxied for `app.burmy.me` only)**. Dropping
+the VPS/Tunnel raised one real question — Cloudflare Access has no request
+path to sit in without either a Tunnel or a proxied record — resolved by
+owner decision to keep Access exactly as configured and proxy just the
+`app.burmy.me` record once its Netlify deployment is verified healthy, in
+that order (Netlify needs the record DNS-only first to provision its own
+HTTPS). Full detail — target topology, the corrected order-sensitive
+rollout sequence, environment variables, the Supabase connection-pooling
+code change, migration workflow, and a simplified backup strategy — now
+lives in `docs/DEPLOYMENT.md`, which was restructured around this as the
+primary path.
 
 **What this did NOT require changing:** no application code assumed a VPS
 existed — `src/server/finance/` already parsed uploads in memory only
