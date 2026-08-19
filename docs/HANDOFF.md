@@ -8,6 +8,14 @@ Last updated: end of **Milestone 4**. Next milestone: **M5 — Import pipeline, 
 > **Privacy note:** this document deliberately contains no secrets, no `.env` values, no tokens, no
 > account numbers, and no real financial data. It must stay that way.
 
+> **Stale — superseded (2026-08-18).** This snapshot predates Milestones 9–11 and the M10
+> architecture pivot from a self-hosted VPS to Netlify + Supabase. Do not treat its infrastructure
+> details, milestone status, or "next milestone" line as current. For the actual current state, read
+> `CLAUDE.md` (architecture, stack, invariants), `docs/ROADMAP.md` (milestone status), and
+> `docs/DEPLOYMENT.md` (the current production deployment process). The domain/product content below
+> (Finance rules, data model reasoning, etc.) may still be useful background, but verify it against
+> the code rather than trusting it at face value.
+
 ---
 
 ## 1. Project identity

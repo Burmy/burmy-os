@@ -17,7 +17,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M7** | Review queue | ✅ Complete |
 | **M8** | Monthly grid & drill-down *(the product)* | ✅ Complete |
 | **M9** | Transactions ledger, reconciliation & export | ✅ Complete |
-| M10 | Deployment, hardening, launch | 🔵 In progress — architecture simplified to Netlify + Supabase (VPS path preserved as optional self-host); Cloudflare Access retained via a proxied `app.burmy.me` record; awaiting the actual external rollout |
+| M10 | Deployment, hardening, launch | 🔵 In progress — architecture simplified to Netlify + Supabase (the earlier VPS self-host path was removed from the repo in a follow-up cleanup, recoverable from git history); Cloudflare Access retained via a proxied `app.burmy.me` record; awaiting the actual external rollout |
 
 Legend: ⚪ not started · 🔵 in progress · 🟡 blocked · ✅ complete
 
@@ -1005,6 +1005,26 @@ self-hosting path** — `compose.yml`, the `Dockerfile`, every
 half-maintained as dead weight either: it's the same code M10 already
 built and tested, just no longer the thing a fresh deploy reaches for
 first.
+
+### Repository cleanup (2026-08-18): the VPS-only files are gone
+
+**Superseded by a follow-up pass, same day.** The paragraph immediately
+above described a deliberate choice to keep the VPS-era files around as a
+documented optional path. On review, the owner decided that was the wrong
+call for a single-maintainer repo: an "optional" path nobody was going to
+exercise or keep updated is drift risk, not a feature. So it was removed —
+`compose.yml`, `scripts/{provision,deploy,backup,maintenance,restore,
+restore-verify-weekly,verify,check-host}.sh`, `deploy/systemd/*`, the VPS-only
+`.env.*.example` templates, and the corresponding sections of
+`docs/DEPLOYMENT.md`/`docs/SECURITY.md`/`docs/BACKUP_RESTORE.md`/
+`docs/ARCHITECTURE.md`. The `Dockerfile` was simplified from five stages to
+three (`base`/`prod-deps`/`migrator`), keeping only what local dev's
+`compose.dev.yml` migrator actually uses. None of it is lost — `git log -p`
+has the full multi-target `Dockerfile`, the production `compose.yml`, and
+every script, if self-hosting is ever revisited. The repository's current,
+actual shape is: local dev = Next.js + local Postgres (optionally via
+`compose.dev.yml`); production = Cloudflare Access → Netlify → Supabase;
+backup = a manual logical Postgres dump. No shadow production architecture.
 
 ## Carried forward
 

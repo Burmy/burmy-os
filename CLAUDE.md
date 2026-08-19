@@ -8,6 +8,9 @@ operating system and not a platform. Do not build Notes, Files, Sheets, Inbox, B
 Receipts or Subscriptions. Do not build abstractions in anticipation of them.
 
 The full approved plan is `docs/IMPLEMENTATION_PLAN.md`. Read it before making architectural changes.
+Its Finance-domain and milestone-sequencing content is current; its original infrastructure sections
+(VPS/Tunnel/systemd/restic) are superseded — see that document's own banner and `docs/DEPLOYMENT.md`
+for the actual current deployment.
 
 ---
 
@@ -57,7 +60,7 @@ Violating any of these is a correctness or security bug, not a style preference.
 | Grids | Hand-rolled on the shadcn `Table` primitive, with a thin shared presentation layer in `src/components/finance/`. TanStack Table was originally approved but was never actually installed — the tables in this app are small (dozens of rows, no sort/virtualization need), so it was dropped from the plan during the M8-era UX pass rather than added just because it was once on the list. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
 | Parsing | Papa Parse (CSV), ExcelJS (XLSX, provisional) |
 | Testing | Vitest + React Testing Library, Playwright |
-| Infra | **Production (default):** Netlify (hosting) + Supabase (managed Postgres) + Cloudflare (DNS; proxied for `app.burmy.me` only, DNS-only for `burmy.me`/`www.burmy.me`). Auth stays Cloudflare Access, unchanged — see `docs/DEPLOYMENT.md`, "Authentication." **Local dev:** Docker Compose + local Postgres, unchanged. **Optional self-host:** the original VPS/Docker Compose/Cloudflare Tunnel/restic→B2 path is fully preserved in `compose.yml`/`scripts/`/`deploy/systemd/` — see `docs/DEPLOYMENT.md`, "Optional: self-hosting on a VPS." |
+| Infra | **Production:** Netlify (hosting) + Supabase (managed Postgres) + Cloudflare (DNS; proxied for `app.burmy.me` only, DNS-only for `burmy.me`/`www.burmy.me`). Auth stays Cloudflare Access, unchanged — see `docs/DEPLOYMENT.md`, "Authentication." **Local dev:** Docker Compose (`compose.dev.yml`) + local Postgres — the entire remaining Docker surface in the repo. The earlier self-hosted VPS/Cloudflare Tunnel/restic→B2 path was removed (2026-08-18) once Netlify + Supabase proved viable; it is fully recoverable from git history if self-hosting is ever revisited, but nothing in the working tree depends on it. |
 
 ---
 
@@ -70,8 +73,8 @@ pnpm test                             # Vitest
 pnpm test:e2e                         # Playwright
 pnpm build                            # production build
 
-docker compose up -d postgres         # local database
-docker compose run --rm migrate       # migrations run IN the image, never host pnpm
+docker compose -f compose.dev.yml up -d postgres         # local database
+docker compose -f compose.dev.yml run --rm --build migrate  # migrations run IN the image, never host pnpm
 pnpm db:seed                          # synthetic fixtures
 ```
 
@@ -99,9 +102,6 @@ These are verified, not folklore. Do not "fix" them back.
 - **Postgres 18 changed its Docker volume layout.** `PGDATA` is `/var/lib/postgresql/18/docker` and
   the declared `VOLUME` is `/var/lib/postgresql`. Mounting the pre-18 `/var/lib/postgresql/data`
   **starts cleanly, reports healthy, and silently loses the data** on recreate.
-- **`cloudflared` must NOT be on an `internal: true` network.** It dials out to Cloudflare. Two
-  networks: `edge` (external, for `cloudflared` + `web`) and `dbnet` (`internal: true`, for `web` +
-  `migrate` + `postgres`).
 - **Never `pnpm add xlsx`.** The npm SheetJS package is abandoned at 0.18.5 with unfixed prototype
   pollution and ReDoS advisories. Use ExcelJS.
 - **`dedupe_key` and `merchant_key` are different things and must stay that way.** `dedupe_key` is
@@ -303,23 +303,6 @@ These are verified, not folklore. Do not "fix" them back.
   nested pnpm instance. If a similar `MODULE_NOT_FOUND` appears for some other package after `output:
   standalone`, this is the pattern: promote to a direct dependency AND force-include it in tracing:
   fixing only one of the two did not resolve it in testing.
-- **`docker compose run` has no `--no-build` flag** — that flag exists on `up` only. Passing it to
-  `run` fails outright with `unknown flag: --no-build`, not a silent no-op. `run` already does not
-  rebuild by default unless the image is missing or `--build` is passed, so the fix is simply omitting
-  the flag, not finding an equivalent.
-- **Image-tag pruning must sort by the image's actual build time, never by the tag string.** A git
-  short-SHA (`a1b2c3d`) has no chronological ordering as text — `scripts/deploy.sh`'s first draft used
-  `sort -r` on `docker images --format '{{.Tag}}'` and would have kept whichever tags sorted
-  alphabetically last, unrelated to which deploys were actually most recent. Caught by simulating a
-  sequence of fake deploys with genuinely distinct image timestamps and checking what survived
-  pruning — sorting by tag looked plausible on a quick read and was simply wrong. Fixed by sorting on
-  `docker images --format '{{.CreatedAt}}|{{.Tag}}'` instead, since every SHA tag corresponds to a
-  real, distinct `docker build`.
-- **`df -P /`'s column positions shift if the filesystem name itself contains a space** (seen locally:
-  `C:/Program Files/Git`) — a fixed `awk '{print $5}'` silently reads the wrong field instead of
-  failing. `scripts/check-host.sh`'s disk-usage check reads `$(NF-1)` (second-to-last field) instead:
-  `df -P`'s last column is always `Mounted on` and the one before it is always `Capacity`, regardless
-  of how many fields the filesystem name itself splits into.
 - **`formatInflow()` expects a still-negative, RAW stored value — calling it on a figure that is
   already sign-flipped double-flips it back negative.** `getMonthlyTotalsAllTime()` (M11) sign-flips
   income to a positive display figure at the DB boundary itself, exactly like M8's `GridRowTotals
@@ -354,7 +337,7 @@ src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only
-scripts/                  provision, deploy, backup, restore, verify-restore
+scripts/                  migrate.mjs (Docker migrator entrypoint), provision-owner.mjs
 docs/                     the approved plan and supporting documents
 ```
 

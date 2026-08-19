@@ -7,29 +7,29 @@ explains how the pieces fit and where the boundaries are.
 
 ## Shape
 
-One Next.js application, one PostgreSQL database, one VPS, three containers. No microservices, no
-queues, no cache tier, no message bus. A single-user application that is opened roughly once a month
-does not need any of that, and every component omitted is one that cannot break, leak, or bill.
+One Next.js application on Netlify, one managed PostgreSQL database on Supabase. No microservices, no
+queues, no cache tier, no message bus, no host of our own to run or patch. A single-user application
+that is opened roughly once a month does not need any of that, and every component omitted is one that
+cannot break, leak, or bill.
 
 ```
-Browser ──HTTPS──▶ Cloudflare (TLS terminates here, Access gates on Google)
+Browser ──HTTPS──▶ Cloudflare (TLS terminates here, Access gates on Google — proxied DNS record)
                         │
-                        │ outbound-only tunnel — no inbound ports on the origin
+                        │ ordinary HTTPS to a public origin — no tunnel, no inbound port to manage
                         ▼
-                   ┌─────────────────── VPS ───────────────────┐
-   network: edge   │  cloudflared ──▶ web (Next.js)            │
-   (outbound OK)   │                    │                      │
-                   │  ──────────────────┼───────────────────   │
-   network: dbnet  │                    ▼                      │
-   (internal:true) │  migrate ──▶  postgres 18 ──▶ pgdata      │
-                   └───────────────────────────────────────────┘
-                              │ nightly
-                              ▼
-                   pg_dump → restic (AES) → Backblaze B2
+                   Netlify (builds and runs the Next.js app; requireOwner() re-verifies
+                            the Access JWT at every protected entry point, independent of
+                            whether Cloudflare's edge was actually in the path)
+                        │
+                        │ TLS — pooled connection (runtime) / direct connection (migrations)
+                        ▼
+                   Supabase (managed Postgres 18, Supavisor pooler)
 ```
 
-`web` is the only service on both networks. `postgres` has no route to or from the internet.
-`cloudflared` can dial out but has no path to the database.
+Netlify is the only hop between Cloudflare and the database. There is no VPS, no Docker host, and no
+network of our own to segment — the trust boundary that used to be an `internal: true` Docker network
+is now just "only the app's own environment variables can reach Supabase's connection strings," since
+neither ever reaches the browser.
 
 ---
 
@@ -76,39 +76,38 @@ The one flow worth understanding end to end.
 
 ```
 1. UPLOAD      Multi-file batch (checking + card + savings together).
-               Validated, written to a 0600 temp file outside the webroot.
+               Validated, held only in memory as the request's own bytes — never written to disk,
+               never to any statically served path. Nothing to delete because nothing was written.
 
                ── Why multi-file: transfers and credit-card payments have TWO legs.
                   Matching them requires both files present in one batch.
 
 2. HASH        Already-committed file_sha256? Warn before parsing.
 
-3. PARSE       Papa Parse, streaming. Adapter chosen by HEADER SIGNATURE, not filename.
-               Unmapped source columns are DISCARDED HERE and never persisted.
+3. PARSE       Papa Parse, streaming over the in-memory bytes. Adapter chosen by HEADER SIGNATURE,
+               not filename. Unmapped source columns are DISCARDED HERE and never persisted.
 
 4. NORMALIZE   Dates, sign convention asserted (not assumed), merchant normalized, Cents.
 
 5. STAGE       → finance_import_rows, sanitized shape, single DB transaction.
 
-6. DELETE      The temp file. Always. Including on the failure path.
-
-7. DEDUPE      Source id if proven reliable; otherwise count reconciliation
+6. DEDUPE      Source id if proven reliable; otherwise count reconciliation
                against committed history.
 
-8. CLASSIFY    Transfers / card payments / investments — matched against this batch
+7. CLASSIFY    Transfers / card payments / investments — matched against this batch
                AND committed history (±7 days). Ambiguity produces a review item.
 
-9. CATEGORIZE  rules → merchant memory → history → source category → heuristics → review.
+8. CATEGORIZE  rules → merchant memory → history → source category → heuristics → review.
 
-10. PREVIEW    Server-rendered from staged rows. Survives refresh, deploy, device change.
+9. PREVIEW     Server-rendered from staged rows. Survives refresh, deploy, device change.
 
-11. REVIEW     Edits mutate staged rows only. expires_at extended on each edit (60-day window).
+10. REVIEW     Edits mutate staged rows only. expires_at extended on each edit (60-day window).
 
-12. COMMIT     One DB transaction: staged → finance_transactions, merchant memory updated,
+11. COMMIT     One DB transaction: staged → finance_transactions, merchant memory updated,
                transient staging columns dropped.
 ```
 
-Staging in Postgres rather than memory is what makes steps 7–11 survivable. A 500-row import
+Staging in Postgres rather than memory is what makes steps 6–10 survivable. A 500-row import
 is not lost to a refresh, a deploy, or a phone locking — which matters a great deal when the app is
 used once a month in a single long sitting.
 
@@ -178,16 +177,15 @@ Stated plainly, because the reassuring version would be false:
 
 - **Cloudflare terminates TLS** and can technically inspect full application HTTP content — including
   transaction data in responses and uploaded file bodies. This is inherent to the reverse-proxy model.
-- **The VPS provider hosts the entire application and database** with hypervisor-level access to
-  memory and disk. Block-volume encryption protects against physical drive theft, not against the
-  provider.
+- **Netlify runs the application** and can technically inspect requests and responses passing through
+  its platform, plus whatever it logs. It never receives a database credential beyond the pooled
+  runtime connection string, and never receives the direct/migration connection string at all — that
+  one lives only in the operator's own shell, never in Netlify's environment-variable store.
+- **Supabase hosts the database** with the same category of at-rest/in-memory access any managed
+  Postgres provider has to the data it stores.
 - **Google** sees an identity assertion at the Access layer and no financial data.
-- **Backblaze B2** sees opaque restic blobs; encryption keys never leave the VPS.
-- **SSH access** is ordinary key-based SSH, not a VPN mesh (simplified during M10 — see
-  `docs/DEPLOYMENT.md`) — encrypted end to end by the SSH protocol itself; the VPS provider's own
-  hypervisor-level access above is the operative trust boundary here, not the network path.
 
-The architecture buys "no inbound ports, no exposed database, an identity gate, $0/month" in exchange
-for trusting Cloudflare in transit and the VPS provider at rest. Alternatives exist (self-hosting
-removes the provider) and are documented in the plan with their costs. This should be an informed
-trade, not an assumption.
+The architecture buys "no host to patch, no inbound ports of our own, an identity gate, low cost" in
+exchange for trusting Cloudflare in transit, Netlify to run the app honestly, and Supabase with the
+data at rest. This should be an informed trade, not an assumption — see git history for the earlier
+self-hosted VPS design, which traded these platform trusts for operational burden instead.

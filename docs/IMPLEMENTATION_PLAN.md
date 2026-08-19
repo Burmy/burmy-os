@@ -7,6 +7,16 @@ Implementation proceeds one milestone at a time, stopping for review at the end 
 > deliberately — they record *why* several non-obvious decisions were made, and each one exists because
 > an earlier draft was wrong in a way that would have cost data, money, or correctness.
 
+> **Infrastructure sections superseded (2026-08-18).** This plan's original Milestone 10 designed a
+> self-hosted deployment: Oracle Cloud VPS, Docker Compose in production, Cloudflare Tunnel,
+> Tailscale, systemd timers, restic + Backblaze B2 backups. That path was dropped after the VPS
+> attempt hit real capacity limits, and production moved to **Cloudflare Access → Netlify → Supabase**
+> instead. Any section below describing VPS provisioning, Tunnel setup, systemd units, or restic/B2 is
+> historical — it documents a real decision process worth keeping, but **not** the current deployment.
+> `docs/DEPLOYMENT.md` is the current authority for how Burmy is actually deployed and operated; the
+> rest of this plan (Finance domain reasoning, milestone sequencing, data model, non-infra decisions)
+> remains accurate and is unaffected by the pivot.
+
 ---
 
 ## Context

@@ -22,13 +22,13 @@ if it were public — because it was, briefly, before the first commit.
 | Secret committed to git | Common failure mode | Broad `.gitignore` committed first; secret scanning in CI |
 | Origin reached without passing Access | Requires a tunnel misconfiguration | Access JWT verified in `src/proxy.ts` |
 | Server Action invoked without auth | Easy to introduce accidentally | Every entry point authenticates itself (below) |
-| Data loss (host reclaimed, disk failure) | **High** — see the Oracle analysis in the plan | Tested restore, not just backups |
+| Data loss (Supabase project deleted/corrupted, account lost) | Low but not zero — managed Postgres, no host to reclaim | Independent logical backup, restore-verified locally (see `docs/DEPLOYMENT.md`, "Backup strategy") |
 | Dependency compromise | Ongoing | Renovate, `pnpm audit` in CI, lockfile committed, frozen installs |
 
 **Out of scope — accepted risks, stated so they are decisions rather than oversights:**
 
 - **Cloudflare can technically read application content** in transit; TLS terminates at their edge.
-- **The VPS provider can technically read everything** at rest and in memory.
+- **Supabase, as the Postgres host, can technically read data at rest and in memory.**
 - A targeted attacker with physical access to the owner's unlocked device carrying a live Cloudflare
   Access session.
 - Nation-state adversaries.
@@ -128,7 +128,7 @@ Consequently:
 
 | Endpoint | Why | Constraint |
 | --- | --- | --- |
-| `/api/health` | Container and deploy healthchecks, reached from *inside* the Docker network with no Cloudflare in the path | Returns booleans and a version string **only**. No counts, no data, no error text, no environment detail. |
+| `/api/health` | Netlify's own deploy healthchecks reach this directly, without a Cloudflare Access session, since the check runs before or outside the browser flow Access gates | Returns booleans and a version string **only**. No counts, no data, no error text, no environment detail. |
 
 `/api/auth/*` was the second entry through Milestone 8 — Better Auth's own flows, which authenticated
 by design. It no longer exists: there is no in-app authentication endpoint left to allowlist, since
@@ -296,24 +296,41 @@ asserts zero violations from application code.
 
 ## Network
 
-- **No inbound ports for the application.** `cloudflared` dials out; Burmy-OS itself has no public web
-  port.
-- `ufw` default-deny inbound, with exactly one allowed port: SSH — key-only, password auth and root
-  login disabled. No VPN/Tailscale mesh (owner decision, M10 simplification, see
-  `docs/DEPLOYMENT.md`) — a second piece of infrastructure whose only job is gating access to the
-  first was judged not worth its own complexity for a single-owner deployment.
-- **Postgres is never published to the host** and sits only on the `internal: true` `dbnet` network.
+There is no host to firewall — production is Netlify (hosting) + Supabase (managed Postgres), both
+managed services with no VPS, no SSH, no `ufw`, no self-managed network to reason about.
+
+- **`app.burmy.me` is proxied through Cloudflare specifically so Cloudflare Access sits in front of
+  every request** — see "Authentication" above. `burmy.me`/`www.burmy.me` (the unrelated portfolio)
+  stay DNS-only.
+- **Cloudflare's SSL/TLS mode for `app.burmy.me` is `Full (strict)`** — Netlify provisions a real,
+  validly-signed origin certificate, so the hop between Cloudflare and Netlify is validated, not just
+  encrypted-but-unverified.
+- **Supabase Postgres requires TLS** (`sslmode=require` in the connection string) and is never reached
+  except through its Supavisor pooler (app runtime) or its direct connection (migrations only, from an
+  operator's own machine, never stored anywhere in Netlify) — see `docs/DEPLOYMENT.md`, "Database —
+  Supabase Postgres."
+- This replaced an earlier VPS design (`cloudflared` Tunnel, `ufw`, key-based SSH, an `internal: true`
+  Docker network for Postgres) — real, working code in its day, removed from the active repository when
+  production moved to Netlify + Supabase; see `docs/DEPLOYMENT.md`, "Why the VPS was dropped," and git
+  history if self-hosting is ever picked up again.
 
 ---
 
 ## Secrets
 
-- Never in git. `.gitignore` covers `.env*`, keys, certs, tunnel credentials.
-- On the VPS: `.env` at `0600`, owned by the app user, injected via `env_file`.
-- `.env.example` holds placeholders only.
-- **Secrets and recovery credentials are deliberately excluded from Finance backups.** They live in
-  the password manager and the offline recovery process. A stolen backup must not also carry the keys
-  to the system it came from.
+- Never in git. `.gitignore` covers `.env*`, keys, certs.
+- **Production secrets live in Netlify's own environment-variable store** — scoped to Functions/Runtime
+  only (never Build), Production context only (never Deploy Previews or Branch deploys), and marked
+  "Contains secret values" (Netlify's Secrets Controller) where applicable. Full policy, including which
+  of the four production variables get which scope, in `docs/DEPLOYMENT.md`, "Netlify environment-variable
+  policy." None of them are ever written into `netlify.toml`, which is committed.
+- **The Supabase migration credential (`MIGRATION_DATABASE_URL`) is never stored in Netlify at all** —
+  it exists only on an operator's own shell for the moment a migration runs. See `docs/DEPLOYMENT.md`,
+  "Database — Supabase Postgres."
+- `.env.example` (local development only) holds placeholders only.
+- **Secrets and recovery credentials are deliberately excluded from Finance backups.** A backup is a
+  logical Postgres dump — application data only, never credentials — kept outside Supabase. See
+  `docs/DEPLOYMENT.md`, "Backup strategy," for the current policy.
 
 ---
 
@@ -347,11 +364,11 @@ tests as of M2 and re-run on every suite; the rest need the real deployment.
       fails the suite (validated by temporarily adding one and watching it fail both statically and
       by direct invocation)
 - [x] ✅ `/api/health` response contains no counts, data, or environment detail
-- [ ] Postgres is unreachable from outside the Docker network — the production `compose.yml` now
-      exists and publishes **no ports** for `postgres` on the `internal: true` `dbnet` network,
-      confirmed locally (`docker compose ps` shows no port mapping; `dbnet` has no route to the
-      internet). *Final confirmation still needs the real VPS network boundary, not a local Docker
-      Desktop instance.*
+- [ ] Supabase connections use TLS end to end, and the pooled runtime connection string
+      (`DATABASE_URL`) and the direct migration/backup connection string
+      (`MIGRATION_DATABASE_URL`) are never exposed to the client — both live only in Netlify's
+      server-side environment-variable store, never in a `NEXT_PUBLIC_*` variable *(needs the real
+      Netlify + Supabase deployment to confirm end to end)*
 - [x] ✅ Access is revoked from the Cloudflare Access policy takes effect on the owner's very next
       request — there is no session of Burmy's own to independently outlive it; asserted in
       `tests/integration/owner-guard.test.ts`'s "resolve, never create" and fail-closed cases
@@ -364,7 +381,7 @@ tests as of M2 and re-run on every suite; the rest need the real deployment.
       (M9). XLSX export was never built (CSV alone covers the need; ExcelJS's dependency-security gate
       was never triggered), so there is no XLSX path to cover.
 - [ ] A restore has been performed and verified — not merely configured. **Locally proven**: a real
-      `pg_dump` → `restic backup` → `restic restore` → `pg_restore` → manifest-comparison round trip
-      against real seeded Postgres data and a local restic repository, `scripts/{backup,restore,
-      verify}.sh` (M10). *Still outstanding: the same drill against the real production VPS and
-      Backblaze B2 — see `docs/BACKUP_RESTORE.md`'s DR sequence.*
+      `pg_dump -Fc` → `pg_restore --no-owner` round trip against real seeded local Postgres data, into
+      a scratch database, with the restored data compared row-for-row against the source (see
+      `docs/DEPLOYMENT.md`, "Backup strategy"). *Still outstanding: the same drill against the real
+      production Supabase project.*

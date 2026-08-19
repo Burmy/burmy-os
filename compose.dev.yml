@@ -1,12 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Local development stack.
+# Local development stack — LOCAL DEVELOPMENT / TESTING ONLY.
 #
 #   docker compose -f compose.dev.yml up -d postgres
-#   docker compose -f compose.dev.yml run --rm migrate
+#   docker compose -f compose.dev.yml run --rm --build migrate
 #   pnpm dev            <- the app itself runs on the host for fast HMR
 #
-# Cloudflare and Tailscale are NOT needed locally and are absent by design.
-# The production compose.yml (M10) adds the edge/dbnet split and cloudflared.
+# Production is Netlify + Supabase — no Docker at all (see docs/DEPLOYMENT.md).
+# This file is the entire remaining Docker Compose surface in the repo; there
+# is no separate production compose file to keep in sync with it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: burmy-dev

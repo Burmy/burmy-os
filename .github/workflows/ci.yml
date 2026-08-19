@@ -4,10 +4,10 @@
 #
 #   typecheck / lint / unit / integration / e2e / build
 #
-# Deployment stays manual and Tailscale-gated (docs/DEPLOYMENT.md) — this
-# workflow cannot reach the VPS, holds no Cloudflare/B2/restic credentials,
-# and the one Postgres password it uses is a throwaway, CI-only value with
-# no connection to anything real.
+# Deployment stays a manual, deliberate step (docs/DEPLOYMENT.md) — this
+# workflow holds no Netlify/Cloudflare/Supabase credentials, cannot deploy or
+# migrate anything real, and the one Postgres password it uses is a
+# throwaway, CI-only value with no connection to anything real.
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: CI

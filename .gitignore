@@ -31,9 +31,6 @@
 *.crt
 credentials.json
 client_secret*.json
-cloudflared/
-*.tunnel.json
-.restic-password
 secrets/
 
 # ── REAL FINANCIAL DATA ──────────────────────────────────────────────────────
