@@ -77,15 +77,6 @@ async function signIntoApp(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/finance\/monthly$/);
 }
 
-async function addAccount(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/finance/accounts');
-  await page.getByRole('button', { name: 'Add account' }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Name').fill(name);
-  await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('cell', { name, exact: true })).toBeVisible();
-}
-
 async function addCategory(page: Page, name: string): Promise<void> {
   await page.goto('/settings/finance/categories');
   await page.getByRole('button', { name: 'Add category' }).click();
@@ -96,10 +87,11 @@ async function addCategory(page: Page, name: string): Promise<void> {
 }
 
 /**
- * Open the Import Sheet from Finance and select a file — with one active
- * account already provisioned by `addAccount`, no account picker appears;
- * choosing the file starts parsing immediately and, on success, the Sheet
- * closes and the browser navigates to `/finance/import/[importId]`.
+ * Open the Import Sheet from Finance and select a file — there is no account
+ * picker at all anymore (round-2 UX pass): the account is resolved
+ * automatically from the file's detected format. Choosing the file starts
+ * parsing immediately and, on success, the Sheet closes and the browser
+ * navigates to `/finance/import/[importId]`.
  */
 async function openSheetAndSelectFile(page: Page, fixture: string): Promise<void> {
   await page.goto('/finance/monthly');
@@ -137,7 +129,6 @@ test.describe('import', () => {
 
   test('upload, categorize, commit — and a repeat upload adds nothing new', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Groceries');
 
     await openSheetAndSelectFile(page, DEPOSIT_FIXTURE);
@@ -203,7 +194,6 @@ test.describe('import', () => {
 
   test('a merchant confirmed before pre-fills its category automatically', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Dining');
 
     // Seed the memory a real M6 commit would have written last month —
@@ -251,17 +241,29 @@ test.describe('import', () => {
     expect(committed?.review_status).toBe('auto');
   });
 
-  test('refuses to stage a credit card export against a checking account', async ({ page }) => {
+  test('a checking export and a card export auto-route to two separate hidden accounts, with zero setup', async ({
+    page,
+  }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
+
+    // No account picker anywhere in this flow — the mismatch this test used
+    // to guard against ("a card export staged against a checking account")
+    // is impossible now: the account is derived FROM the detected format,
+    // not chosen by the owner. What matters instead is that two DIFFERENT
+    // formats land on two DIFFERENT accounts, since the counterpart-match
+    // mechanism still depends on that.
+    await openSheetAndSelectFile(page, DEPOSIT_FIXTURE);
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
 
     await openSheetAndSelectFile(page, CARD_FIXTURE);
-    const sheet = page.getByRole('dialog', { name: 'Import statement' });
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
 
-    await expect(sheet.getByRole('alert')).toContainText('credit card export');
-    // No import was staged — the Sheet stays open on its opening state, and
-    // Finance never navigated anywhere.
-    await expect(sheet).toBeVisible();
-    await expect(page).toHaveURL(/\/finance\/monthly$/);
+    const accountTypes = await withDb(async (sql) => {
+      const rows = await sql<{ type: string }[]>`
+        select "type" from "finance_accounts" order by "type"
+      `;
+      return rows.map((r) => r.type);
+    });
+    expect(accountTypes).toEqual(['checking', 'credit_card']);
   });
 });

@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -27,10 +28,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import { TRANSACTION_TYPE_LABELS } from '@/server/finance/classify/manual';
+import type { FinanceCategory } from '@/server/db/finance/categories';
+import type { DrillDownTransaction } from '@/server/db/finance/grid';
+import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type ManualTransactionType } from '@/server/finance/classify/manual';
 import { MONTH_ABBREVIATIONS, type GridColumn, type GridRowTotals, type MonthlyGrid } from '@/server/finance/grid';
 import { cents, format } from '@/server/finance/money';
+import {
+  updateTransactionCategoryAction,
+  updateTransactionMerchantAction,
+  updateTransactionNoteAction,
+  updateTransactionTypeAction,
+} from '../transactions/actions';
 import { getCellDrillDownAction, type DrillDownResult } from './actions';
 
 type Selector = { readonly kind: 'category'; readonly categoryId: string } | { readonly kind: 'expenditure' } | { readonly kind: 'income' };
@@ -62,15 +72,77 @@ export function MonthlyGridTable({
   grid,
   year,
   years,
+  categories,
 }: {
   readonly grid: MonthlyGrid;
   readonly year: number;
   readonly years: readonly number[];
+  readonly categories: readonly FinanceCategory[];
 }): React.ReactElement {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [result, setResult] = useState<DrillDownResult | null>(null);
   const [pending, startTransition] = useTransition();
+  const [, startEditTransition] = useTransition();
+
+  function patchTransaction(id: string, patch: Partial<DrillDownTransaction>): void {
+    setResult((prev) =>
+      prev ? { ...prev, transactions: prev.transactions.map((t) => (t.id === id ? { ...t, ...patch } : t)) } : prev,
+    );
+  }
+
+  function changeCategory(row: DrillDownTransaction, categoryId: string | null): void {
+    const previous = { categoryId: row.categoryId, categoryName: row.categoryName };
+    const category = categories.find((c) => c.id === categoryId);
+    patchTransaction(row.id, { categoryId, categoryName: category?.name ?? null });
+
+    startEditTransition(async () => {
+      const outcome = await updateTransactionCategoryAction(row.id, categoryId, false);
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        patchTransaction(row.id, previous);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function changeType(row: DrillDownTransaction, transactionType: ManualTransactionType): void {
+    const previous = row.transactionType;
+    patchTransaction(row.id, { transactionType });
+
+    startEditTransition(async () => {
+      const outcome = await updateTransactionTypeAction(row.id, transactionType);
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        patchTransaction(row.id, { transactionType: previous });
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  function saveMerchant(row: DrillDownTransaction, value: string): void {
+    const trimmed = value.trim();
+    if (trimmed === (row.normalizedMerchant ?? '')) return;
+    patchTransaction(row.id, { normalizedMerchant: trimmed === '' ? null : trimmed });
+
+    startEditTransition(async () => {
+      const outcome = await updateTransactionMerchantAction(row.id, trimmed);
+      if (!outcome.ok) toast.error(outcome.error);
+    });
+  }
+
+  function saveNote(row: DrillDownTransaction, value: string): void {
+    const trimmed = value.trim();
+    if (trimmed === (row.notes ?? '')) return;
+    patchTransaction(row.id, { notes: trimmed === '' ? null : trimmed });
+
+    startEditTransition(async () => {
+      const outcome = await updateTransactionNoteAction(row.id, trimmed);
+      if (!outcome.ok) toast.error(outcome.error);
+    });
+  }
 
   function changeYear(value: string): void {
     router.push(`/finance/monthly?year=${value}`);
@@ -261,7 +333,7 @@ export function MonthlyGridTable({
       </Table>
 
       <Dialog open={dialog !== null} onOpenChange={(open) => (open ? null : closeDialog())}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col overflow-hidden">
           {dialog?.mode === 'transactions' ? (
             <>
               <DialogHeader>
@@ -276,40 +348,95 @@ export function MonthlyGridTable({
               ) : result.transactions.length === 0 ? (
                 <p className="text-muted-foreground py-8 text-center text-sm">No transactions.</p>
               ) : (
-                <div className="max-h-[60vh] overflow-y-auto">
+                // `min-h-0` overrides the flex-item default of `min-height: auto`,
+                // the vertical-axis twin of the app's own documented `min-w-0`
+                // gotcha — without it this pane refuses to shrink below its
+                // content height and the dialog itself grows past the viewport
+                // instead of scrolling in here, the ONE scroll surface (the
+                // Table's own horizontal scroll, from the shared primitive, is
+                // the only other one, and it is contained the same way it is
+                // everywhere else in the app).
+                <div className="min-h-0 flex-1 overflow-y-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
-                        <TableHead>Account</TableHead>
-                        <TableHead>Merchant</TableHead>
+                        <TableHead className="w-48">Merchant</TableHead>
+                        <TableHead className="w-40">Note</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {result.transactions.map((transaction) => (
-                        <TableRow key={transaction.id}>
-                          <TableCell className="text-muted-foreground whitespace-nowrap">
-                            {transaction.transactionDate}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">{transaction.accountName}</TableCell>
-                          <TableCell>
-                            <div className="font-medium">{transaction.normalizedMerchant}</div>
-                            <div className="text-muted-foreground text-xs">{transaction.originalDescription}</div>
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {transaction.categoryName ?? 'Uncategorized'}
-                          </TableCell>
-                          <TableCell className="text-muted-foreground">
-                            {TRANSACTION_TYPE_LABELS[transaction.transactionType] ?? transaction.transactionType}
-                          </TableCell>
-                          <TableCell className="tabular text-right whitespace-nowrap">
-                            {money(dialog.flipSign ? -transaction.amountCents : transaction.amountCents)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {result.transactions.map((transaction) => {
+                        const rowName = transaction.normalizedMerchant ?? transaction.originalDescription;
+                        return (
+                          <TableRow key={transaction.id}>
+                            <TableCell className="text-muted-foreground whitespace-nowrap">
+                              {transaction.transactionDate}
+                            </TableCell>
+                            <TableCell className="w-48">
+                              <Input
+                                defaultValue={transaction.normalizedMerchant ?? ''}
+                                aria-label={`Merchant for ${rowName}`}
+                                className="h-8"
+                                onBlur={(event) => saveMerchant(transaction, event.target.value)}
+                              />
+                              <div className="text-muted-foreground truncate text-xs" title={transaction.originalDescription}>
+                                {transaction.originalDescription}
+                              </div>
+                            </TableCell>
+                            <TableCell className="w-40">
+                              <Input
+                                defaultValue={transaction.notes ?? ''}
+                                aria-label={`Note for ${rowName}`}
+                                placeholder="Optional"
+                                className="h-8"
+                                onBlur={(event) => saveNote(transaction, event.target.value)}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={transaction.categoryId ?? 'none'}
+                                onValueChange={(value) => changeCategory(transaction, value === 'none' ? null : value)}
+                              >
+                                <SelectTrigger aria-label={`Category for ${rowName}`} className="h-8 w-36">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Uncategorized</SelectItem>
+                                  {categories.map((category) => (
+                                    <SelectItem key={category.id} value={category.id}>
+                                      {category.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell>
+                              <Select
+                                value={transaction.transactionType}
+                                onValueChange={(value) => changeType(transaction, value as ManualTransactionType)}
+                              >
+                                <SelectTrigger aria-label={`Type for ${rowName}`} className="h-8 w-40">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {MANUAL_TRANSACTION_TYPES.map((type) => (
+                                    <SelectItem key={type} value={type}>
+                                      {TRANSACTION_TYPE_LABELS[type]}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="tabular text-right whitespace-nowrap">
+                              {money(dialog.flipSign ? -transaction.amountCents : transaction.amountCents)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>

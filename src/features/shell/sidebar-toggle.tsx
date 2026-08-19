@@ -1,14 +1,17 @@
 'use client';
 
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { setSidebarCollapsed } from './sidebar-actions';
 
-/** Same round-trip pattern as `ThemeToggle` — see `sidebar-actions.ts`. */
-export function SidebarToggle({ collapsed }: { readonly collapsed: boolean }): React.ReactElement {
-  const [pending, startTransition] = useTransition();
+/** Purely presentational — `Sidebar` owns the collapsed state and the toggle handler. */
+export function SidebarToggle({
+  collapsed,
+  onToggle,
+}: {
+  readonly collapsed: boolean;
+  readonly onToggle: () => void;
+}): React.ReactElement {
   const Icon = collapsed ? PanelLeftOpen : PanelLeftClose;
 
   return (
@@ -16,11 +19,8 @@ export function SidebarToggle({ collapsed }: { readonly collapsed: boolean }): R
       variant="ghost"
       size="icon"
       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-      disabled={pending}
       className="size-8"
-      onClick={() => startTransition(async () => {
-        await setSidebarCollapsed(!collapsed);
-      })}
+      onClick={onToggle}
     >
       <Icon className="size-4" />
     </Button>

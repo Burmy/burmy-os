@@ -138,15 +138,14 @@ describe('listTransactionsLedger', () => {
     expect(page.totalCount).toBe(3);
   });
 
-  it('filters by year, month, account, category, type, and status composed together', async () => {
+  it('filters by year, month, category, type, and status composed together', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    const checkingId = await makeAccountId(owner, 'checking', 'Checking');
-    const cardId = await makeAccountId(owner, 'credit_card', 'Card');
+    const accountId = await makeAccountId(owner);
     const category = await categories.createCategory(owner, { name: 'Gas', slug: 'gas', kind: 'spending' });
 
     const match = await seedTransaction({
       ownerId: owner,
-      accountId: checkingId,
+      accountId,
       date: '2026-03-10',
       transactionType: 'expense',
       categoryId: category.id,
@@ -154,15 +153,7 @@ describe('listTransactionsLedger', () => {
     });
     await seedTransaction({
       ownerId: owner,
-      accountId: cardId, // wrong account
-      date: '2026-03-10',
-      transactionType: 'expense',
-      categoryId: category.id,
-      reviewStatus: 'confirmed',
-    });
-    await seedTransaction({
-      ownerId: owner,
-      accountId: checkingId,
+      accountId,
       date: '2026-04-10', // wrong month
       transactionType: 'expense',
       categoryId: category.id,
@@ -174,7 +165,6 @@ describe('listTransactionsLedger', () => {
       {
         year: 2026,
         month: 3,
-        accountId: checkingId,
         categoryId: category.id,
         transactionType: 'expense',
         reviewStatus: 'confirmed',
@@ -298,26 +288,6 @@ describe('getLedgerSummary', () => {
     expect(summary.excludedCount).toBe(2);
   });
 
-  it('scopes to the same filter as the listing (an account filter isolates one leg)', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    const checkingId = await makeAccountId(owner, 'checking', 'Checking');
-    const cardId = await makeAccountId(owner, 'credit_card', 'Card');
-    await seedTransaction({
-      ownerId: owner,
-      accountId: checkingId,
-      amountCents: 20000,
-      transactionType: 'credit_card_payment',
-    });
-    await seedTransaction({
-      ownerId: owner,
-      accountId: cardId,
-      amountCents: -20000,
-      transactionType: 'credit_card_payment',
-    });
-
-    const summary = await transactions.getLedgerSummary(owner, { year: 2026, accountId: checkingId });
-    expect(summary.excludedCount).toBe(1);
-  });
 });
 
 describe('historical category correction, via the exact M7 mutation function', () => {
@@ -352,6 +322,52 @@ describe('historical category correction, via the exact M7 mutation function', (
     const { sql } = await harness();
     const memory = await sql`select * from "finance_merchant_memory" where "owner_id" = ${owner}`;
     expect(memory).toHaveLength(0);
+  });
+});
+
+describe('updateTransactionMerchant / updateTransactionNote — post-commit editing (round-2 UX pass)', () => {
+  async function getMerchantAndNotes(id: string): Promise<{ merchant: string | null; notes: string | null }> {
+    const { sql } = await harness();
+    const [row] = await sql<{ normalized_merchant: string | null; notes: string | null }[]>`
+      select "normalized_merchant", "notes" from "finance_transactions" where "id" = ${id}
+    `;
+    return { merchant: row?.normalized_merchant ?? null, notes: row?.notes ?? null };
+  }
+
+  it('corrects the display name without touching dedupe identity or merchant memory', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const id = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'ORIGINAL NAME' });
+
+    await transactions.updateTransactionMerchant(owner, id, 'RENAMED MERCHANT');
+
+    expect((await getMerchantAndNotes(id)).merchant).toBe('RENAMED MERCHANT');
+    const { sql } = await harness();
+    const memory = await sql`select * from "finance_merchant_memory" where "owner_id" = ${owner}`;
+    expect(memory).toHaveLength(0);
+  });
+
+  it('sets and clears a note', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const id = await seedTransaction({ ownerId: owner, accountId });
+
+    await transactions.updateTransactionNote(owner, id, 'Split with roommate');
+    expect((await getMerchantAndNotes(id)).notes).toBe('Split with roommate');
+
+    await transactions.updateTransactionNote(owner, id, null);
+    expect((await getMerchantAndNotes(id)).notes).toBeNull();
+  });
+
+  it('refuses to edit a transaction owned by someone else', async () => {
+    const alice = await makeOwner('alice@burmy.test');
+    const bob = await makeOwner('bob@burmy.test');
+    const aliceAccount = await makeAccountId(alice);
+    const id = await seedTransaction({ ownerId: alice, accountId: aliceAccount, normalizedMerchant: 'ALICE MERCHANT' });
+
+    await expect(transactions.updateTransactionMerchant(bob, id, 'HIJACKED')).rejects.toThrow();
+    await expect(transactions.updateTransactionNote(bob, id, 'hijacked note')).rejects.toThrow();
+    expect((await getMerchantAndNotes(id)).merchant).toBe('ALICE MERCHANT');
   });
 });
 
@@ -493,8 +509,6 @@ describe('listTransactionsForExport', () => {
     const csv = csvExport.buildTransactionsCsv(
       rows.map((r) => ({
         transactionDate: r.transactionDate,
-        accountName: r.accountName,
-        institution: r.institution,
         normalizedMerchant: r.normalizedMerchant,
         originalDescription: r.originalDescription,
         amountCents: r.amountCents,
@@ -508,7 +522,7 @@ describe('listTransactionsForExport', () => {
     const dataLines = csv.split('\r\n').filter(Boolean).slice(1);
     expect(dataLines).toHaveLength(Number(expected?.n));
     const csvTotalCents = dataLines.reduce((sum, line) => {
-      const amountField = Number(line.split(',')[5]) * 100;
+      const amountField = Number(line.split(',')[3]) * 100;
       return sum + Math.round(amountField);
     }, 0);
     expect(csvTotalCents).toBe(Number(expected?.total));

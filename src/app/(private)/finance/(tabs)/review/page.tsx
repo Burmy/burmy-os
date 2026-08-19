@@ -2,7 +2,6 @@ import type { Metadata } from 'next';
 
 import { ReviewQueue } from '@/features/finance/review/review-queue';
 import { requireOwner } from '@/server/auth/owner';
-import { listAccounts } from '@/server/db/finance/accounts';
 import { listCategories } from '@/server/db/finance/categories';
 import {
   type ReviewStatus,
@@ -40,7 +39,6 @@ export default async function ReviewPage({
   const params = await searchParams;
 
   const status = readStatus(readParam(params.status));
-  const accountId = readParam(params.account);
   const categoryParam = readParam(params.category);
   const categoryId = categoryParam === 'uncategorized' ? 'uncategorized' : categoryParam;
   const transactionType = readParam(params.type) as TransactionType | undefined;
@@ -51,17 +49,14 @@ export default async function ReviewPage({
   // literal, even though each is fine on its own (see CLAUDE.md).
   const reviewFilters: {
     status: StatusFilter;
-    accountId?: string;
     categoryId?: string;
     transactionType?: TransactionType;
   } = { status };
-  if (accountId) reviewFilters.accountId = accountId;
   if (categoryId) reviewFilters.categoryId = categoryId;
   if (transactionType) reviewFilters.transactionType = transactionType;
 
-  const [transactions, accounts, categories] = await Promise.all([
+  const [transactions, categories] = await Promise.all([
     listTransactionsForReview(owner.userId, reviewFilters),
-    listAccounts(owner.userId),
     listCategories(owner.userId),
   ]);
 
@@ -73,12 +68,7 @@ export default async function ReviewPage({
         of your way.
       </p>
 
-      <ReviewQueue
-        transactions={transactions}
-        accounts={accounts}
-        categories={categories}
-        filters={reviewFilters}
-      />
+      <ReviewQueue transactions={transactions} categories={categories} filters={reviewFilters} />
     </div>
   );
 }

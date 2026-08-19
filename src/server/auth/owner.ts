@@ -39,6 +39,7 @@
 
 import { eq } from 'drizzle-orm';
 import { headers as nextHeaders } from 'next/headers';
+import { cache } from 'react';
 
 import { getDb } from '@/server/db';
 import { user as userTable } from '@/server/db/schema';
@@ -68,9 +69,16 @@ export class SecurityUnavailableError extends Error {
 /**
  * Authenticate the owner via Cloudflare Access and resolve their row.
  *
+ * Wrapped in React's `cache()`: every private layout AND every page beneath
+ * it calls this itself (see the file-level comment above), so a single
+ * navigation re-verifies the JWT and re-queries the owner row 2-3 times with
+ * no caching. `cache()` dedupes those to one call per render pass — safe
+ * because it does not change WHAT is checked, only how many times, and it is
+ * scoped per-request, never leaking across requests.
+ *
  * @throws SecurityUnavailableError · UnauthorizedError
  */
-export async function requireOwner(): Promise<OwnerContext> {
+export const requireOwner = cache(async function requireOwner(): Promise<OwnerContext> {
   const requestHeaders = await nextHeaders();
 
   // ── Cloudflare Access: verify the JWT, confirm it is the owner ────────────
@@ -118,7 +126,7 @@ export async function requireOwner(): Promise<OwnerContext> {
   }
 
   return { userId: row.id, email: row.email };
-}
+});
 
 /**
  * Map a guard failure onto an HTTP response for Route Handlers.

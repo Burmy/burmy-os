@@ -12,7 +12,7 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
-import { financeAccounts, financeCategories, financeTransactions } from '@/server/db/schema';
+import { financeCategories, financeTransactions } from '@/server/db/schema';
 import { monthRange } from '@/server/finance/dashboard';
 import type { GridAggregateRow } from '@/server/finance/grid';
 
@@ -86,12 +86,13 @@ export type DrillDownSelector =
 export interface DrillDownTransaction {
   readonly id: string;
   readonly transactionDate: string;
-  readonly accountName: string;
   readonly normalizedMerchant: string | null;
   readonly originalDescription: string;
   readonly amountCents: number;
+  readonly categoryId: string | null;
   readonly categoryName: string | null;
   readonly transactionType: string;
+  readonly notes: string | null;
 }
 
 /**
@@ -117,15 +118,15 @@ export async function getCellTransactions(
     .select({
       id: financeTransactions.id,
       transactionDate: financeTransactions.transactionDate,
-      accountName: financeAccounts.name,
       normalizedMerchant: financeTransactions.normalizedMerchant,
       originalDescription: financeTransactions.originalDescription,
       amountCents: financeTransactions.amountCents,
+      categoryId: financeTransactions.categoryId,
       categoryName: financeCategories.name,
       transactionType: financeTransactions.transactionType,
+      notes: financeTransactions.notes,
     })
     .from(financeTransactions)
-    .innerJoin(financeAccounts, eq(financeAccounts.id, financeTransactions.accountId))
     .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
     .where(and(...conditions))
     .orderBy(asc(financeTransactions.transactionDate))

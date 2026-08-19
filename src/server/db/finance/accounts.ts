@@ -85,6 +85,35 @@ export async function getAccount(ownerId: string, id: string): Promise<FinanceAc
   return rowToAccount(row);
 }
 
+const HIDDEN_ACCOUNT_NAMES: Record<'checking' | 'credit_card', string> = {
+  checking: 'Checking',
+  credit_card: 'Credit Card',
+};
+
+/**
+ * Resolve the owner's one hidden account for a given type, creating it on
+ * first use. Account management is fully automatic now (round-2 UX pass) —
+ * the owner never picks or names an account, so this is the ONLY way an
+ * account is ever created; there is no create/edit Server Action left.
+ * `type` comes from `defaultAccountTypeFor()` (`finance/import/account-type.ts`),
+ * derived from the detected statement format, not from user input.
+ */
+export async function resolveHiddenAccount(
+  ownerId: string,
+  type: 'checking' | 'credit_card',
+): Promise<FinanceAccount> {
+  const existing = await listAccounts(ownerId);
+  const found = existing.find((account) => account.type === type && account.isActive);
+  if (found) return found;
+
+  return createAccount(ownerId, {
+    name: HIDDEN_ACCOUNT_NAMES[type],
+    type,
+    institution: null,
+    lastFour: null,
+  });
+}
+
 export async function createAccount(
   ownerId: string,
   input: AccountInput,

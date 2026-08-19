@@ -164,30 +164,29 @@ describe('listTransactionsForReview', () => {
     expect(rows).toHaveLength(3);
   });
 
-  it('filters by account, category, and type, composed together', async () => {
+  it('filters by category and type, composed together', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    const checkingId = await makeAccountId(owner, 'checking', 'Checking');
-    const cardId = await makeAccountId(owner, 'credit_card', 'Card');
+    const accountId = await makeAccountId(owner);
     const category = await categories.createCategory(owner, { name: 'Gas', slug: 'gas', kind: 'spending' });
 
     const match = await seedTransaction({
       ownerId: owner,
-      accountId: checkingId,
+      accountId,
       transactionType: 'expense',
       categoryId: category.id,
       reviewStatus: 'confirmed',
     });
+    // Same category, different type — the type filter alone must exclude it.
     await seedTransaction({
       ownerId: owner,
-      accountId: cardId,
-      transactionType: 'expense',
+      accountId,
+      transactionType: 'income',
       categoryId: category.id,
       reviewStatus: 'confirmed',
     });
 
     const rows = await transactions.listTransactionsForReview(owner, {
       status: 'all',
-      accountId: checkingId,
       categoryId: category.id,
       transactionType: 'expense',
     });
@@ -550,6 +549,26 @@ describe('bulkUpdateCategory', () => {
 
     const remembered = await merchantMemory.getMerchantMemoryForKeys(owner, ['FEE A', 'FEE B']);
     expect(remembered.size).toBe(0);
+  });
+
+  it('rememberMerchant: true upserts memory for every DISTINCT merchant in the selection, not once per row', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const category = await categories.createCategory(owner, { name: 'Fees', slug: 'fees-2', kind: 'spending' });
+
+    // Two rows share ACMEFEE, one is a different merchant — three rows, two
+    // distinct merchants, proving this dedupes rather than writing per row.
+    const a = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'ACMEFEE' });
+    const b = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'ACMEFEE' });
+    const c = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'OTHERFEE' });
+
+    const updatedCount = await transactions.bulkUpdateCategory(owner, [a, b, c], category.id, true);
+    expect(updatedCount).toBe(3);
+
+    const remembered = await merchantMemory.getMerchantMemoryForKeys(owner, ['ACMEFEE', 'OTHERFEE']);
+    expect(remembered.size).toBe(2);
+    expect(remembered.get('ACMEFEE')?.categoryId).toBe(category.id);
+    expect(remembered.get('OTHERFEE')?.categoryId).toBe(category.id);
   });
 
   it('only updates ids owned by the caller', async () => {

@@ -37,7 +37,6 @@ export async function GET(request: Request): Promise<Response> {
   const raw: {
     year?: string;
     month?: string;
-    account?: string;
     category?: string;
     type?: string;
     status?: string;
@@ -49,7 +48,6 @@ export async function GET(request: Request): Promise<Response> {
   };
   setIfPresent('year', 'year');
   setIfPresent('month', 'month');
-  setIfPresent('account', 'account');
   setIfPresent('category', 'category');
   setIfPresent('type', 'type');
   setIfPresent('status', 'status');
@@ -63,15 +61,13 @@ export async function GET(request: Request): Promise<Response> {
   if (exceedsLimit) {
     return new Response(
       `This filter matches more than ${LEDGER_EXPORT_ROW_LIMIT} transactions and cannot be exported ` +
-        'in one file. Narrow the date range, account, category, or type and try again.',
+        'in one file. Narrow the date range, category, or type and try again.',
       { status: 413, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } },
     );
   }
 
   const exportRows: LedgerExportRow[] = rows.map((row) => ({
     transactionDate: row.transactionDate,
-    accountName: row.accountName,
-    institution: row.institution,
     normalizedMerchant: row.normalizedMerchant,
     originalDescription: row.originalDescription,
     amountCents: row.amountCents,

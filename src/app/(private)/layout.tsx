@@ -48,7 +48,7 @@ export default async function PrivateLayout({
 
   return (
     <div className="flex min-h-screen">
-      <Sidebar footer={<ThemeToggle current={theme} />} collapsed={sidebarCollapsed} />
+      <Sidebar footer={<ThemeToggle current={theme} />} initialCollapsed={sidebarCollapsed} />
 
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
         <header className="border-b md:hidden">

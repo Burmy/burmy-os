@@ -6,7 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
-import { listAccounts } from '@/server/db/finance/accounts';
+import { resolveHiddenAccount } from '@/server/db/finance/accounts';
 import { ImportNotReviewableError, NotFoundError } from '@/server/db/finance/errors';
 import {
   type FinanceImportRowView,
@@ -27,22 +27,11 @@ import { getMerchantMemoryForKeys } from '@/server/db/finance/merchant-memory';
 import { MANUAL_TRANSACTION_TYPES } from '@/server/finance/classify/manual';
 import { extractConfirmationToken } from '@/server/finance/classify/counterpart';
 import { DEDUPE_KEY_VERSION, dedupeKey } from '@/server/finance/dedupe';
-import {
-  AccountFormatMismatchError,
-  assertAccountCompatible,
-  isAccountCompatible,
-} from '@/server/finance/import/compatibility';
+import { defaultAccountTypeFor } from '@/server/finance/import/account-type';
 import { parseBoaCardAddressHint, planStagedDecisions } from '@/server/finance/import/staging';
 import { normalizeMerchant } from '@/server/finance/merchant';
 import { ParseError, detectFormat, parseStatementTolerant } from '@/server/finance/parse';
-import {
-  type ActionResult,
-  type CommitActionResult,
-  type DetectResult,
-  type UploadResult,
-  fail,
-  ok,
-} from './action-result';
+import { type ActionResult, type CommitActionResult, type UploadResult, fail, ok } from './action-result';
 
 /**
  * Server Actions for the import pipeline: upload, per-row decisions, commit,
@@ -58,7 +47,6 @@ import {
 
 /** Turn one of the domain's expected failures into its message; anything else propagates. */
 function describeError(error: unknown): string {
-  if (error instanceof AccountFormatMismatchError) return error.message;
   if (error instanceof ParseError) return error.message;
   if (error instanceof NotFoundError) return error.message;
   if (error instanceof ImportNotReviewableError) return error.message;
@@ -80,7 +68,6 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
-const accountIdSchema = z.string().uuid();
 const importIdSchema = z.string().uuid();
 const rowIdSchema = z.string().uuid();
 
@@ -94,68 +81,24 @@ function validateFile(file: FormDataEntryValue | null): File | string {
 }
 
 /**
- * Detect a statement's format WITHOUT staging anything — read-only, so the
- * import Sheet can narrow the account picker to compatible accounts (or
- * auto-select the one that qualifies) before the owner commits to an account
- * choice. `uploadStatementAction` re-detects and re-checks compatibility
- * itself before staging; this is a UX convenience, not the authoritative
- * check — that one stays exactly where it was.
- */
-export async function detectStatementFormatAction(formData: FormData): Promise<DetectResult> {
-  const owner = await requireOwner();
-
-  const file = validateFile(formData.get('file'));
-  if (typeof file === 'string') return { ok: false, error: file };
-
-  const bytes = new Uint8Array(await file.arrayBuffer());
-
-  let format;
-  try {
-    format = detectFormat(bytes);
-  } catch (error) {
-    return { ok: false, error: describeError(error) };
-  }
-
-  if (format.adapter === 'generic') {
-    return {
-      ok: false,
-      error:
-        "This file's format isn't recognized yet — Burmy currently supports Bank of America " +
-        'checking and credit card exports.',
-    };
-  }
-
-  const accounts = await listAccounts(owner.userId);
-  const compatibleAccountIds = accounts
-    .filter((account) => account.isActive && isAccountCompatible(format.adapter, account.type))
-    .map((account) => account.id);
-
-  return { ok: true, adapter: format.adapter, compatibleAccountIds };
-}
-
-/**
  * Upload, detect, parse, and stage — in memory, start to finish.
  *
  * `bytes` never touches the filesystem and is never written anywhere; it goes
  * out of scope when this function returns, on every path, success or failure.
  * That is the entire "guaranteed deletion" story for a 10 MB upload — there is
  * nothing to delete because nothing was ever persisted.
+ *
+ * The account is resolved automatically from the detected format — the owner
+ * never picks one (see `resolveHiddenAccount()`, `db/finance/accounts.ts`).
+ * There is nothing left to mismatch: the account is derived FROM the format,
+ * so the old pre-staging compatibility check this function used to run is
+ * gone along with the picker it protected.
  */
 export async function uploadStatementAction(formData: FormData): Promise<UploadResult> {
   const owner = await requireOwner();
 
-  const accountIdRaw = formData.get('accountId');
   const file = validateFile(formData.get('file'));
-
-  const accountIdResult = accountIdSchema.safeParse(accountIdRaw);
-  if (!accountIdResult.success) return failUpload('Choose an account.');
-  const accountId = accountIdResult.data;
-
   if (typeof file === 'string') return failUpload(file);
-
-  const accounts = await listAccounts(owner.userId);
-  const account = accounts.find((candidate) => candidate.id === accountId);
-  if (!account) return failUpload('Choose an account.');
 
   const bytes = new Uint8Array(await file.arrayBuffer());
 
@@ -173,11 +116,8 @@ export async function uploadStatementAction(formData: FormData): Promise<UploadR
     );
   }
 
-  try {
-    assertAccountCompatible(format.adapter, account.type);
-  } catch (error) {
-    return failUpload(describeError(error));
-  }
+  const account = await resolveHiddenAccount(owner.userId, defaultAccountTypeFor(format.adapter));
+  const accountId = account.id;
 
   let parsed;
   try {

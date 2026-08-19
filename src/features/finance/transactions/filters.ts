@@ -12,7 +12,6 @@ import type { ReviewStatus, TransactionType } from '@/server/db/finance/transact
 export interface RawLedgerParams {
   readonly year?: string;
   readonly month?: string;
-  readonly account?: string;
   readonly category?: string;
   readonly type?: string;
   readonly status?: string;
@@ -48,7 +47,6 @@ export function parseLedgerFilters(
   const filters: {
     year: number;
     month?: number;
-    accountId?: string;
     categoryId?: string;
     transactionType?: TransactionType;
     reviewStatus?: ReviewStatus | 'all';
@@ -57,8 +55,6 @@ export function parseLedgerFilters(
 
   const parsedMonth = raw.month ? Number.parseInt(raw.month, 10) : NaN;
   if (Number.isFinite(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12) filters.month = parsedMonth;
-
-  if (raw.account) filters.accountId = raw.account;
 
   if (raw.category === 'uncategorized') filters.categoryId = 'uncategorized';
   else if (raw.category) filters.categoryId = raw.category;

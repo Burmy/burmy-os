@@ -62,17 +62,22 @@ async function signIntoApp(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/finance\/monthly$/);
 }
 
-async function addAccount(page: Page, name: string, type: 'Checking' | 'Credit card' = 'Checking'): Promise<void> {
-  await page.goto('/settings/finance/accounts');
-  await page.getByRole('button', { name: 'Add account' }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Name').fill(name);
-  if (type !== 'Checking') {
-    await dialog.getByLabel('Type').click();
-    await page.getByRole('option', { name: type }).click();
-  }
-  await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('cell', { name, exact: true })).toBeVisible();
+/**
+ * No account-management UI exists anymore (round-2 UX pass) — accounts are
+ * auto-provisioned from an upload's detected format, never created by hand.
+ * These specs still need a real account row to attach seeded transactions
+ * to, so this inserts one directly, named the same way
+ * `resolveHiddenAccount()` would.
+ */
+async function seedAccount(ownerId: string, type: 'checking' | 'credit_card' = 'checking'): Promise<string> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ id: string }[]>`
+      insert into "finance_accounts" ("owner_id", "name", "type", "is_active", "sort_order")
+      values (${ownerId}, ${type === 'checking' ? 'Checking' : 'Credit Card'}, ${type}, true, 0)
+      returning "id"
+    `;
+    return rows[0]!.id;
+  });
 }
 
 async function addCategory(page: Page, name: string): Promise<void> {
@@ -89,17 +94,6 @@ async function getOwnerId(): Promise<string> {
     const rows = await sql<{ id: string }[]>`select "id" from "user" where "email" = ${OWNER_EMAIL.toLowerCase()}`;
     const row = rows[0];
     if (!row) throw new Error('owner not found');
-    return row.id;
-  });
-}
-
-async function getAccountId(ownerId: string, name: string): Promise<string> {
-  return withDb(async (sql) => {
-    const rows = await sql<{ id: string }[]>`
-      select "id" from "finance_accounts" where "owner_id" = ${ownerId} and "name" = ${name}
-    `;
-    const row = rows[0];
-    if (!row) throw new Error(`account "${name}" not found`);
     return row.id;
   });
 }
@@ -151,11 +145,10 @@ test.describe('review queue', () => {
 
   test('assigning a category resolves a needs_review transaction and it leaves the queue', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Restaurants');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
     await seedTransaction({
       ownerId,
       accountId,
@@ -200,12 +193,10 @@ test.describe('review queue', () => {
 
   test('correcting one leg of a matched pair unlinks both sides', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
-    await addAccount(page, 'BoA Card', 'Credit card');
 
     const ownerId = await getOwnerId();
-    const checkingId = await getAccountId(ownerId, 'BoA Checking');
-    const cardId = await getAccountId(ownerId, 'BoA Card');
+    const checkingId = await seedAccount(ownerId, 'checking');
+    const cardId = await seedAccount(ownerId, 'credit_card');
 
     const checkingLeg = await seedTransaction({
       ownerId,
@@ -233,7 +224,7 @@ test.describe('review queue', () => {
     await expect(page.getByText('Online Banking payment to CRD 9903')).toBeVisible();
 
     const row = page.getByRole('row', { name: /Online Banking payment/ });
-    await expect(row.getByText(/Linked to BoA Card/)).toBeVisible();
+    await expect(row.getByText(/Linked to Credit Card/)).toBeVisible();
 
     await row.getByLabel(/^Type for/).click();
     await page.getByRole('option', { name: 'Expense', exact: true }).click();
@@ -265,10 +256,9 @@ test.describe('review queue', () => {
 
   test('filters stay collapsed by default and expand on request', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
     await seedTransaction({ ownerId, accountId, description: 'ONE THING TO REVIEW' });
 
     await page.goto('/finance/review');
@@ -278,11 +268,9 @@ test.describe('review queue', () => {
     // closed, so the common (one- or two-row) case has nothing to look past.
     const toggle = page.getByRole('button', { name: 'Filters' });
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(page.getByRole('combobox', { name: 'Account', exact: true })).not.toBeVisible();
 
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByRole('combobox', { name: 'Account', exact: true })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Category', exact: true })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Type', exact: true })).toBeVisible();
@@ -290,10 +278,9 @@ test.describe('review queue', () => {
 
   test('a non-default filter in the URL opens the toolbar automatically', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
     await seedTransaction({ ownerId, accountId, reviewStatus: 'confirmed', description: 'ALREADY CONFIRMED' });
 
     // status=all differs from the needs_review default -> the toolbar should
@@ -302,5 +289,40 @@ test.describe('review queue', () => {
     await expect(page.getByText('ALREADY CONFIRMED')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toBeVisible();
+  });
+
+  test('bulk category assignment with "remember" writes merchant memory for every distinct merchant selected', async ({
+    page,
+  }) => {
+    await signIntoApp(page);
+    await addCategory(page, 'Shopping');
+
+    const ownerId = await getOwnerId();
+    const accountId = await seedAccount(ownerId);
+    await seedTransaction({ ownerId, accountId, description: 'ACME STORE #1', normalizedMerchant: 'ACME STORE' });
+    await seedTransaction({ ownerId, accountId, description: 'ACME STORE #2', normalizedMerchant: 'ACME STORE' });
+    await seedTransaction({ ownerId, accountId, description: 'WIDGET CO', normalizedMerchant: 'WIDGET CO' });
+
+    await page.goto('/finance/review');
+    await page.getByRole('checkbox', { name: 'Select all' }).check();
+    await expect(page.getByText('3 selected')).toBeVisible();
+
+    await page.getByRole('combobox', { name: 'Category for selected transactions' }).click();
+    await page.getByRole('option', { name: 'Shopping' }).click();
+    await page.getByRole('checkbox', { name: 'Remember these merchants' }).check();
+    await page.getByRole('button', { name: 'Set category for 3' }).click();
+
+    await expect(page.getByText('3 transactions updated')).toBeVisible();
+
+    const memory = await withDb(async (sql) => {
+      const rows = await sql<{ merchant_key: string }[]>`
+        select "merchant_key" from "finance_merchant_memory" where "owner_id" = ${ownerId} order by "merchant_key"
+      `;
+      return rows.map((r) => r.merchant_key);
+    });
+    // Two distinct merchants selected (ACME STORE appears twice) -> exactly
+    // two memory rows, not three — proves the bulk write dedupes by merchant
+    // rather than writing (and re-writing) once per selected row.
+    expect(memory).toEqual(['ACMESTORE', 'WIDGETCO']);
   });
 });

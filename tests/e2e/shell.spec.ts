@@ -4,7 +4,9 @@ import { type Page, expect, test } from '@playwright/test';
 import postgres from 'postgres';
 
 /**
- * The M3 app shell, accounts and categories — through a real browser.
+ * The M3 app shell and categories — through a real browser. Accounts is
+ * gone entirely as user-facing UI (round-2 UX pass) — see finance-accounts.test.ts
+ * for `resolveHiddenAccount()`'s own coverage.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHY THIS EXISTS ON TOP OF THE COMPONENT AND INTEGRATION SUITES
@@ -83,18 +85,12 @@ test.describe('app shell', () => {
 
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
 
-    // Settings is now a real app-level landing, not a redirect straight to
-    // Accounts — the sidebar link goes to the section, not one page in it.
+    // Settings has nothing left but Categories (Accounts is gone entirely —
+    // round-2 UX pass), so the sidebar link redirects straight there instead
+    // of landing on a one-item list of sections.
     await page.getByRole('link', { name: 'Settings' }).click();
-    await expect(page).toHaveURL(/\/settings$/);
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-
-    await page.getByRole('link', { name: 'Accounts' }).click();
-    await expect(page).toHaveURL(/\/settings\/finance\/accounts$/);
-    await expect(page.getByRole('heading', { name: 'Accounts' })).toBeVisible();
-
-    await page.getByRole('link', { name: 'Categories' }).click();
     await expect(page).toHaveURL(/\/settings\/finance\/categories$/);
+    await expect(page.getByRole('heading', { name: 'Categories' })).toBeVisible();
 
     await page.getByRole('link', { name: 'Finance' }).click();
     await expect(page).toHaveURL(/\/finance\/monthly$/);
@@ -126,7 +122,7 @@ test.describe('app shell', () => {
     // Fixes a real discoverability gap: before this pass, Review was reachable
     // only via a conditional banner that disappeared once nothing needed
     // review, and Transactions only via a toolbar button. Both are now
-    // always-visible tabs, exactly like Settings' own Accounts/Categories.
+    // always-visible tabs.
     await expect(page.getByRole('navigation', { name: 'Section' })).toBeVisible();
 
     await page.getByRole('link', { name: 'Transactions', exact: true }).click();
@@ -147,6 +143,13 @@ test.describe('app shell', () => {
     const nav = page.getByRole('navigation', { name: 'Main' });
     await expect(nav.getByRole('link', { name: 'Finance' })).toBeVisible();
 
+    // The toggle itself is instant client state now (round-2 perf pass) —
+    // persistence to the cookie is a fire-and-forget background write, so
+    // the visible-immediately assertions below prove nothing about whether
+    // that write has landed yet. Wait for its own network response before
+    // reloading, same reasoning CLAUDE.md documents for the M5 import flow:
+    // an assertion right after a mutation can pass on optimistic state alone.
+    const persisted = page.waitForResponse((response) => response.request().method() === 'POST');
     await page.getByRole('button', { name: 'Collapse sidebar' }).click();
     // The visible text label disappears in icon-rail mode, but the link
     // itself is still there and still reachable by role — its accessible
@@ -156,6 +159,7 @@ test.describe('app shell', () => {
     await expect(nav.getByText('Finance', { exact: true })).toHaveCount(0);
     await expect(nav.getByRole('link', { name: 'Finance' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Expand sidebar' })).toBeVisible();
+    await persisted;
 
     await page.reload();
     // Server-rendered from the cookie, same no-flash reasoning as the theme
@@ -295,70 +299,5 @@ test.describe('categories', () => {
 
     await page.reload();
     await expect(page.getByRole('button', { name: 'Move Gas up' })).toBeDisabled();
-  });
-});
-
-test.describe('accounts', () => {
-  test.beforeEach(async () => {
-    await resetAll();
-  });
-
-  test('refuses a full card number rather than truncating it', async ({ page }) => {
-    // Storing the last four of a pasted 16-digit number would mean the full
-    // number was accepted by the application, silently.
-    await signIntoApp(page);
-    await page.goto('/settings/finance/accounts');
-
-    await page.getByRole('button', { name: 'Add account' }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Name').fill('BoA Checking');
-
-    // `maxLength` stops typing, so bypass it the way a paste would.
-    await dialog.getByLabel('Last 4 digits').evaluate((element) => {
-      const input = element as HTMLInputElement;
-      input.value = '4111111111111111';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    });
-
-    await dialog.getByRole('button', { name: 'Save' }).click();
-
-    await expect(page.getByRole('alert')).toContainText('exactly 4 digits');
-
-    const stored = await withDb(async (sql) => {
-      const rows = await sql<{ n: string }[]>`select count(*)::text as n from "finance_accounts"`;
-      return Number(rows[0]?.n ?? '0');
-    });
-    expect(stored).toBe(0);
-  });
-
-  test('creates an account with only the last four stored', async ({ page }) => {
-    await signIntoApp(page);
-    await page.goto('/settings/finance/accounts');
-
-    await page.getByRole('button', { name: 'Add account' }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('Name').fill('BoA Checking');
-    await dialog.getByLabel('Institution').fill('Bank of America');
-    await dialog.getByLabel('Last 4 digits').fill('1234');
-    await dialog.getByRole('button', { name: 'Save' }).click();
-
-    // `exact` matters: the actions cell's accessible name also contains the
-    // account name ("Edit BoA Checking Deactivate"), so a loose match is ambiguous.
-    await expect(page.getByRole('cell', { name: 'BoA Checking', exact: true })).toBeVisible();
-    await expect(page.getByRole('cell', { name: '1234', exact: true })).toBeVisible();
-  });
-
-  test('does not offer a cash account type', async ({ page }) => {
-    // `cash` exists in the database enum from M1, but cash spending is explicitly
-    // not tracked in V1 — offering it would invite data the importer cannot make.
-    await signIntoApp(page);
-    await page.goto('/settings/finance/accounts');
-
-    await page.getByRole('button', { name: 'Add account' }).click();
-    await page.getByRole('dialog').getByLabel('Type').click();
-
-    await expect(page.getByRole('option', { name: 'Checking' })).toBeVisible();
-    await expect(page.getByRole('option', { name: 'Brokerage' })).toBeVisible();
-    await expect(page.getByRole('option', { name: /cash/i })).toHaveCount(0);
   });
 });

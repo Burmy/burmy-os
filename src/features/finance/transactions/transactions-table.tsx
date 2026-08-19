@@ -24,7 +24,6 @@ import { toast } from '@/components/ui/toast';
 import { EmptyState } from '@/components/finance/empty-state';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
-import type { FinanceAccount } from '@/server/db/finance/accounts';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type {
   LedgerFilters,
@@ -34,7 +33,12 @@ import type {
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type ManualTransactionType } from '@/server/finance/classify/manual';
 import { LEDGER_TRANSACTION_TYPES } from './filters';
-import { updateTransactionCategoryAction, updateTransactionTypeAction } from './actions';
+import {
+  updateTransactionCategoryAction,
+  updateTransactionMerchantAction,
+  updateTransactionNoteAction,
+  updateTransactionTypeAction,
+} from './actions';
 
 const STATUS_LABELS: Record<string, string> = {
   all: 'All',
@@ -56,14 +60,12 @@ function categoryLabel(category: FinanceCategory): string {
 
 export function TransactionsTable({
   page,
-  accounts,
   categories,
   years,
   filters,
   summary,
 }: {
   readonly page: LedgerPage;
-  readonly accounts: readonly FinanceAccount[];
   readonly categories: readonly FinanceCategory[];
   readonly years: readonly number[];
   readonly filters: LedgerFilters;
@@ -137,6 +139,28 @@ export function TransactionsTable({
     });
   }
 
+  function saveMerchant(row: LedgerTransaction, value: string): void {
+    const trimmed = value.trim();
+    if (trimmed === (row.normalizedMerchant ?? '')) return;
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, normalizedMerchant: trimmed || null } : r)));
+
+    startTransition(async () => {
+      const result = await updateTransactionMerchantAction(row.id, trimmed);
+      if (!result.ok) toast.error(result.error);
+    });
+  }
+
+  function saveNote(row: LedgerTransaction, value: string): void {
+    const trimmed = value.trim();
+    if (trimmed === (row.notes ?? '')) return;
+    setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, notes: trimmed || null } : r)));
+
+    startTransition(async () => {
+      const result = await updateTransactionNoteAction(row.id, trimmed);
+      if (!result.ok) toast.error(result.error);
+    });
+  }
+
   const exportParams = new URLSearchParams(searchParams.toString());
   exportParams.delete('page'); // export always reflects the current filter, never the on-screen page
   const exportHref = `/finance/transactions/export?${exportParams.toString()}`;
@@ -161,12 +185,6 @@ export function TransactionsTable({
             ['all', 'All months'],
             ...Array.from({ length: 12 }, (_, i) => [String(i + 1), MONTH_NAMES[i]!] as [string, string]),
           ]}
-        />
-        <FilterSelect
-          label="Account"
-          value={filters.accountId ?? 'all'}
-          onChange={(value) => setFilter('account', value === 'all' ? undefined : value)}
-          options={[['all', 'All accounts'], ...accounts.map((a) => [a.id, a.name] as [string, string])]}
         />
         <FilterSelect
           label="Category"
@@ -242,8 +260,8 @@ export function TransactionsTable({
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
-                <TableHead>Account</TableHead>
                 <TableHead>Merchant</TableHead>
+                <TableHead>Note</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Category</TableHead>
                 <TableHead>Type</TableHead>
@@ -258,10 +276,25 @@ export function TransactionsTable({
                     <TableCell className="text-muted-foreground whitespace-nowrap">
                       {row.transactionDate}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{row.accountName}</TableCell>
-                    <TableCell>
-                      <div className="font-medium">{row.normalizedMerchant}</div>
-                      <div className="text-muted-foreground text-xs">{row.originalDescription}</div>
+                    <TableCell className="w-48">
+                      <Input
+                        defaultValue={row.normalizedMerchant ?? ''}
+                        aria-label={`Merchant for ${rowName}`}
+                        className="h-8"
+                        onBlur={(event) => saveMerchant(row, event.target.value)}
+                      />
+                      <div className="text-muted-foreground truncate text-xs" title={row.originalDescription}>
+                        {row.originalDescription}
+                      </div>
+                    </TableCell>
+                    <TableCell className="w-40">
+                      <Input
+                        defaultValue={row.notes ?? ''}
+                        aria-label={`Note for ${rowName}`}
+                        placeholder="Optional"
+                        className="h-8"
+                        onBlur={(event) => saveNote(row, event.target.value)}
+                      />
                     </TableCell>
                     <TableCell>
                       <Money valueCents={row.amountCents} />

@@ -79,11 +79,11 @@ test.describe('authentication', () => {
   }) => {
     await provisionOwner();
 
-    await page.goto('/settings/finance/accounts');
+    await page.goto('/settings/finance/categories');
 
     // No bounce through /sign-in or /access-denied — the owner row resolves
     // and the page renders exactly where it was asked for.
-    await expect(page).toHaveURL(/\/settings\/finance\/accounts$/);
+    await expect(page).toHaveURL(/\/settings\/finance\/categories$/);
   });
 
   test('an unprovisioned owner sees a simple access-denied page, not a passkey prompt', async ({

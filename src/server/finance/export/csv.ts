@@ -11,7 +11,7 @@
  * A cell opened in Excel/Sheets that STARTS with `=`, `+`, `-` or `@` can
  * execute as a formula (OWASP CSV Injection). Every free-text field that
  * ultimately comes from a bank statement or the owner's own typing (merchant,
- * raw description, account name, institution, category name) is sanitized.
+ * raw description, category name) is sanitized.
  *
  * The Amount column is deliberately EXEMPT: it is produced entirely by
  * `toDecimalString()` below, never by statement or owner text, so it cannot
@@ -41,8 +41,6 @@ function escapeCsvField(value: string): string {
 
 export const LEDGER_CSV_HEADER = [
   'Transaction Date',
-  'Account',
-  'Institution',
   'Normalized Merchant',
   'Raw Description',
   'Amount (USD, + = outflow)',
@@ -55,8 +53,6 @@ export const LEDGER_CSV_HEADER = [
 
 export interface LedgerExportRow {
   readonly transactionDate: string;
-  readonly accountName: string;
-  readonly institution: string | null;
   readonly normalizedMerchant: string | null;
   readonly originalDescription: string;
   /** Signed cents, positive = outflow — same convention as everywhere else in the app. */
@@ -71,8 +67,6 @@ export interface LedgerExportRow {
 function buildRow(row: LedgerExportRow): string {
   const fields = [
     row.transactionDate,
-    sanitizeCsvCell(row.accountName),
-    sanitizeCsvCell(row.institution ?? ''),
     sanitizeCsvCell(row.normalizedMerchant ?? ''),
     sanitizeCsvCell(row.originalDescription),
     toDecimalString(cents(row.amountCents)),

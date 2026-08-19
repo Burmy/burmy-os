@@ -11,9 +11,10 @@ import postgres from 'postgres';
  * change land on Monthly, and exporting a CSV that reflects the filter on
  * screen.
  *
- * `signIntoApp` / `resetAll` / `addAccount` / `addCategory` are duplicated
- * from monthly.spec.ts / review.spec.ts rather than shared, matching those
- * files' own pattern.
+ * `signIntoApp` / `resetAll` / `addCategory` are duplicated from
+ * monthly.spec.ts / review.spec.ts rather than shared, matching those files'
+ * own pattern. `seedAccount` inserts directly via SQL — there is no
+ * account-management UI left to drive (round-2 UX pass).
  */
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://burmy:burmy@localhost:5432/burmy';
@@ -52,13 +53,22 @@ async function signIntoApp(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/finance\/monthly$/);
 }
 
-async function addAccount(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/finance/accounts');
-  await page.getByRole('button', { name: 'Add account' }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Name').fill(name);
-  await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('cell', { name, exact: true })).toBeVisible();
+/**
+ * No account-management UI exists anymore (round-2 UX pass) — accounts are
+ * auto-provisioned from an upload's detected format, never created by hand.
+ * These specs still need a real account row to attach seeded transactions
+ * to, so this inserts one directly, matching `seedTransaction`'s own
+ * direct-SQL convention below.
+ */
+async function seedAccount(ownerId: string, type: 'checking' | 'credit_card' = 'checking'): Promise<string> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ id: string }[]>`
+      insert into "finance_accounts" ("owner_id", "name", "type", "is_active", "sort_order")
+      values (${ownerId}, ${type === 'checking' ? 'Checking' : 'Credit Card'}, ${type}, true, 0)
+      returning "id"
+    `;
+    return rows[0]!.id;
+  });
 }
 
 async function addCategory(page: Page, name: string): Promise<void> {
@@ -75,17 +85,6 @@ async function getOwnerId(): Promise<string> {
     const rows = await sql<{ id: string }[]>`select "id" from "user" where "email" = ${OWNER_EMAIL.toLowerCase()}`;
     const row = rows[0];
     if (!row) throw new Error('owner not found');
-    return row.id;
-  });
-}
-
-async function getAccountId(ownerId: string, name: string): Promise<string> {
-  return withDb(async (sql) => {
-    const rows = await sql<{ id: string }[]>`
-      select "id" from "finance_accounts" where "owner_id" = ${ownerId} and "name" = ${name}
-    `;
-    const row = rows[0];
-    if (!row) throw new Error(`account "${name}" not found`);
     return row.id;
   });
 }
@@ -139,12 +138,11 @@ test.describe('transactions ledger', () => {
 
   test('reached from Finance as a subpage, filters and searches the ledger', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Groceries');
     await addCategory(page, 'Dining');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
     const groceries = await getCategoryId(ownerId, 'Groceries');
     const dining = await getCategoryId(ownerId, 'Dining');
 
@@ -207,11 +205,10 @@ test.describe('transactions ledger', () => {
 
   test('correcting a historical category immediately changes Monthly’s total', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Groceries');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
 
     await seedTransaction({
       ownerId,
@@ -242,12 +239,11 @@ test.describe('transactions ledger', () => {
 
   test('exports a CSV that reflects the current filter, ignoring on-screen pagination', async ({ page }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Groceries');
     await addCategory(page, 'Dining');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
     const groceries = await getCategoryId(ownerId, 'Groceries');
     const dining = await getCategoryId(ownerId, 'Dining');
 

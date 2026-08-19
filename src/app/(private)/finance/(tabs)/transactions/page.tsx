@@ -3,7 +3,6 @@ import type { Metadata } from 'next';
 import { TransactionsTable } from '@/features/finance/transactions/transactions-table';
 import { parseLedgerFilters } from '@/features/finance/transactions/filters';
 import { requireOwner } from '@/server/auth/owner';
-import { listAccounts } from '@/server/db/finance/accounts';
 import { listCategories } from '@/server/db/finance/categories';
 import { listTransactionYears } from '@/server/db/finance/grid';
 import {
@@ -49,7 +48,6 @@ export default async function TransactionsPage({
   const raw: {
     year?: string;
     month?: string;
-    account?: string;
     category?: string;
     type?: string;
     status?: string;
@@ -60,8 +58,6 @@ export default async function TransactionsPage({
   if (yearParam) raw.year = yearParam;
   const monthParam = readParam(params.month);
   if (monthParam) raw.month = monthParam;
-  const accountParam = readParam(params.account);
-  if (accountParam) raw.account = accountParam;
   const categoryParam = readParam(params.category);
   if (categoryParam) raw.category = categoryParam;
   const typeParam = readParam(params.type);
@@ -75,10 +71,9 @@ export default async function TransactionsPage({
 
   const { filters, page } = parseLedgerFilters(raw, fallbackYear);
 
-  const [ledgerPage, summary, accounts, categories] = await Promise.all([
+  const [ledgerPage, summary, categories] = await Promise.all([
     listTransactionsLedger(owner.userId, filters, page),
     getLedgerSummary(owner.userId, filters),
-    listAccounts(owner.userId),
     listCategories(owner.userId, { includeArchived: true }),
   ]);
 
@@ -94,7 +89,6 @@ export default async function TransactionsPage({
 
       <TransactionsTable
         page={ledgerPage}
-        accounts={accounts}
         categories={categories}
         years={yearOptions}
         filters={filters}

@@ -75,12 +75,18 @@ export async function updateTransactionTypeAction(
 export async function bulkUpdateCategoryAction(
   transactionIds: readonly string[],
   categoryId: string,
+  rememberMerchant = false,
 ): Promise<BulkActionResult> {
   const owner = await requireOwner();
 
   try {
     const ids = z.array(transactionIdSchema).min(1).parse(transactionIds);
-    const updatedCount = await bulkUpdateCategory(owner.userId, ids, categoryIdSchema.parse(categoryId));
+    const updatedCount = await bulkUpdateCategory(
+      owner.userId,
+      ids,
+      categoryIdSchema.parse(categoryId),
+      z.boolean().parse(rememberMerchant),
+    );
     revalidatePath('/finance/review');
     return { ok: true, updatedCount };
   } catch (error) {

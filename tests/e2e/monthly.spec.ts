@@ -63,13 +63,22 @@ async function signIntoApp(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/finance\/monthly$/);
 }
 
-async function addAccount(page: Page, name: string): Promise<void> {
-  await page.goto('/settings/finance/accounts');
-  await page.getByRole('button', { name: 'Add account' }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Name').fill(name);
-  await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByRole('cell', { name, exact: true })).toBeVisible();
+/**
+ * No account-management UI exists anymore (round-2 UX pass) — accounts are
+ * auto-provisioned from an upload's detected format, never created by hand.
+ * These specs still need a real account row to attach seeded transactions
+ * to, so this inserts one directly, named the same way
+ * `resolveHiddenAccount()` would.
+ */
+async function seedAccount(ownerId: string): Promise<string> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ id: string }[]>`
+      insert into "finance_accounts" ("owner_id", "name", "type", "is_active", "sort_order")
+      values (${ownerId}, 'Checking', 'checking', true, 0)
+      returning "id"
+    `;
+    return rows[0]!.id;
+  });
 }
 
 async function addCategory(page: Page, name: string): Promise<void> {
@@ -86,17 +95,6 @@ async function getOwnerId(): Promise<string> {
     const rows = await sql<{ id: string }[]>`select "id" from "user" where "email" = ${OWNER_EMAIL.toLowerCase()}`;
     const row = rows[0];
     if (!row) throw new Error('owner not found');
-    return row.id;
-  });
-}
-
-async function getAccountId(ownerId: string, name: string): Promise<string> {
-  return withDb(async (sql) => {
-    const rows = await sql<{ id: string }[]>`
-      select "id" from "finance_accounts" where "owner_id" = ${ownerId} and "name" = ${name}
-    `;
-    const row = rows[0];
-    if (!row) throw new Error(`account "${name}" not found`);
     return row.id;
   });
 }
@@ -152,11 +150,10 @@ test.describe('monthly grid', () => {
     page,
   }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Groceries');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
     const categoryId = await getCategoryId(ownerId, 'Groceries');
 
     await seedTransaction({
@@ -213,11 +210,10 @@ test.describe('monthly grid', () => {
     page,
   }) => {
     await signIntoApp(page);
-    await addAccount(page, 'BoA Checking');
     await addCategory(page, 'Groceries');
 
     const ownerId = await getOwnerId();
-    const accountId = await getAccountId(ownerId, 'BoA Checking');
+    const accountId = await seedAccount(ownerId);
 
     await seedTransaction({
       ownerId,
@@ -245,8 +241,81 @@ test.describe('monthly grid', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByText('Total Expenditure — Jun 2026')).toBeVisible();
+    // MYSTERY CHARGE is the raw description, still plain text below the
+    // (now-editable) merchant input — see monthly-grid-table.tsx.
     await expect(dialog.getByText('MYSTERY CHARGE')).toBeVisible();
     await expect(dialog.getByText('Uncategorized')).toBeVisible();
     await expect(dialog.getByText('Total: $42.00')).toBeVisible();
+  });
+
+  test('the drill-down dialog supports full inline editing: merchant, note, category, and type', async ({
+    page,
+  }) => {
+    await signIntoApp(page);
+    await addCategory(page, 'Groceries');
+    await addCategory(page, 'Dining');
+
+    const ownerId = await getOwnerId();
+    const accountId = await seedAccount(ownerId);
+    const groceries = await getCategoryId(ownerId, 'Groceries');
+
+    await seedTransaction({
+      ownerId,
+      accountId,
+      date: '2026-07-05',
+      amountCents: 3000,
+      categoryId: groceries,
+      description: 'CORNER MARKET #4 PURCHASE',
+      normalizedMerchant: 'CORNER MARKET',
+    });
+
+    await page.goto('/finance/monthly?year=2026');
+    // Column order: Month, Groceries (cell 1), Dining (cell 2), Total
+    // Expenditure, ... — the seeded transaction is in Groceries.
+    const julyRow = page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'Jul', exact: true }) });
+    await julyRow.getByRole('cell').nth(1).getByRole('button').click();
+
+    const dialog = page.getByRole('dialog');
+    const merchantInput = dialog.getByLabel(/^Merchant for/);
+    await expect(merchantInput).toHaveValue('CORNER MARKET');
+
+    await merchantInput.fill('RENAMED MARKET');
+    await merchantInput.blur();
+
+    const noteInput = dialog.getByLabel(/^Note for/);
+    await noteInput.fill('Weekly groceries');
+    await noteInput.blur();
+
+    await dialog.getByLabel(/^Category for/).click();
+    await page.getByRole('option', { name: 'Dining' }).click();
+    await expect(dialog.getByLabel(/^Category for/)).toHaveText('Dining');
+
+    await dialog.getByLabel(/^Type for/).click();
+    await page.getByRole('option', { name: 'Refund', exact: true }).click();
+    await expect(dialog.getByLabel(/^Type for/)).toHaveText('Refund');
+
+    // Close and reopen the same cell's drill-down — since the category
+    // changed away from Groceries, this exercises the "no live re-filtering"
+    // behavior the plan calls for: the total already moved (SQL computed at
+    // read time), so re-opening from the SAME Groceries cell now finds
+    // nothing there, proving the edit truly landed rather than just looking
+    // right in a stale local copy.
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await page.reload();
+
+    const julyRowAfter = page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'Jul', exact: true }) });
+    await expect(julyRowAfter.getByRole('cell').nth(1).getByRole('button')).toHaveCount(0);
+
+    const merchantCheck = await withDb(async (sql) => {
+      const rows = await sql<{ normalized_merchant: string | null; notes: string | null; transaction_type: string }[]>`
+        select "normalized_merchant", "notes", "transaction_type" from "finance_transactions"
+        where "owner_id" = ${ownerId}
+      `;
+      return rows[0];
+    });
+    expect(merchantCheck?.normalized_merchant).toBe('RENAMED MARKET');
+    expect(merchantCheck?.notes).toBe('Weekly groceries');
+    expect(merchantCheck?.transaction_type).toBe('refund');
   });
 });

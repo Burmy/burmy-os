@@ -11,8 +11,6 @@ import {
 function row(overrides: Partial<LedgerExportRow> = {}): LedgerExportRow {
   return {
     transactionDate: '2026-05-14',
-    accountName: 'BoA Checking',
-    institution: 'Bank of America',
     normalizedMerchant: 'H-E-B',
     originalDescription: 'HEB #123 SPRINGFIELD TX',
     amountCents: 5914,
@@ -52,7 +50,7 @@ describe('buildTransactionsCsv', () => {
     // 4180 quoting applies to it same as any other field — asserted via the
     // other columns plus a substring check, rather than a raw `.join(',')`
     // that would ignore quoting.
-    expect(header).toContain('Transaction Date,Account,Institution');
+    expect(header).toContain('Transaction Date,Normalized Merchant');
     expect(header).toContain('"Amount (USD, + = outflow)"');
     expect(header).toContain(',Category,Transaction Type,Review Status,Categorization Source,Type Source');
   });
@@ -62,7 +60,7 @@ describe('buildTransactionsCsv', () => {
     const lines = csv.split('\r\n').filter(Boolean);
     expect(lines).toHaveLength(2);
     expect(lines[1]).toBe(
-      '2026-05-14,BoA Checking,Bank of America,H-E-B,HEB #123 SPRINGFIELD TX,59.14,Food,Expense,Confirmed,Manual,Default',
+      '2026-05-14,H-E-B,HEB #123 SPRINGFIELD TX,59.14,Food,Expense,Confirmed,Manual,Default',
     );
   });
 
@@ -79,13 +77,11 @@ describe('buildTransactionsCsv', () => {
       row({
         normalizedMerchant: '=HYPERLINK(evil.example)',
         originalDescription: '+1 234 SOMETHING',
-        accountName: '-Weird Account',
         categoryName: '@Category',
       }),
     ]);
     expect(csv).toContain("'=HYPERLINK(evil.example)");
     expect(csv).toContain("'+1 234 SOMETHING");
-    expect(csv).toContain("'-Weird Account");
     expect(csv).toContain("'@Category");
   });
 
@@ -93,27 +89,25 @@ describe('buildTransactionsCsv', () => {
     const csv = buildTransactionsCsv([row({ amountCents: -123456 })]);
     const [, dataLine] = csv.split('\r\n');
     const cells = dataLine!.split(',');
-    // Amount is the 6th column (index 5).
-    expect(cells[5]).toBe('-1234.56');
+    // Amount is the 4th column (index 3).
+    expect(cells[3]).toBe('-1234.56');
   });
 
   it('quotes a field containing a comma and doubles embedded quotes (RFC 4180)', () => {
     const csv = buildTransactionsCsv([
-      row({ originalDescription: 'ACME, INC "PAYMENT"', normalizedMerchant: null, institution: null }),
+      row({ originalDescription: 'ACME, INC "PAYMENT"', normalizedMerchant: null }),
     ]);
     expect(csv).toContain('"ACME, INC ""PAYMENT"""');
   });
 
   it('renders null optional fields as empty cells, not the literal "null"', () => {
     const csv = buildTransactionsCsv([
-      row({ institution: null, normalizedMerchant: null, categoryName: null, categorizationSourceLabel: null }),
+      row({ normalizedMerchant: null, categoryName: null, categorizationSourceLabel: null }),
     ]);
     const [, dataLine] = csv.split('\r\n');
     const cells = dataLine!.split(',');
     expect(cells).toEqual([
       '2026-05-14',
-      'BoA Checking',
-      '', // institution
       '', // normalized merchant
       'HEB #123 SPRINGFIELD TX',
       '59.14',

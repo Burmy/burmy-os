@@ -23,7 +23,6 @@ import {
 import { toast } from '@/components/ui/toast';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
-import type { FinanceAccount } from '@/server/db/finance/accounts';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type { ReviewFilters, ReviewTransaction } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, type ManualTransactionType } from '@/server/finance/classify/manual';
@@ -74,12 +73,10 @@ function explainReview(row: ReviewTransaction): string {
 
 export function ReviewQueue({
   transactions,
-  accounts,
   categories,
   filters,
 }: {
   readonly transactions: readonly ReviewTransaction[];
-  readonly accounts: readonly FinanceAccount[];
   readonly categories: readonly FinanceCategory[];
   readonly filters: ReviewFilters;
 }): React.ReactElement {
@@ -97,16 +94,14 @@ export function ReviewQueue({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [remember, setRemember] = useState<Record<string, boolean>>({});
   const [bulkCategoryId, setBulkCategoryId] = useState<string>('');
+  const [bulkRemember, setBulkRemember] = useState(false);
   const [pending, startTransition] = useTransition();
 
   // Open by default only when a non-default filter is already narrowing the
   // list — otherwise the common case (the plain needs_review queue, usually
   // one or two rows) starts with no toolbar at all to look past.
   const hasActiveFilter = Boolean(
-    (filters.status && filters.status !== 'needs_review') ||
-      filters.accountId ||
-      filters.categoryId ||
-      filters.transactionType,
+    (filters.status && filters.status !== 'needs_review') || filters.categoryId || filters.transactionType,
   );
   const [filtersOpen, setFiltersOpen] = useState(hasActiveFilter);
 
@@ -166,7 +161,7 @@ export function ReviewQueue({
     const ids = [...selected];
 
     startTransition(async () => {
-      const result = await bulkUpdateCategoryAction(ids, bulkCategoryId);
+      const result = await bulkUpdateCategoryAction(ids, bulkCategoryId, bulkRemember);
       if (!result.ok) {
         toast.error(result.error);
         return;
@@ -174,6 +169,7 @@ export function ReviewQueue({
       toast.success(`${result.updatedCount} transaction${result.updatedCount === 1 ? '' : 's'} updated`);
       setSelected(new Set());
       setBulkCategoryId('');
+      setBulkRemember(false);
       router.refresh();
     });
   }
@@ -215,12 +211,6 @@ export function ReviewQueue({
               ]}
             />
             <FilterSelect
-              label="Account"
-              value={filters.accountId ?? 'all'}
-              onChange={(value) => setFilter('account', value === 'all' ? undefined : value)}
-              options={[['all', 'All accounts'], ...accounts.map((a) => [a.id, a.name] as [string, string])]}
-            />
-            <FilterSelect
               label="Category"
               value={filters.categoryId ?? 'all'}
               onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
@@ -259,6 +249,14 @@ export function ReviewQueue({
                   ))}
                 </SelectContent>
               </Select>
+              <label className="text-muted-foreground flex items-center gap-1 text-xs">
+                <input
+                  type="checkbox"
+                  checked={bulkRemember}
+                  onChange={(event) => setBulkRemember(event.target.checked)}
+                />
+                Remember these merchants
+              </label>
               <Button size="sm" disabled={!bulkCategoryId || pending} onClick={applyBulk}>
                 Set category for {selected.size}
               </Button>
@@ -279,7 +277,6 @@ export function ReviewQueue({
                   />
                 </TableHead>
                 <TableHead>Date</TableHead>
-                <TableHead>Account</TableHead>
                 <TableHead>Merchant</TableHead>
                 <TableHead className="text-right">Amount</TableHead>
                 <TableHead>Category</TableHead>
@@ -303,7 +300,6 @@ export function ReviewQueue({
                     <TableCell className="text-muted-foreground whitespace-nowrap">
                       {row.transactionDate}
                     </TableCell>
-                    <TableCell className="text-muted-foreground">{row.accountName}</TableCell>
                     <TableCell>
                       <div className="font-medium">{row.normalizedMerchant}</div>
                       <div className="text-muted-foreground text-xs">{row.originalDescription}</div>

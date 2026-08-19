@@ -8,6 +8,7 @@
 
 import { alias } from 'drizzle-orm/pg-core';
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { cache } from 'react';
 
 import { getDb } from '@/server/db';
 import { financeAccounts, financeCategories, financeMerchantMemory, financeTransactions } from '@/server/db/schema';
@@ -30,7 +31,6 @@ const counterpartAccount = alias(financeAccounts, 'counterpart_account');
 export interface ReviewFilters {
   /** Defaults to `'needs_review'`. `'all'` removes the status filter entirely. */
   readonly status?: ReviewStatus | 'all';
-  readonly accountId?: string;
   /** `'uncategorized'` filters to `category_id IS NULL`, not a real category id. */
   readonly categoryId?: string | 'uncategorized';
   readonly transactionType?: TransactionType;
@@ -40,7 +40,6 @@ export interface ReviewTransaction {
   readonly id: string;
   readonly transactionDate: string;
   readonly accountId: string;
-  readonly accountName: string;
   readonly normalizedMerchant: string | null;
   readonly originalDescription: string;
   readonly amountCents: number;
@@ -67,7 +66,6 @@ export async function listTransactionsForReview(
 
   const status = filters.status ?? 'needs_review';
   if (status !== 'all') conditions.push(eq(financeTransactions.reviewStatus, status));
-  if (filters.accountId) conditions.push(eq(financeTransactions.accountId, filters.accountId));
   if (filters.categoryId === 'uncategorized') conditions.push(isNull(financeTransactions.categoryId));
   else if (filters.categoryId) conditions.push(eq(financeTransactions.categoryId, filters.categoryId));
   if (filters.transactionType) conditions.push(eq(financeTransactions.transactionType, filters.transactionType));
@@ -77,7 +75,6 @@ export async function listTransactionsForReview(
       id: financeTransactions.id,
       transactionDate: financeTransactions.transactionDate,
       accountId: financeTransactions.accountId,
-      accountName: financeAccounts.name,
       normalizedMerchant: financeTransactions.normalizedMerchant,
       originalDescription: financeTransactions.originalDescription,
       amountCents: financeTransactions.amountCents,
@@ -88,7 +85,6 @@ export async function listTransactionsForReview(
       counterpartAccountName: counterpartAccount.name,
     })
     .from(financeTransactions)
-    .innerJoin(financeAccounts, eq(financeAccounts.id, financeTransactions.accountId))
     .leftJoin(counterpartTxn, eq(counterpartTxn.id, financeTransactions.counterpartTransactionId))
     .leftJoin(counterpartAccount, eq(counterpartAccount.id, counterpartTxn.accountId))
     .where(and(...conditions))
@@ -99,14 +95,19 @@ export async function listTransactionsForReview(
 }
 
 /** The nav badge. A single `count(*)`, nothing else — see CLAUDE.md on keeping it that way. */
-export async function getNeedsReviewCount(ownerId: string): Promise<number> {
+/**
+ * Wrapped in React's `cache()`: the Finance tabs layout (for the Review
+ * badge) and the Monthly page (for its own inline alert) both call this on
+ * every navigation — dedupe to one query per render pass rather than two.
+ */
+export const getNeedsReviewCount = cache(async function getNeedsReviewCount(ownerId: string): Promise<number> {
   const [row] = await getDb()
     .select({ count: sql<number>`count(*)::int` })
     .from(financeTransactions)
     .where(and(eq(financeTransactions.ownerId, ownerId), eq(financeTransactions.reviewStatus, 'needs_review')));
 
   return row?.count ?? 0;
-}
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Corrections
@@ -248,33 +249,102 @@ export async function updateTransactionType(
 }
 
 /**
+ * Display-name correction, post-commit — the same edit `updateRowDecision()`
+ * already allows pre-commit (`imports.ts`), now reachable on an already-
+ * imported transaction too (round-2 UX pass). Never touches `dedupeKey`
+ * (derived from `originalDescription`, not this) or merchant memory (keyed
+ * on `merchantKey`, also derived from the raw description) — same
+ * non-interaction the import-time version already established.
+ */
+export async function updateTransactionMerchant(
+  ownerId: string,
+  transactionId: string,
+  normalizedMerchant: string | null,
+): Promise<void> {
+  const rows = await getDb()
+    .update(financeTransactions)
+    .set({ normalizedMerchant, updatedAt: new Date() })
+    .where(and(eq(financeTransactions.id, transactionId), eq(financeTransactions.ownerId, ownerId)))
+    .returning({ id: financeTransactions.id });
+
+  if (!rows[0]) throw new NotFoundError('Transaction');
+}
+
+/** Free-text note, post-commit — same shape as `updateTransactionMerchant`. */
+export async function updateTransactionNote(
+  ownerId: string,
+  transactionId: string,
+  notes: string | null,
+): Promise<void> {
+  const rows = await getDb()
+    .update(financeTransactions)
+    .set({ notes, updatedAt: new Date() })
+    .where(and(eq(financeTransactions.id, transactionId), eq(financeTransactions.ownerId, ownerId)))
+    .returning({ id: financeTransactions.id });
+
+  if (!rows[0]) throw new NotFoundError('Transaction');
+}
+
+/**
  * Bulk category assignment. Deliberately the only bulk action, and
  * deliberately writes nothing to merchant memory — several unrelated
  * merchants are the common case for a bulk selection, and a per-row "remember
  * this" decision would defeat the point of keeping this simple.
  */
+/**
+ * `rememberMerchant` upserts memory for every DISTINCT merchant among the
+ * selected rows — several unrelated merchants in one selection is the common
+ * case for a bulk action, unlike the single-row `updateTransactionCategory`,
+ * so this dedupes rather than writing (and overwriting) once per row. Same
+ * upsert shape `commitImport()` already uses (`imports.ts`), not a new one.
+ */
 export async function bulkUpdateCategory(
   ownerId: string,
   transactionIds: readonly string[],
   categoryId: string,
+  rememberMerchant = false,
 ): Promise<number> {
   if (transactionIds.length === 0) return 0;
 
-  const updated = await getDb()
-    .update(financeTransactions)
-    .set({
-      categoryId,
-      categorizationSource: 'manual',
-      // categoryId is always non-null here, so reviewStatusForCorrection
-      // would always say 'confirmed' regardless of type — stated directly
-      // rather than routed through the function for a fixed input.
-      reviewStatus: 'confirmed',
-      updatedAt: new Date(),
-    })
-    .where(and(eq(financeTransactions.ownerId, ownerId), inArray(financeTransactions.id, transactionIds)))
-    .returning({ id: financeTransactions.id });
+  return getDb().transaction(async (tx) => {
+    const updated = await tx
+      .update(financeTransactions)
+      .set({
+        categoryId,
+        categorizationSource: 'manual',
+        // categoryId is always non-null here, so reviewStatusForCorrection
+        // would always say 'confirmed' regardless of type — stated directly
+        // rather than routed through the function for a fixed input.
+        reviewStatus: 'confirmed',
+        updatedAt: new Date(),
+      })
+      .where(and(eq(financeTransactions.ownerId, ownerId), inArray(financeTransactions.id, transactionIds)))
+      .returning({ id: financeTransactions.id, normalizedMerchant: financeTransactions.normalizedMerchant });
 
-  return updated.length;
+    if (rememberMerchant) {
+      const merchantKeys = new Set(
+        updated
+          .map((row) => (row.normalizedMerchant ? merchantKeyFrom(row.normalizedMerchant) : null))
+          .filter((key): key is string => key !== null),
+      );
+
+      for (const merchantKey of merchantKeys) {
+        await tx
+          .insert(financeMerchantMemory)
+          .values({ ownerId, merchantKey, categoryId })
+          .onConflictDoUpdate({
+            target: [financeMerchantMemory.ownerId, financeMerchantMemory.merchantKey],
+            set: {
+              categoryId,
+              confirmedCount: sql`${financeMerchantMemory.confirmedCount} + 1`,
+              lastConfirmedAt: new Date(),
+            },
+          });
+      }
+    }
+
+    return updated.length;
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,7 +366,6 @@ export async function bulkUpdateCategory(
 export interface LedgerFilters {
   readonly year: number;
   readonly month?: number;
-  readonly accountId?: string;
   /** `'uncategorized'` filters to `category_id IS NULL`, not a real category id. */
   readonly categoryId?: string | 'uncategorized';
   readonly transactionType?: TransactionType;
@@ -316,7 +385,6 @@ function ledgerConditions(ownerId: string, filters: LedgerFilters) {
   if (filters.month) {
     conditions.push(sql`extract(month from ${financeTransactions.transactionDate}) = ${filters.month}`);
   }
-  if (filters.accountId) conditions.push(eq(financeTransactions.accountId, filters.accountId));
   if (filters.categoryId === 'uncategorized') conditions.push(isNull(financeTransactions.categoryId));
   else if (filters.categoryId) conditions.push(eq(financeTransactions.categoryId, filters.categoryId));
   if (filters.transactionType) conditions.push(eq(financeTransactions.transactionType, filters.transactionType));
@@ -341,8 +409,6 @@ export interface LedgerTransaction {
   readonly id: string;
   readonly transactionDate: string;
   readonly accountId: string;
-  readonly accountName: string;
-  readonly institution: string | null;
   readonly normalizedMerchant: string | null;
   readonly originalDescription: string;
   readonly amountCents: number;
@@ -352,14 +418,13 @@ export interface LedgerTransaction {
   readonly reviewStatus: ReviewStatus;
   readonly categorizationSource: string | null;
   readonly typeSource: string;
+  readonly notes: string | null;
 }
 
 const ledgerSelection = {
   id: financeTransactions.id,
   transactionDate: financeTransactions.transactionDate,
   accountId: financeTransactions.accountId,
-  accountName: financeAccounts.name,
-  institution: financeAccounts.institution,
   normalizedMerchant: financeTransactions.normalizedMerchant,
   originalDescription: financeTransactions.originalDescription,
   amountCents: financeTransactions.amountCents,
@@ -369,6 +434,7 @@ const ledgerSelection = {
   reviewStatus: financeTransactions.reviewStatus,
   categorizationSource: financeTransactions.categorizationSource,
   typeSource: financeTransactions.typeSource,
+  notes: financeTransactions.notes,
 } as const;
 
 export const LEDGER_PAGE_SIZE = 100;
@@ -391,7 +457,6 @@ export async function listTransactionsLedger(
     getDb()
       .select(ledgerSelection)
       .from(financeTransactions)
-      .innerJoin(financeAccounts, eq(financeAccounts.id, financeTransactions.accountId))
       .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
       .where(and(...conditions))
       .orderBy(desc(financeTransactions.transactionDate), desc(financeTransactions.id))
@@ -467,7 +532,6 @@ export async function listTransactionsForExport(
   const rows = await getDb()
     .select(ledgerSelection)
     .from(financeTransactions)
-    .innerJoin(financeAccounts, eq(financeAccounts.id, financeTransactions.accountId))
     .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
     .where(and(...conditions))
     .orderBy(desc(financeTransactions.transactionDate), desc(financeTransactions.id))

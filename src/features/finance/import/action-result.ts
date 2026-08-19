@@ -6,10 +6,6 @@ export type UploadResult =
   | { readonly ok: true; readonly importId: string }
   | { readonly ok: false; readonly error: string };
 
-export type DetectResult =
-  | { readonly ok: true; readonly adapter: string; readonly compatibleAccountIds: readonly string[] }
-  | { readonly ok: false; readonly error: string };
-
 export type CommitActionResult =
   | { readonly ok: true; readonly summary: CommitResult }
   | { readonly ok: false; readonly error: string };

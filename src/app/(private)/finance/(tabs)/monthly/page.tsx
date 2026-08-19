@@ -5,7 +5,6 @@ import { FinanceDashboard } from '@/features/finance/dashboard/finance-dashboard
 import { ImportSheet } from '@/features/finance/import/import-sheet';
 import { MonthlyGridTable } from '@/features/finance/monthly/monthly-grid-table';
 import { requireOwner } from '@/server/auth/owner';
-import { listAccounts } from '@/server/db/finance/accounts';
 import { listCategories } from '@/server/db/finance/categories';
 import {
   getCategoryTotalsForWindow,
@@ -110,7 +109,6 @@ export default async function MonthlyPage({
     categories,
     aggregateRows,
     needsReviewCount,
-    accounts,
     inProgressImports,
     monthlyTotals,
     categoryTotals,
@@ -122,7 +120,6 @@ export default async function MonthlyPage({
     listCategories(owner.userId, { includeArchived: true }),
     getMonthlyGridAggregates(owner.userId, year),
     getNeedsReviewCount(owner.userId),
-    listAccounts(owner.userId),
     listInProgressImports(owner.userId),
     getMonthlyTotalsAllTime(owner.userId),
     getCategoryTotalsForWindow(owner.userId, categoryWindowStart, categoryWindowEnd),
@@ -220,7 +217,7 @@ export default async function MonthlyPage({
   // The "Transactions" toolbar button was removed once Transactions became
   // a SubNav tab (see the (tabs) route group's layout) — a second way to
   // reach the same page would be redundant, not extra convenience.
-  const actions = <ImportSheet accounts={accounts} inProgressImports={inProgressImports} />;
+  const actions = <ImportSheet inProgressImports={inProgressImports} />;
 
   return (
     <div>
@@ -279,7 +276,12 @@ export default async function MonthlyPage({
 
           <div className="mt-8">
             <h2 className="text-muted-foreground mb-2 text-sm font-medium">Full year grid</h2>
-            <MonthlyGridTable grid={grid} year={year} years={years} />
+            <MonthlyGridTable
+              grid={grid}
+              year={year}
+              years={years}
+              categories={categories.filter((category) => category.archivedAt === null)}
+            />
           </div>
         </>
       )}
