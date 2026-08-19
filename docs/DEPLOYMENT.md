@@ -1,24 +1,298 @@
 # Deployment
 
-> **Status: repo-side M10 pieces are implemented and locally tested (production `compose.yml`, all
-> `scripts/*.sh`, systemd units, CI) against the SIMPLIFIED architecture below. External infrastructure
-> — the actual VPS, Cloudflare Tunnel/Access, Backblaze B2 bucket — has NOT been created yet; see
-> "External setup" below for the exact manual steps still outstanding. Nothing here should be read as
-> "already deployed".
+> **Status (2026-08-18): the default production architecture changed.** Burmy-OS's production target
+> is now **Netlify (hosting) + Supabase (managed Postgres) + Cloudflare (DNS only)** — not a VPS. The
+> VPS/Docker/Tunnel/B2 design below is fully preserved and still works, but it is now the **optional
+> self-hosting path**, not the default. See "Why the VPS was dropped" for the reasoning and "Optional:
+> self-hosting on a VPS" for everything that moved there unchanged.
+>
+> **External state, as it actually exists today** (owner-reported, not independently verified by
+> Claude): the Cloudflare DNS migration for `burmy.me` is complete and the zone is Active; Cloudflare
+> Zero Trust Free + a Google identity provider + a Burmy-OS Access application are configured; an
+> Oracle Cloud VPS was attempted and abandoned after repeated capacity failures — **no VPS was ever
+> created, nothing was ever deployed to Oracle.** See "External state" below for the full detail.
+>
+> **One open decision blocks going live and is called out explicitly in "Authentication — the open
+> decision": how the owner authenticates to a Netlify-hosted app, now that Cloudflare Access no longer
+> sits in the request path by default.** Nothing else in this document is blocked on it.
 
-**Simplified scope (owner decision):** `VPS + Cloudflare Access with Google + Burmy-OS/Postgres + B2
-backups.` Nothing more, unless a concrete blocker shows up. Tailscale, healthchecks.io, automated
-weekly restore verification, and quarterly DR drills were all in an earlier draft of this plan and are
-now explicitly deferred — see "Deferred for V1" near the end of this document for exactly what that
-means and why nothing was deleted, only made optional.
+---
 
-Production launch deliberately comes **after** transactions, export, reconciliation, hardening and a
-verified backup/restore. Real financial data does not touch production until recovery has been proven —
-see the 13-point launch checklist at the end of this document.
+## Why the VPS was dropped
+
+The original M10 plan (`VPS + Cloudflare Access + Burmy-OS/Postgres + B2 backups`) was sized for a
+service that needs to run itself: Linux host maintenance, a Docker production host, SSH/`ufw`
+hardening, PostgreSQL administration, `cloudflared`, systemd timers, and a restic→B2 backup pipeline.
+
+Two things changed the calculus:
+
+1. **Oracle Cloud's Always Free `VM.Standard.A1.Flex` (Ampere ARM64) had no capacity** in any
+   availability domain, at either the originally-planned 2 OCPU/12 GB or a retried 1 OCPU/6 GB. Oracle's
+   only Always Free fallback, `VM.Standard.E2.1.Micro`, was judged too small for Burmy-OS and rejected.
+   No VPS was ever provisioned.
+2. **Reconsidering actual usage** — Burmy-OS has exactly one user, with light and occasional traffic
+   (upload a statement, review categorization, glance at charts, sometimes not opening the app for
+   weeks). An always-on VPS optimizes for a usage pattern this app doesn't have. Netlify (serverless,
+   scale-to-zero) and Supabase (managed Postgres) match occasional single-user traffic far better than
+   a host that has to stay up, patched, and backed up regardless of whether anyone used it that week.
+
+The application itself did not need to change to make this decision reversible: `src/server/finance/`
+never touched the filesystem, `scripts/migrate.mjs` and `scripts/provision-owner.mjs` are already
+plain Node scripts with no Docker dependency of their own, and the Docker/VPS path (below) is fully
+intact if self-hosting is ever wanted again.
 
 ---
 
 ## Target topology
+
+```
+Browser ──HTTPS──▶ Netlify (app.burmy.me)
+                        │  Next.js 16 — Netlify's Next.js Runtime (OpenNext-based)
+                        │  Server Components, Server Actions, Route Handlers as
+                        │  Netlify Functions; src/proxy.ts as a Netlify Edge Function
+                        ▼
+                  Supabase Postgres
+                    (Supavisor pooler, transaction mode, for the app runtime;
+                     direct connection for migrations, run manually)
+
+Namecheap (registrar) ──▶ Cloudflare (authoritative DNS only, DNS-only/grey-cloud records)
+```
+
+No VPS. No Cloudflare Tunnel. No production Docker host. No systemd. No mandatory Backblaze B2.
+
+---
+
+## External state — what actually exists today
+
+Nothing in this section was performed by Claude; all of it was done manually by the owner, reported
+back, and is recorded here for reference. **Claude has not touched Cloudflare, Netlify, Namecheap,
+Supabase, or any VPS provider.**
+
+### DNS — Cloudflare migration (complete)
+
+- `burmy.me`'s DNS authority moved from Netlify DNS/NS1 to Cloudflare. The Cloudflare zone reports
+  **Active**.
+- Namecheap's nameservers are now `arely.ns.cloudflare.com` and `cody.ns.cloudflare.com`.
+- The existing `burmy.me` portfolio is still hosted on Netlify, unchanged. Cloudflare's records for it:
+
+  | Type | Name | Target | Proxy |
+  | --- | --- | --- | --- |
+  | CNAME | `burmy.me` (apex, flattened) | `apex-loadbalancer.netlify.com` | DNS only |
+  | CNAME | `www` | `infallible-visvesvaraya-eefd80.netlify.app` | DNS only |
+
+  No AAAA record (intentional — IPv6 was never enabled on the old Netlify DNS either). DNSSEC/DS was
+  confirmed absent before the migration, so there was no stale-DS hazard during cutover.
+- The old Netlify DNS zone still exists in Netlify's dashboard but is no longer authoritative. It has
+  not been deleted, and there's no need to — it costs nothing to leave alone.
+- Full investigation trail (public-lookup findings, the corrected apex-target reasoning, the
+  step-by-step migration checklist) is preserved in git history rather than repeated here — see commits
+  `dc70a6b`, `1b1e186`, `3318170`, `3f7d70f` for the complete record if it's ever needed again.
+
+### Cloudflare Zero Trust / Access (configured, not currently in the request path)
+
+- A Cloudflare Zero Trust **Free** organization exists.
+- Google is configured as the identity provider and a live authentication test against it succeeded.
+- A Burmy-OS Access application exists: intended hostname `app.burmy.me`, Google as the only identity
+  provider, an exact-email Allow policy, 24-hour application session, Instant Authentication, Cloudflare
+  One Client disabled.
+- **This configuration is real and complete, but nothing routes traffic through it today.** Access only
+  intercepts a request when Cloudflare's edge actually sits in front of it — either via a Tunnel (the
+  original, now-abandoned VPS design) or a *proxied* ("orange cloud") DNS record pointed at an origin
+  Access is told to protect. `app.burmy.me` has no DNS record at all yet (see "`app.burmy.me`" below),
+  so there is currently nothing for Access to gate. See "Authentication — the open decision" — this is
+  the one thing that has to be decided, not silently assumed either way.
+
+### Oracle VPS (abandoned, nothing created)
+
+OCI networking configuration was created manually, then VM provisioning was attempted at
+`VM.Standard.A1.Flex`, 2 OCPU/12 GB, Ubuntu 24.04 — capacity unavailable in AD-1, AD-2, and AD-3.
+Retried at 1 OCPU/6 GB — still unavailable. The remaining Always Free option
+(`VM.Standard.E2.1.Micro`) was rejected as too small. **No compute instance was ever created; nothing
+was ever deployed.** See "Why the VPS was dropped" above for what this triggered.
+
+---
+
+## Authentication — the open decision
+
+**This is the one thing blocking a real production deploy. Nothing else in this document depends on
+it, and it is not decided here — it needs the owner's explicit call.**
+
+`requireOwner()` (`src/server/auth/owner.ts`) has exactly one identity-verification path in
+production: a Cloudflare Access JWT, checked against `CF_ACCESS_TEAM_DOMAIN`/`CF_ACCESS_AUD`
+(`src/server/auth/access.ts`). There is no in-app credential, no session, no fallback — see
+`docs/SECURITY.md`, "Authentication," which is still an accurate description of how the *code* behaves.
+The dev bypass triggers only when `NODE_ENV` is exactly `development`; Netlify sets `NODE_ENV=production`
+for a production deploy, so the bypass does not apply there.
+
+**The direct consequence: if Netlify serves `app.burmy.me` with Cloudflare's DNS record for it left
+DNS-only (grey cloud, not proxied), Access never sees the request, `Cf-Access-Jwt-Assertion` is never
+present, and `requireOwner()` fails closed on every single request — including the owner's own.** Not a
+bug; exactly the fail-closed behavior `docs/SECURITY.md` documents and wants. But it means the app is
+unusable, by anyone, until this is resolved one of two ways:
+
+**Option A — keep Cloudflare Access, proxy the `app.burmy.me` record.** Cloudflare Access can protect a
+*proxied* DNS record pointed at any public origin, including Netlify — this does **not** require a
+Tunnel; Tunnel was only needed for the original VPS because that origin had no public route at all.
+Turning on the orange cloud for `app.burmy.me` alone (leaving the apex/`www` portfolio records
+untouched, still DNS-only) puts Cloudflare's edge in front of just that one hostname, which is exactly
+what the already-completed Access application, Google IdP, and Allow policy were built for. **Reuses
+100% of the external configuration already in place, at zero new services** — the cost is one Cloudflare
+setting (DNS-only → Proxied) on one record, which is the "strong verified reason" the owner's own
+instructions asked for before forcing the orange cloud on anything.
+
+**Option B — build a minimal owner-auth path inside Burmy-OS itself**, independent of Cloudflare Access,
+so the app can authenticate the owner even with Cloudflare staying DNS-only everywhere. This is real
+application work (a new verification mechanism, new tests, a new attack surface to review) — not a
+config toggle — and is explicitly what "Burmy-OS's own authentication remains the application security
+layer" would require if Access is to stay unused going forward, since right now there *is no other*
+Burmy-OS authentication mechanism to fall back on; Cloudflare Access **is** Burmy-OS's authentication
+today, not a separate layer in front of one.
+
+**Recommendation: Option A.** It requires no new code, no new external service, and no new security
+review — only confirming the one Cloudflare record. Option B is a legitimate choice if the owner would
+rather Burmy-OS not depend on Cloudflare Access at all going forward, but it should be a deliberate
+decision made knowing it's genuinely new authentication work, not a smaller change than it looks.
+
+**Until this is decided, `docs/SECURITY.md`'s "Authentication" section stays accurate as a description
+of the code — it does not need to change either way.** What's undecided is purely the deployment-side
+question of whether Access sits in front of the request.
+
+---
+
+## Environment variables (Netlify)
+
+| Variable | Value | Notes |
+| --- | --- | --- |
+| `DATABASE_URL` | Supabase **pooled** connection string (Supavisor, transaction mode, port `6543`, `?pgbouncer=true`) | The app runtime's connection — see "Database — Supabase Postgres" below for why pooled, not direct. |
+| `OWNER_EMAIL` | the owner's Google account email | Same meaning as today — checked against the verified identity on every request. |
+| `CF_ACCESS_TEAM_DOMAIN` | the Cloudflare Zero Trust team domain | Needed **only if Option A is chosen** above. Omit entirely if Option B. |
+| `CF_ACCESS_AUD` | the Burmy-OS Access application's Audience tag | Same conditionality as `CF_ACCESS_TEAM_DOMAIN`. |
+| `NODE_ENV` | `production` | Set by Netlify automatically for production deploys — not something to set manually, listed here only so its presence is never assumed away. |
+
+Not needed at all under the new architecture (all VPS/Docker-only): `POSTGRES_USER`/`POSTGRES_PASSWORD`/
+`POSTGRES_DB` (Supabase manages its own Postgres credentials), `TUNNEL_TOKEN`, `RESTIC_REPOSITORY`/
+`RESTIC_PASSWORD`, `B2_ACCOUNT_ID`/`B2_ACCOUNT_KEY`, the four `HEALTHCHECKS_*_PING_URL` values.
+
+Set these in Netlify's own dashboard (Site configuration → Environment variables), scoped to the
+production deploy context. There is no `.env.<scope>` file scheme to maintain for Netlify — that
+five-file split (`docs/DEPLOYMENT.md`'s old "Environment" section, preserved below) existed specifically
+to keep VPS containers from seeing credentials they had no use for; Netlify's own environment-variable
+store replaces it, with far fewer distinct credentials to begin with.
+
+---
+
+## Database — Supabase Postgres
+
+**Two different connection strings for two different purposes — this is the one Supabase-specific
+detail that actually changes application behavior, not just configuration:**
+
+- **App runtime (`DATABASE_URL` in Netlify): the pooled Supavisor connection, transaction mode, port
+  `6543`.** Netlify Functions are short-lived and can run many concurrent invocations; each one opening
+  its own small pool of direct Postgres connections is exactly the pattern that exhausts a database's
+  connection ceiling under real (even light) concurrent traffic. Supavisor's transaction-mode pooler
+  fans many serverless callers in over few real Postgres connections.
+- **Migrations (run manually, from a developer machine): the direct connection, port `5432`, not
+  pooled.** DDL and multi-statement transactions do not behave correctly through a transaction-mode
+  pooler. `scripts/migrate.mjs` already uses a single dedicated connection (`max: 1`) for exactly this
+  kind of correctness reason — nothing about it needs to change, only which connection string it's
+  pointed at when it runs.
+
+**Code change made:** `src/server/db/index.ts` now always caches its client/instance (previously gated
+on `NODE_ENV !== 'production'`, which meant production never cached at all — a real latent bug,
+harmless on a VPS's single long-lived process but fatal against Supabase's connection ceiling under
+serverless), and always sets `prepare: false` (required through Supavisor's transaction-mode pooler;
+harmless — a pure optimization, not a correctness requirement — against a direct connection, so this is
+safe for local dev and migrations too).
+
+**SSL:** not hardcoded in application code, deliberately — Supabase's own connection strings already
+specify `sslmode=require`, and `postgres.js` respects that from the URL. Hardcoding `ssl: 'require'` in
+`db/index.ts` would break the plain, no-TLS local dev connection (`postgres://burmy:burmy@localhost/burmy`).
+
+**Migration workflow**, replacing `docker compose run --rm migrate`:
+
+```bash
+DATABASE_URL="<supabase direct connection string>" node scripts/migrate.mjs
+DATABASE_URL="<supabase direct connection string>" OWNER_EMAIL="<owner email>" node scripts/provision-owner.mjs
+```
+
+Run manually, deliberately, from a developer machine with network access to Supabase — not
+automatically on every Netlify deploy. Both scripts are already plain ESM with zero Docker dependency
+(`scripts/migrate.mjs`'s own header explains why: "It does not need the schema types," so no
+TypeScript/tsx toolchain either) — this workflow needed no code change, only a different place to run
+them from. `provision-owner.mjs` stays idempotent and safe to re-run.
+
+Local development is unaffected: `docker compose -f compose.dev.yml up -d postgres` +
+`docker compose -f compose.dev.yml run --rm --build migrate` continue to work exactly as before, against
+the local Postgres container, not Supabase. Drizzle/`drizzle-kit` need no changes — `drizzle.config.ts`
+already just reads `DATABASE_URL`.
+
+---
+
+## Backup strategy (simplified)
+
+Supabase's **Free** plan includes no managed backups or point-in-time recovery at all — that starts at
+Pro (7 days of daily backups) and PITR is a paid add-on above that. The old restic→B2 pipeline
+(`scripts/backup.sh`/`maintenance.sh`/`restore.sh`/`restore-verify-weekly.sh`/`verify.sh`,
+`deploy/systemd/burmy-{backup,maintenance,restore-verify}.*`) is real, tested, working code — but it is
+VPS-shaped infrastructure (a host to run the timers on) that this architecture no longer has, and
+building an equivalent automated pipeline just to protect a Free-tier database was explicitly ruled out
+as its own new infrastructure stack.
+
+**Proposed minimal strategy — a manual `pg_dump`, run periodically, no new infrastructure:**
+
+```bash
+pg_dump "<supabase direct connection string>" -Fc -f "burmy-$(date +%Y-%m-%d).dump"
+```
+
+Run by hand — after a real import, or on whatever cadence feels right for how infrequently the data
+actually changes (this is a single-user app; a monthly statement import is the only thing that
+meaningfully changes the database) — and saved wherever the owner already keeps things safe (a synced
+folder, an external drive, anywhere off the Supabase project itself). Restore is the ordinary
+`pg_restore` counterpart, same as `scripts/restore.sh`'s own restore step already does locally.
+
+This is intentionally the simplest thing that provides real protection, not the final word — if Supabase
+Free's lack of PITR becomes a real concern later, the options in order of effort are: enable it via a
+Supabase Pro upgrade, or a small scheduled job (a Netlify Scheduled Function, or literally a line in the
+owner's own crontab) running the `pg_dump` above automatically. Neither is built now, per explicit
+instruction not to stand up new infrastructure preemptively.
+
+---
+
+## Deployment sequence
+
+1. Create the Supabase project (external, owner-performed — not done by Claude).
+2. Run migrations + owner provisioning against Supabase's **direct** connection string (see "Database"
+   above).
+3. Create the Burmy-OS Netlify site, pointed at this repository, with the environment variables from
+   "Environment variables" above (using Supabase's **pooled** connection string for `DATABASE_URL`).
+   `netlify.toml` pins the build command and Node version; no `publish` directory is set, deliberately
+   — Netlify's Next.js Runtime wires up SSR/Server Actions/Edge middleware itself.
+4. Deploy and verify on the temporary `*.netlify.app` URL, before touching any DNS:
+   - Supabase connectivity (the app actually loads and queries succeed)
+   - Authentication (resolve the "Authentication — the open decision" question above **first** — this
+     step cannot be verified otherwise)
+   - CSV import end to end
+   - The Finance dashboard renders real data correctly
+   - Migrations applied correctly (schema matches `drizzle/`)
+5. Only once all of the above is confirmed working: add/update the Cloudflare DNS record for
+   `app.burmy.me` pointed at the Netlify site — DNS-only unless Option A (above) was chosen, in which
+   case it's proxied specifically so Access can gate it.
+6. Verify HTTPS and production auth against the real `app.burmy.me` hostname.
+
+The existing `burmy.me`/`www.burmy.me` portfolio deployment is untouched by any of this — it remains
+exactly `→ Netlify` as it is today, and the new Burmy-OS Netlify site is a separate, independent Netlify
+project, not a change to the existing one.
+
+---
+
+## Optional: self-hosting on a VPS
+
+**Not the default path.** Everything below is preserved exactly as M10 built and locally tested it —
+real, working, documented code — for local development reference and for anyone who later wants to
+self-host instead of using Netlify + Supabase. None of it runs, or needs to run, under the default
+Netlify + Supabase architecture above.
+
+### Target topology (VPS)
 
 ```
 Browser ──HTTPS──▶ Cloudflare  (TLS terminates here)
@@ -42,9 +316,7 @@ only job is protecting access to the first was judged not worth its own complexi
 personal deployment. Key-only SSH on the public port, with password auth and root login disabled, is
 the accepted tradeoff; see "VPS administration" below.
 
----
-
-## Two networks — this is not optional
+### Two networks — this is not optional
 
 `cloudflared` must reach Cloudflare's edge over the public internet. Placing it on a network marked
 `internal: true` **blocks that outbound connection entirely** and the tunnel never comes up.
@@ -56,9 +328,7 @@ the accepted tradeoff; see "VPS administration" below.
 
 `web` is the only service on both. `postgres` has no internet path. `cloudflared` has no database path.
 
----
-
-## Postgres 18 volume layout — a silent data-loss trap
+### Postgres 18 volume layout — a silent data-loss trap
 
 PostgreSQL 18's official image changed `PGDATA` to `/var/lib/postgresql/18/docker` and moved the
 declared `VOLUME` to `/var/lib/postgresql`.
@@ -73,9 +343,7 @@ The wrong path fails **silently**: the container comes up, the healthcheck passe
 disappears the next time the container is recreated. Verified explicitly in Milestone 1 by writing
 rows, running `docker compose down && up`, and confirming survival.
 
----
-
-## Docker hardening
+### Docker hardening
 
 Built into the `Dockerfile` already (M1/M9): multi-stage build, non-root user (`burmy`, uid 1001),
 `output: 'standalone'`, a `HEALTHCHECK` via `node -e fetch(...)` (no curl/wget in the image),
@@ -101,9 +369,7 @@ does not reliably trace `@swc/helpers` under pnpm, and the image crash-looped on
 until fixed (see CLAUDE.md). Dev has always run via `pnpm dev` on the host, so nothing before M10 ever
 actually started this image.
 
----
-
-## Host provisioning
+### Host provisioning
 
 ```bash
 ./scripts/provision.sh   # as root, over the provider's initial console
@@ -114,23 +380,20 @@ One command, because "limited Linux experience" is a stated constraint. It insta
 SSH, creates the app user (reusing root's authorized key so access survives disabling root login),
 and prepares the systemd timer directory. Ubuntu/Debian (`apt`) assumed. **Untested against a real VPS
 as of this commit** — reviewed carefully, but there is no way to exercise `ufw`/`sshd` changes against
-a real remote host from this project's development machine; the first real run against the actual VPS
-is the test.
+a real remote host from this project's development machine; the first real run against an actual VPS
+would be the test, if this path is ever picked up again.
 
-No Tailscale, no VPN, no auth key to generate — see "Target topology" above for why. SSH stays on its
-normal port, reachable from anywhere, secured by key-only authentication and disabled password/root
-login, which is judged sufficient for a single-owner deployment.
+No Tailscale, no VPN, no auth key to generate — see "Target topology (VPS)" above for why. SSH stays
+on its normal port, reachable from anywhere, secured by key-only authentication and disabled
+password/root login, which is judged sufficient for a single-owner deployment.
 
-**Right-sized to 2 OCPU / 12 GB** on Oracle's Ampere A1 Always Free tier (the current documented total,
-not the 1 OCPU / 6 GB figure an earlier draft of this plan assumed) — ample for one user either way,
-and using the larger allotment where available is a marginal hedge against the idle-reclamation policy
-below, not a requirement. The architecture does not depend on this specific size and remains portable
-to a smaller instance or a different provider if OCI capacity is unavailable when provisioning — see
-"Provider portability".
+Sized to 2 OCPU / 12 GB on Oracle's Ampere A1 Always Free tier as originally planned — **capacity was
+unavailable when this was actually attempted; see "Oracle VPS (abandoned, nothing created)" above.**
+The architecture does not depend on this specific size or provider and remains portable to a smaller
+instance or a different provider (Hetzner, Vultr, DigitalOcean, a machine under a desk) — see
+"Provider portability" below.
 
----
-
-## Image versioning — how rollback works with no registry
+### Image versioning — how rollback works with no registry
 
 There is no image registry. `scripts/deploy.sh` builds locally, on the box, and tags every build with
 the immutable git short-SHA:
@@ -150,9 +413,7 @@ bug in an earlier draft, caught by testing a simulated deploy sequence — see C
 
 Pruning never runs during a rollback, only after a successful deploy.
 
----
-
-## Deploying
+### Deploying
 
 Run directly on the VPS, from inside the cloned repo, after reaching it over ordinary key-based SSH —
 `scripts/deploy.sh` contains no SSH logic of its own. **CI never holds credentials that can reach the
@@ -189,7 +450,7 @@ FAIL → retag previous -> current (WEB IMAGE ONLY) · restart web · Postgres u
 SUCCEED → prune old SHA-tagged images (keep current, previous, last 5 by build time)
 ```
 
-### The database is never restored automatically
+#### The database is never restored automatically
 
 An earlier draft rolled the database back to the pre-migration dump on healthcheck failure. **That was
 dangerous and was removed.**
@@ -209,21 +470,20 @@ moment the owner is least able to reason about it.
 - **Restoring is always a separate explicit command** (`scripts/restore.sh`) with typed confirmation.
   Never a deploy side effect.
 
----
-
-## CI
+### CI
 
 `.github/workflows/ci.yml` — on every push to `main` and every pull request: `typecheck`, `lint`,
 `test` (unit), `test:integration` (Testcontainers), `test:e2e` (Playwright, against a service-container
 Postgres), `build`. **Test-only.** No production secrets, no deploy capability — the one Postgres
 password it uses is a throwaway value scoped to that job's own ephemeral service container, never
-reused anywhere real.
+reused anywhere real. **Unchanged by the Netlify/Supabase move** — this gate has nothing to do with
+which architecture the app deploys to; Netlify runs its own separate build/deploy on push, independent
+of this workflow.
 
-**No deployment credentials exist in CI.** Deployment is manual and SSH-key-gated by design.
+**No deployment credentials exist in CI.** Deployment (either path) is manual and credential-gated by
+design — SSH keys for the VPS path, Netlify's own dashboard/CLI auth for the default path.
 
----
-
-## Environment — secrets scoped by consumer, not one blanket file
+### Environment (VPS) — secrets scoped by consumer, not one blanket file
 
 Five separate files, each `0600`, owned by the app user, each `env_file`-injected into only the
 compose service(s) that actually need it — never one file handed to every container:
@@ -239,237 +499,21 @@ compose service(s) that actually need it — never one file handed to every cont
 `web` never receives B2/restic/Tunnel credentials it has no use for — the property this scoping exists
 to guarantee. Each `.env.<scope>.example` (committed) is the placeholder template; the real files are
 gitignored and never committed. No secrets platform (Vault, SOPS, cloud KMS) — five host-level files
-with correct permissions are sufficient for one host, one operator.
+with correct permissions are sufficient for one host, one operator. **This whole scheme is VPS-only —
+the default Netlify path uses Netlify's own environment-variable store instead; see "Environment
+variables (Netlify)" above.**
 
----
-
-## Provider portability
+### Provider portability
 
 Nothing in the application is Oracle-specific. The compose file, provisioning script and restore path
 are identical on Hetzner, Vultr, DigitalOcean or a machine under a desk — the only differences are
-architecture (`arm64` on Oracle, `x86` on most others) and the provider console.
+architecture (`arm64` on Oracle, `x86` on most others) and the provider console. This is exactly what
+made abandoning Oracle for the Netlify/Supabase path a clean decision rather than a rewrite: nothing
+here was ever locked to Oracle specifically.
 
-**This is deliberate.** Oracle halved its Always Free ARM allowance in June 2026 with no announcement,
-and reclaims idle instances. Migration is a rehearsed restore drill, not an emergency.
+### VPS administration
 
----
-
-## DNS strategy for `app.burmy.me` — investigated, nothing changed yet
-
-**No DNS, Cloudflare, Netlify, Namecheap, VPS, or B2 change has been made.** This section is the
-investigation the owner asked for, corrected once already (see "Corrected from an earlier draft"
-below), so a real migration plan can be reviewed before anything external is touched.
-
-### Corrected from an earlier draft of this section
-
-An earlier version of this document recommended delegating only the `app` subdomain to Cloudflare via
-an NS record inside Netlify's DNS panel, leaving `burmy.me`'s authoritative DNS on Netlify/NS1
-entirely. **That recommendation was wrong and has been withdrawn.** Cloudflare's subdomain-only /
-partial (CNAME) setup — the feature that recommendation depended on — is **not available on Cloudflare
-Free or Pro**; Cloudflare gates it to Enterprise. This project assumes **Cloudflare Free** unless a
-concrete reason to pay for a higher plan shows up, so that path is not available here, full stop.
-
-### The corrected strategy: move DNS authority, not the website
-
-**`burmy.me`'s full DNS zone moves to Cloudflare. Netlify keeps hosting the site.** These are two
-separate facts and it matters that they don't get conflated:
-
-- **DNS authority** (which nameservers answer queries for `burmy.me`) moves from NS1/Netlify DNS to
-  Cloudflare.
-- **Website hosting** (what actually serves `burmy.me` and `www.burmy.me`'s content) stays on Netlify,
-  completely unchanged. Cloudflare's DNS records for the apex and `www` simply point at the same
-  Netlify infrastructure the current Netlify DNS records point at today — reproduced, not replaced.
-- Every Netlify/website-facing record is added to Cloudflare **DNS only** (grey cloud, not the orange
-  "Proxied" cloud) unless a concrete, verified reason to proxy one shows up later. Proxying changes
-  the IP Netlify itself sees traffic arrive from and can interact with Netlify's own SSL — not a
-  default to reach for.
-- `app.burmy.me` is the **one** new record, added after the migration is verified healthy, pointing at
-  the Cloudflare Tunnel instead.
-
-### What's there today — from public, read-only lookups (no account access)
-
-| Query | Result |
-| --- | --- |
-| `burmy.me` A | `98.84.224.111`, `18.208.88.157` |
-| `www.burmy.me` A | `98.84.224.111`, `18.208.88.157` (same two addresses — not a CNAME; `-type=CNAME` for `www` returned no record) |
-| `burmy.me` MX | none found |
-| `burmy.me` TXT | none found |
-| `_dmarc.burmy.me` TXT | **NXDOMAIN — confirmed absent**, not just unqueried |
-| `burmy.me` NS | `dns1-4.p06.nsone.net` |
-| SOA | `responsible mail addr = domains+netlify.netlify.com` → **hosted on Netlify**, using Netlify's own DNS product (built on NS1, hence the `nsone.net` nameservers) |
-
-**Read from this, cautiously:** no email appears to be configured for `burmy.me` today (no MX, no SPF/
-DMARC TXT) — if true, that's one whole category (email/SPF/DKIM/DMARC) the migration doesn't need to
-carry. But a non-authoritative public resolver is not the source of truth here, and TTL values aren't
-visible through this lookup method at all. **Per the "do not invent records" rule below, this table is
-a starting point the Netlify dashboard must confirm or correct, not a substitute for it.**
-
-### Confirmed from the actual Netlify dashboard (the real source of truth)
-
-The owner opened Netlify → Domains → `burmy.me` → DNS directly and shared the real record list.
-**Only 2 DNS records exist, both TTL 3600:**
-
-| Type | Name | Value/Target |
-| --- | --- | --- |
-| `NETLIFY` | `burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` |
-| `NETLIFY` | `www.burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` |
-
-No MX, no TXT, no other subdomains — confirms the public-lookup inference above, now from the
-authoritative source rather than an inference. IPv6 is **not enabled** (Netlify's dashboard shows an
-unclicked "Enable IPv6" prompt) — nothing to carry over there either.
-
-**One real correction this revealed:** `NETLIFY` is **not a standard DNS record type** — it's Netlify's
-own dynamic record, resolved by Netlify's nameservers at query time to whatever load-balancer IPs are
-currently live. The two A records the public lookup found (`98.84.224.111`, `18.208.88.157`) were only
-*that moment's* resolved snapshot of this record, not a stable value. Reproducing them as static A
-records in Cloudflare — the plan this table originally sketched — would work today and then silently
-break the day Netlify ever rotates those IPs, exactly the scenario Netlify's own dynamic record type
-exists to make invisible to the customer.
-
-**The correct equivalent is NOT "point everything at the site's own `.netlify.app` hostname" — apex and
-`www` need different targets, per Netlify's own documented external-DNS guidance** (verified directly
-against `docs.netlify.com`, "Configure external DNS for a custom domain," not assumed):
-
-- **Apex (`burmy.me`)** → an ALIAS/ANAME/flattened CNAME pointed at **`apex-loadbalancer.netlify.com`**
-  — Netlify's own geo-distributed load-balancer hostname, specifically documented for this case.
-  Netlify's docs are explicit that a *plain* CNAME at the apex pointing to the site's own
-  `.netlify.app` subdomain is wrong, and not just a style preference: the DNS standard forbids any
-  other record (MX, TXT, etc.) coexisting at a name that has a CNAME, so a literal CNAME at the root
-  would foreclose ever adding one later. `apex-loadbalancer.netlify.com` is the one target Netlify
-  documents as safe to flatten at the root.
-- **`www.burmy.me`** → an ordinary CNAME pointed at the site's own subdomain,
-  `infallible-visvesvaraya-eefd80.netlify.app` — this one Netlify documents as an ordinary CNAME target,
-  no flattening needed, since `www` isn't the zone apex.
-
-Cloudflare's mechanism for the apex is **CNAME flattening**, a long-standing **Free**-tier feature
-(unrelated to the Enterprise-gated partial-zone issue that ruled out the original subdomain-delegation
-idea — a different Cloudflare feature, available regardless of plan) that lets a CNAME-shaped record
-sit at the root and resolves it dynamically underneath.
-
-### DNS migration checklist
-
-**Stop-and-confirm gate: Namecheap's nameservers are not touched until step 10 is explicitly approved.**
-
-1. ✅ **DONE — inventory every currently published record.** Confirmed directly from the Netlify
-   dashboard (Netlify → Domains → `burmy.me` → DNS), not just inferred from public lookup: **exactly 2
-   records**, both TTL 3600, both the `NETLIFY` dynamic type, no MX/TXT/other subdomains, IPv6 not
-   enabled. See "Confirmed from the actual Netlify dashboard" above.
-2. ✅ **DONE — Netlify-dashboard confirmation.** Superseded step 1's public-lookup guess; nothing left
-   unconfirmed for this domain's DNS.
-3. **Record inventory table — CONFIRMED**, current Netlify config on the left, the Cloudflare
-   recreation plan on the right, apex and `www` targets corrected to match Netlify's own documented
-   external-DNS guidance (verified against `docs.netlify.com` — see above; NOT both pointed at the
-   site's `.netlify.app` hostname, an earlier draft's mistake):
-
-   | Type (Netlify) | Hostname | Netlify value | TTL | → | Type (Cloudflare) | Cloudflare value | Proxy status |
-   | --- | --- | --- | --- | --- | --- | --- | --- |
-   | `NETLIFY` | `burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME (flattened at apex) | **`apex-loadbalancer.netlify.com`** | **DNS only** |
-   | `NETLIFY` | `www.burmy.me` | `infallible-visvesvaraya-eefd80.netlify.app` | 3600 | → | CNAME | `infallible-visvesvaraya-eefd80.netlify.app` | **DNS only** |
-   | — | — | *(no MX, no TXT, no other subdomains — confirmed, not inferred)* | | | *(nothing else to recreate)* | | |
-   | — | — | *(IPv6 not enabled on Netlify)* | | | *(no AAAA record — do not create one)* | | |
-   | — | `app.burmy.me` | *(does not exist yet)* | — | → | CNAME | Cloudflare Tunnel's assigned target | **DNS only** (the Tunnel handles routing without needing the orange cloud) — added later, after the migration above is verified healthy |
-
-   The `→` column is the real translation, not a literal copy, and it is **not** the same translation
-   for both rows: `NETLIFY` isn't a portable record type, so it's reproduced using Netlify's own
-   documented external-DNS targets — `apex-loadbalancer.netlify.com` for the apex specifically (Netlify
-   explicitly warns against a plain CNAME at the root pointing to the site's own subdomain, since a
-   CNAME at the apex would forbid any other record — MX, TXT — ever coexisting there), and the site's
-   own `.netlify.app` hostname for `www`, which Netlify documents as an ordinary CNAME target since
-   `www` isn't the zone apex. See "Confirmed from the actual Netlify dashboard" above for the full
-   reasoning and the documentation citation.
-4. **Preserve everything required for**: the Netlify apex site, `www`. Email/MX/SPF/DKIM/DMARC and any
-   other subdomain/service are confirmed **not present** — nothing there to preserve.
-5. ✅ **DONE — the real current configuration is the source of truth.** Nothing in the table above is
-   invented from generic Netlify documentation — every row is the actual Netlify dashboard's own
-   record list, confirmed directly, not inferred.
-6. **Create the Cloudflare zone first** (Free plan) — add `burmy.me` in Cloudflare, note the two
-   nameservers it assigns. This alone changes nothing (Namecheap still points at NS1 until step 10).
-   **Cloudflare will likely offer to auto-import existing DNS records by scanning current answers —
-   do NOT trust these as-is.** A scan can only see what public lookup already saw: the resolved A
-   records behind Netlify's dynamic `NETLIFY` record, the exact static-IP problem this whole
-   correction exists to avoid (see "Confirmed from the actual Netlify dashboard" above). Any
-   auto-imported A record for `burmy.me` or `www.burmy.me` must be deleted, not kept.
-7. **Reproduce only the confirmed table inside Cloudflare**, replacing anything the scan imported:
-   - `@` → CNAME (flattened) → `apex-loadbalancer.netlify.com` → DNS only
-   - `www` → CNAME → `infallible-visvesvaraya-eefd80.netlify.app` → DNS only
-   - No AAAA, no MX, no TXT.
-   - No duplicate records for the same hostname — if the scan's A record and the correct CNAME both
-     exist for a moment, the A record is deleted, not left "just in case."
-8. **Comparison checklist** — side by side, Netlify DNS vs. the new Cloudflare zone, for owner
-   sign-off before cutover:
-   - [ ] Every row in the record inventory table exists in Cloudflare with an identical value.
-   - [ ] Proxy status is **DNS only** for both records (nothing accidentally proxied).
-   - [ ] No extra record exists in Cloudflare that isn't in the inventory — in particular, no leftover
-     auto-scanned A record for either hostname.
-   - [ ] No AAAA record exists.
-   - [ ] TTLs are sane (Cloudflare's DNS-only defaults are fine; they don't need to match Netlify's
-     exactly, but shouldn't be absurdly long during the cutover window).
-9. **DNSSEC/DS check** (read-only, public — verified via two independent DNS-over-HTTPS resolvers,
-   Google's `dns.google` and Cloudflare's own `cloudflare-dns.com`, querying `burmy.me` type `DS`):
-   **no DS record exists today.** Both queries returned `NOERROR` with an empty Answer section and
-   only the parent `.me` registry's own SOA in Authority — the standard "this record type is absent"
-   pattern, not a lookup failure. **What this means:** DNSSEC is not currently enabled for `burmy.me`
-   at all — there is no chain of trust for a validating resolver to check, so nothing about the
-   Netlify/NS1 → Cloudflare nameserver cutover can trip DNSSEC validation. The classic DNSSEC-migration
-   hazard (a DS record at the registrar still pointing at the OLD provider's key material after
-   cutover, which breaks the domain for any resolver that enforces DNSSEC) **does not apply here**,
-   because there is no DS record to go stale. **Exact action required before cutover: none.** If
-   DNSSEC is ever wanted later (a separate, distinct decision, not part of this migration), it would
-   be enabled from within Cloudflare once the zone is authoritative, which generates a new DS record
-   that then has to be added at Namecheap — that is future scope, not a blocker here.
-10. **Only after the comparison checklist (step 8) is explicitly approved** does the Namecheap
-    nameserver change happen — from the four `nsone.net` servers to Cloudflare's two.
-11. **Post-cutover verification** (DNS propagation can take up to ~48h in the worst case, though
-    usually much faster):
-    - [ ] `burmy.me` resolves
-    - [ ] `www.burmy.me` resolves
-    - [ ] The existing Netlify site loads correctly, full visual/functional check, not just "a page
-      loads"
-    - [ ] HTTPS/SSL is healthy (Netlify's cert continues working, or Cloudflare's own edge cert takes
-      over cleanly — confirm which, don't assume)
-    - [ ] Any existing redirects still behave correctly
-    - [ ] No email-related DNS records were expected and none now exist (confirmed, not assumed)
-12. **Only once the existing site is confirmed healthy** does `app.burmy.me` get created:
-    Cloudflare Tunnel → Cloudflare Access → Google OAuth identity provider. Not before.
-13. VPS provisioning and Backblaze B2 setup remain separate, later stop-points — unrelated to the DNS
-    migration and not blocked by it, but still not started until their own turn.
-
-### Next step
-
-Steps 1, 2, 5 and 9 (DNSSEC) are done — the record inventory is confirmed from the real Netlify
-dashboard, not inferred; its Cloudflare targets are verified against Netlify's own external-DNS
-documentation, not assumed; no DS record exists, so DNSSEC is not a cutover concern. Owner has
-confirmed: CNAME flattening at the apex is OK, IPv6/AAAA stays off, and the corrected apex/`www`
-targets above are approved.
-
-**Nothing has been touched externally — no Cloudflare zone, no Netlify record, no Namecheap change.**
-Step 6 (create the Cloudflare zone) is a real external action this document's author has no way to
-perform directly — no Cloudflare API credentials, no browser access. It has to be either (a) done
-manually by the owner following the exact steps below, or (b) done via a scoped Cloudflare API token
-the owner explicitly chooses to provide. Manual steps, for (a):
-
-1. Sign in at `dash.cloudflare.com` (or create an account if none exists yet).
-2. **Add a Site** → enter `burmy.me` → select the **Free** plan.
-3. When Cloudflare offers to scan and auto-import existing DNS records, let it run, but **do not
-   accept the results as final** — see step 6 of the checklist above for exactly why (it will likely
-   surface the same stale, point-in-time A records public lookup already found behind Netlify's
-   dynamic record).
-4. In the DNS records panel: delete any auto-imported A record for `burmy.me` or `www.burmy.me`. Add
-   the two records from step 7 of the checklist above exactly — CNAME `@` → `apex-loadbalancer.netlify.com`
-   (DNS only), CNAME `www` → `infallible-visvesvaraya-eefd80.netlify.app` (DNS only). Confirm no AAAA,
-   MX, or TXT records exist.
-5. Note the two nameservers Cloudflare assigns to the zone (shown on the zone's overview page) —
-   **do not enter these at Namecheap yet.**
-6. Report back what the DNS records panel shows (a screenshot, same as the Netlify one, works well)
-   so the comparison checklist (step 8 above) can be completed together.
-
-Waiting on that before step 10's separate gate for any Namecheap change.
-
----
-
-## VPS administration
-
-Plain SSH, not a VPN mesh (see "Target topology"). Concretely, from `scripts/provision.sh`:
+Plain SSH, not a VPN mesh (see "Target topology (VPS)"). Concretely, from `scripts/provision.sh`:
 
 - Key-based authentication only; password authentication disabled in `sshd_config`.
 - Root login disabled; the app user is created with root's own authorized key copied over first, so
@@ -481,46 +525,11 @@ Plain SSH, not a VPN mesh (see "Target topology"). Concretely, from `scripts/pro
 - No public web port for Burmy-OS, no public Postgres port, and no second private network built
   solely to reach SSH — the single inbound firewall rule *is* the admin path.
 
----
+### Deferred for V1 (within the VPS path) — optional, not required, nothing deleted
 
-## External setup — not yet done, needs the owner
-
-Nothing below is a repo/code change. None of it has been performed as of this commit; each is a real,
-often hard-to-reverse external action, so none of it is done unilaterally. **Stop-and-confirm, one
-service at a time** — not all of this at once.
-
-**Netlify and Namecheap are not new services** — `burmy.me` already runs on both today; they only
-appear below because the DNS migration touches them, not because they're being newly added.
-
-1. **A Cloudflare account** (Free plan), so the `burmy.me` zone can be created — the first concrete
-   step of the DNS migration checklist above (step 6). Creating the zone alone changes nothing. The
-   two confirmations (CNAME flattening at the apex, IPv6 staying off) and the DNSSEC check are done —
-   see "Next step" above for the exact manual steps, since zone creation itself needs the owner (no
-   Cloudflare API credentials or browser access exist to do this directly).
-2. ✅ **DONE** — the Netlify-dashboard confirmation (checklist step 2). The record inventory is
-   complete: 2 records, no email, no other subdomains.
-3. **Explicit approval of the comparison checklist** (step 8) before I change anything at Namecheap
-   (step 10).
-4. *(Only after the migrated site is confirmed healthy — step 12)*: Cloudflare Zero Trust / Access
-   enabled on the same Cloudflare account, plus a Google Cloud Console OAuth client for Access's
-   Google identity provider.
-5. VPS provider account — Oracle Cloud Always Free as documented, or a different provider. Unrelated
-   to the DNS migration; can happen in parallel or after, your call.
-6. Backblaze B2 account, one bucket, one application key scoped to that bucket. Also unrelated to DNS;
-   its own later stop-point.
-7. Password manager entries for: `RESTIC_PASSWORD` (+ a **printed offline copy**), `TUNNEL_TOKEN`,
-   B2 keys, `POSTGRES_PASSWORD`, `OWNER_EMAIL`.
-8. Initial SSH access to the VPS (cloud console) so `scripts/provision.sh` can run.
-
-That's the complete list under the simplified scope — no Tailscale account, no healthchecks.io account
-required. See "Deferred for V1" below if either is wanted later.
-
----
-
-## Deferred for V1 — optional, not required, nothing deleted
-
-Owner decision: reduce infrastructure complexity for the initial launch. Each of these existed in an
-earlier draft of this plan; none were removed from the repo, all are clearly labeled where they live:
+Owner decision, from the original VPS-era simplification: reduce infrastructure complexity for launch.
+Each of these existed in an earlier draft of the VPS plan; none were removed from the repo, all are
+clearly labeled where they live:
 
 | Deferred | Where it still lives | How to opt in later |
 | --- | --- | --- |
@@ -530,27 +539,33 @@ earlier draft of this plan; none were removed from the repo, all are clearly lab
 | Daily host check (disk/restart-loop) | `scripts/check-host.sh` + `deploy/systemd/burmy-check-host.{service,timer}`, marked `[OPTIONAL]`, not enabled by `provision.sh` | Copy the two unit files, `systemctl enable --now burmy-check-host.timer` |
 | Quarterly DR drills | `docs/BACKUP_RESTORE.md`'s DR sequence remains fully documented and usable manually | Run it by hand whenever wanted; not scheduled |
 
-What's still **required** for V1: nightly backup (`burmy-backup.timer`), weekly repository maintenance
-(`burmy-maintenance.timer` — retention/pruning, a different concern from restore *verification*, and
-not part of this deferral), and the **one manual** restore-and-verify proof before launch (Launch
-checklist, item 11).
+If self-hosting is picked up again, what was **required** for the VPS path's own V1: nightly backup
+(`burmy-backup.timer`), weekly repository maintenance (`burmy-maintenance.timer`), and one manual
+restore-and-verify proof before launch. `docs/BACKUP_RESTORE.md` still documents all of this in full —
+untouched by the Netlify/Supabase move.
 
 ---
 
-## Launch checklist — the actual Definition of Done for M10
+## Launch checklist — Definition of Done for the default (Netlify + Supabase) path
 
 Real financial data does not touch production until every item below is demonstrated, not assumed:
 
-1. Production container starts cleanly
-2. Database migrations execute correctly
-3. Owner is resolved correctly
-4. `app.burmy.me` works
-5. Real Cloudflare Google Access works
-6. Unauthorized access fails closed
-7. Direct origin exposure is prevented/restricted
-8. Backup completes
-9. Backup integrity/check succeeds
-10. Disposable restore succeeds
-11. Restored app/data is verified
-12. Documented DR procedure is usable
-13. All application test/build gates remain green
+1. The "Authentication — the open decision" question above is resolved (Option A or B), and confirmed
+   working end to end on the deployed app, not just configured.
+2. Netlify build succeeds against this repo with no configuration beyond `netlify.toml` and the
+   environment variables in "Environment variables (Netlify)".
+3. Migrations applied correctly against Supabase (`scripts/migrate.mjs`, direct connection) — schema
+   matches `drizzle/`.
+4. Owner is resolved correctly (`provision-owner.mjs` run once, `requireOwner()` succeeds for the real
+   owner identity and fails closed for anything else).
+5. `app.burmy.me` resolves to the Netlify deployment and HTTPS is healthy.
+6. Unauthorized access fails closed (confirmed against the real deployed app, not just unit tests).
+7. CSV import, categorization, and the Finance dashboard all work correctly against real Supabase data.
+8. A manual `pg_dump` against the live Supabase database succeeds and is verified restorable
+   (`pg_restore` into a scratch database, same verification spirit as the old `scripts/verify.sh`).
+9. All application test/build gates remain green: `pnpm typecheck` / `lint` / `test` / `test:integration`
+   / `test:e2e` / `build`.
+
+If self-hosting is chosen instead (Option B or a future reversal back to a VPS), the original 13-point
+VPS launch checklist is preserved in git history (this file, before this rewrite) and in
+`docs/BACKUP_RESTORE.md`'s own DR checklist, which was never specific to any one hosting path.

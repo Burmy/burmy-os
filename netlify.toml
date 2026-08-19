@@ -1,0 +1,22 @@
+# Netlify build configuration for the Burmy-OS Next.js app.
+#
+# Netlify's Next.js Runtime (built on OpenNext) auto-detects Next.js and
+# wires up SSR/Server Actions/Edge middleware as Netlify Functions with no
+# `publish` directory needed — deliberately NOT set here, since guessing one
+# risks fighting that autodetection rather than helping it. This file exists
+# only to pin two things explicitly instead of leaving them to inference:
+# the build command (matches CI/local exactly — `pnpm build`, which is
+# `next build` per package.json) and the Node version, so a Netlify platform
+# default change can never silently drift from the Node 24 this app targets
+# everywhere else (CLAUDE.md).
+#
+# `pnpm` itself needs no separate install step or version pin here: Node 24's
+# corepack is enabled by Netlify's build image automatically, and
+# package.json's own `packageManager` field pins the exact pnpm version from
+# there — the same mechanism local dev and CI both already rely on.
+
+[build]
+  command = "pnpm build"
+
+[build.environment]
+  NODE_VERSION = "24"

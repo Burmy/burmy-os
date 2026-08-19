@@ -17,7 +17,7 @@ next. Never mark anything complete without having run the verification and seen 
 | **M7** | Review queue | ✅ Complete |
 | **M8** | Monthly grid & drill-down *(the product)* | ✅ Complete |
 | **M9** | Transactions ledger, reconciliation & export | ✅ Complete |
-| M10 | Backup automation, deployment, hardening, launch | 🔵 In progress — repo-side done, external infra pending |
+| M10 | Deployment, hardening, launch | 🔵 In progress — architecture simplified to Netlify + Supabase (VPS path preserved as optional self-host); one open auth decision blocks launch |
 
 Legend: ⚪ not started · 🔵 in progress · 🟡 blocked · ✅ complete
 
@@ -953,6 +953,54 @@ account are needed under the simplified scope. See `docs/DEPLOYMENT.md`,
 "External setup" for the exact remaining manual steps and "Launch
 checklist" for what still needs proving before real financial data touches
 production.
+
+### Architecture simplification (2026-08-18): the VPS is dropped
+
+Everything above this subsection describes the VPS-era plan as it was
+actually built and locally tested — none of it was wrong, and none of it
+was deleted. What changed is which of it is the *default* path.
+
+**What happened externally, in order:** the Cloudflare DNS migration
+described above was completed for real (zone Active, Namecheap pointed at
+Cloudflare's nameservers) — see `docs/DEPLOYMENT.md`, "External state" for
+the exact record set. Cloudflare Zero Trust Free + Google as the identity
+provider + a Burmy-OS Access application were configured and a live Google
+auth test succeeded. Then VPS provisioning was attempted against Oracle
+Cloud's Always Free `VM.Standard.A1.Flex` (2 OCPU/12 GB as planned, then
+retried at 1 OCPU/6 GB) — capacity was unavailable in every availability
+domain both times. **No VPS was ever created; nothing was ever deployed to
+Oracle.**
+
+**The decision, once capacity failed:** reconsidering that Burmy-OS has
+exactly one user with light, occasional usage, an always-on VPS (Linux
+maintenance, Docker host, `ufw`/SSH hardening, Postgres administration,
+`cloudflared`, systemd timers, a restic→B2 backup pipeline) was judged to
+be infrastructure sized for a problem this app doesn't have. The new
+default production target: **Netlify (hosting) + Supabase (managed
+Postgres) + Cloudflare (DNS only, no VPS, no Tunnel)**. Full detail —
+target topology, the one still-open authentication decision this created
+(Cloudflare Access has no request path to sit in without a VPS Tunnel or a
+proxied Netlify record), environment variables, the Supabase connection-
+pooling code change, migration workflow, and a simplified backup strategy
+— now lives in `docs/DEPLOYMENT.md`, which was restructured around this as
+the primary path.
+
+**What this did NOT require changing:** no application code assumed a VPS
+existed — `src/server/finance/` already parsed uploads in memory only
+(never touched disk), and `scripts/migrate.mjs`/`provision-owner.mjs` were
+already plain Node scripts with no Docker dependency of their own. The one
+real code change was `src/server/db/index.ts`'s connection caching, which
+had a latent bug (never cached in production, regardless of hosting
+target) that Supabase's connection ceiling made worth fixing now rather
+than discovering under real traffic later.
+
+**Everything VPS-shaped stays in the repo, fully intact, as an optional
+self-hosting path** — `compose.yml`, the `Dockerfile`, every
+`scripts/*.sh`, the `deploy/systemd/*` units — documented under
+`docs/DEPLOYMENT.md`'s "Optional: self-hosting on a VPS," not deleted, not
+half-maintained as dead weight either: it's the same code M10 already
+built and tested, just no longer the thing a fresh deploy reaches for
+first.
 
 ## Carried forward
 

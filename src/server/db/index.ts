@@ -6,8 +6,12 @@ import * as schema from './schema';
 export type Db = PostgresJsDatabase<typeof schema>;
 
 /**
- * Reuse the client across hot reloads in development. Without this, every edit
- * opens a new pool and Postgres runs out of connections within minutes.
+ * Reuse the client across hot reloads in development, and across invocations
+ * within the same warm serverless instance in production. Without this,
+ * every call to `getDb()` opens a brand-new pool that is never closed —
+ * fatal against Supabase's connection ceiling under real traffic, not just
+ * a dev-mode HMR problem. (Previously gated on `NODE_ENV !== 'production'`,
+ * which meant PRODUCTION never cached at all — see CLAUDE.md.)
  */
 const globalForDb = globalThis as unknown as {
   __burmyClient?: ReturnType<typeof postgres>;
@@ -37,14 +41,20 @@ function init(): Db {
       max: 10,
       idle_timeout: 20,
       connect_timeout: 10,
+      // Required whenever `DATABASE_URL` might point through Supabase's
+      // Supavisor pooler in transaction mode (the mode serverless functions
+      // should use) — prepared statements aren't valid across pooled
+      // connections, since a later query in the "same" prepared statement can
+      // land on a different underlying Postgres connection. Harmless against
+      // a direct, unpooled connection (local dev, migrations): it only
+      // disables an optimization, never changes correctness.
+      prepare: false,
     });
 
   const instance = drizzle(client, { schema });
 
-  if (process.env.NODE_ENV !== 'production') {
-    globalForDb.__burmyClient = client;
-    globalForDb.__burmyDb = instance;
-  }
+  globalForDb.__burmyClient = client;
+  globalForDb.__burmyDb = instance;
 
   return instance;
 }

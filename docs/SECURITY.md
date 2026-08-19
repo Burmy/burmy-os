@@ -44,6 +44,14 @@ no in-app credential, no session of Burmy's own, and no second factor:
 app.burmy.me → Cloudflare Access / Google → Burmy application
 ```
 
+> **Deployment-path note (2026-08-18, see `docs/DEPLOYMENT.md`, "Authentication — the open decision"):**
+> this diagram describes what the *code* requires, not necessarily what's in front of it today. The
+> default production target changed from a VPS+Tunnel to Netlify + Supabase, and Cloudflare Access only
+> intercepts a request when Cloudflare's edge actually sits in the path — a Tunnel, or a *proxied* DNS
+> record. Whether `app.burmy.me` ends up proxied (keeping this diagram literally true) or Burmy-OS grows
+> its own authentication instead is an open decision, not yet made. Everything below in this section
+> describes the code as it exists right now, which is unchanged either way until that decision lands.
+
 This replaced an earlier two-factor design (Cloudflare Access *plus* an in-app Better Auth passkey) —
 see "Former design: Cloudflare Access + passkey (removed)" below for what that was and why it is gone.
 
