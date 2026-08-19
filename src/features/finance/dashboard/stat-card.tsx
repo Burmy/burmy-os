@@ -20,11 +20,15 @@ export function StatCard({
   readonly hint?: string;
 }): React.ReactElement {
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <div className="text-muted-foreground text-sm">{label}</div>
-      <div className={cn('tabular mt-1 text-2xl font-semibold whitespace-nowrap', valueClassName)}>{value}</div>
-      {comparison ? <div className="mt-1.5">{comparison}</div> : null}
-      {hint ? <div className="text-muted-foreground mt-1 text-xs">{hint}</div> : null}
+    <div className="flex h-full flex-col justify-between gap-2 rounded-lg border bg-card p-5">
+      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
+      <div>
+        <div className={cn('tabular text-[1.75rem] leading-none font-semibold whitespace-nowrap', valueClassName)}>
+          {value}
+        </div>
+        {comparison ? <div className="mt-2">{comparison}</div> : null}
+        {hint ? <div className="text-muted-foreground mt-2 text-xs">{hint}</div> : null}
+      </div>
     </div>
   );
 }

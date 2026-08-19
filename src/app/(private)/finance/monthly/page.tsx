@@ -19,9 +19,11 @@ import {
 import { listInProgressImports } from '@/server/db/finance/imports';
 import { getNeedsReviewCount } from '@/server/db/finance/transactions';
 import {
+  buildAnnualCategoryBreakdown,
   buildCategoryBreakdown,
   buildCategoryTrend,
   buildTrend,
+  buildYearlyBreakdown,
   compareToPreviousMonth,
   computeAverageDailySpending,
   computeSavingsRate,
@@ -115,6 +117,7 @@ export default async function MonthlyPage({
     categoryTotals,
     dailyTotals,
     topExpenses,
+    yearCategoryTotals,
   ] = await Promise.all([
     listTransactionYears(owner.userId),
     listCategories(owner.userId, { includeArchived: true }),
@@ -126,6 +129,10 @@ export default async function MonthlyPage({
     getCategoryTotalsForWindow(owner.userId, categoryWindowStart, categoryWindowEnd),
     getDailyTotalsForMonth(owner.userId, year, month),
     getTopExpensesForMonth(owner.userId, year, month, 8),
+    // Same query as `categoryTotals` above, just parameterized with the FULL
+    // calendar year instead of a trailing 6-month window — the Year Overview's
+    // annual category breakdown and Yearly Breakdown chart both read this.
+    getCategoryTotalsForWindow(owner.userId, `${year}-01-01`, `${year + 1}-01-01`),
   ]);
 
   const categoryMeta: GridCategoryMeta[] = categories.map((category) => ({
@@ -208,17 +215,27 @@ export default async function MonthlyPage({
     netCents: row.grossSavingsCents,
   }));
 
+  const annualCategories = buildAnnualCategoryBreakdown(yearCategoryTotals, year, categoryMetaForBreakdown);
+  // 6 series max: 5 real categories + "Other" — matches the 6-color chart palette exactly.
+  const yearlyBreakdown = buildYearlyBreakdown(yearCategoryTotals, year, categoryMetaForBreakdown, 6);
+
+  const actions = (
+    <>
+      <Button variant="outline" size="sm" asChild>
+        <Link href="/finance/transactions">Transactions</Link>
+      </Button>
+      <ImportSheet accounts={accounts} categories={liveCategories} inProgressImports={inProgressImports} />
+    </>
+  );
+
   return (
     <div>
-      <div className="flex items-start justify-between gap-4">
-        <h1 className="text-xl font-semibold">Finance</h1>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" asChild>
-            <Link href="/finance/transactions">Transactions</Link>
-          </Button>
-          <ImportSheet accounts={accounts} categories={liveCategories} inProgressImports={inProgressImports} />
+      {categories.length === 0 ? (
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-xl font-semibold">Finance</h1>
+          <div className="flex items-center gap-2">{actions}</div>
         </div>
-      </div>
+      ) : null}
 
       {needsReviewCount > 0 ? (
         <div role="status" className="bg-muted/50 mt-3 rounded-md border px-3 py-2 text-sm">
@@ -252,6 +269,7 @@ export default async function MonthlyPage({
             years={years}
             isCurrentMonth={isCurrentMonth}
             previousMonthLabel={previousMonthLabel}
+            actions={actions}
             summary={summary}
             comparison={comparison}
             savingsRatePercent={savingsRatePercent}
@@ -262,7 +280,7 @@ export default async function MonthlyPage({
             categoryTrend={categoryTrend}
             topExpenses={topExpenses}
             insights={insights}
-            ytd={{ summary: ytdSummary, trend: ytdTrend }}
+            ytd={{ summary: ytdSummary, trend: ytdTrend, annualCategories, yearlyBreakdown }}
           />
 
           <div className="mt-8">

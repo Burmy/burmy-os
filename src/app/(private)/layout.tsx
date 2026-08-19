@@ -64,7 +64,7 @@ export default async function PrivateLayout({
             otherwise lets a wide descendant (the monthly grid table, which can
             run to a dozen+ columns) push this whole flex chain wider than the
             viewport instead of scrolling inside its own `overflow-x-auto`. */}
-        <main className="mx-auto w-full min-w-0 max-w-6xl flex-1 px-4 py-8 sm:px-6">{children}</main>
+        <main className="mx-auto w-full min-w-0 max-w-[1600px] flex-1 px-4 py-8 sm:px-6">{children}</main>
       </div>
     </div>
   );

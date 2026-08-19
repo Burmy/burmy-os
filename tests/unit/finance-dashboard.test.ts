@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildAnnualCategoryBreakdown,
   buildCategoryBreakdown,
   buildCategoryTrend,
   buildTrend,
+  buildYearlyBreakdown,
   compareToPreviousMonth,
   computeAverageDailySpending,
   computeSavingsRate,
@@ -286,5 +288,103 @@ describe('computeYtdSummary', () => {
   it('zero elapsed months is an empty, not fabricated, summary', () => {
     const summary = computeYtdSummary(rows, 2026, 0);
     expect(summary).toMatchObject({ incomeCents: 0, expenseCents: 0, netCents: 0, highestSpendingMonth: null });
+  });
+
+  it('a completed historical year (monthsElapsed = 12) sums the whole year, same code path as YTD', () => {
+    const fullYear = [
+      { month: 1, incomeCents: 100000, expenseCents: 50000 },
+      { month: 6, incomeCents: 100000, expenseCents: 50000 },
+      { month: 12, incomeCents: 100000, expenseCents: 50000 },
+    ];
+    const summary = computeYtdSummary(fullYear, 2025, 12);
+    expect(summary.incomeCents).toBe(300000);
+    expect(summary.expenseCents).toBe(150000);
+  });
+});
+
+describe('buildAnnualCategoryBreakdown', () => {
+  it('sums a category across every month of the year, sorted largest first', () => {
+    const rows = [
+      catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 3000 }),
+      catRow({ year: 2026, month: 6, categoryId: 'cat-1', amountCents: 4000 }),
+      catRow({ year: 2026, month: 3, categoryId: 'cat-2', amountCents: 9000 }),
+    ];
+    const breakdown = buildAnnualCategoryBreakdown(rows, 2026, CATEGORIES);
+    expect(breakdown.map((b) => b.categoryId)).toEqual(['cat-2', 'cat-1']);
+    expect(breakdown.find((b) => b.categoryId === 'cat-1')?.amountCents).toBe(7000);
+  });
+
+  it('excludes rows from a different year', () => {
+    const rows = [
+      catRow({ year: 2025, month: 12, categoryId: 'cat-1', amountCents: 5000 }),
+      catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 2000 }),
+    ];
+    const breakdown = buildAnnualCategoryBreakdown(rows, 2026, CATEGORIES);
+    expect(breakdown).toEqual([expect.objectContaining({ categoryId: 'cat-1', amountCents: 2000 })]);
+  });
+
+  it('percent of expenses is computed against the ANNUAL total, not any one month', () => {
+    const rows = [
+      catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 3000 }),
+      catRow({ year: 2026, month: 2, categoryId: 'cat-2', amountCents: 1000 }),
+    ];
+    const breakdown = buildAnnualCategoryBreakdown(rows, 2026, CATEGORIES);
+    expect(breakdown.find((b) => b.categoryId === 'cat-1')?.percentOfExpenses).toBeCloseTo(75, 5);
+  });
+
+  it('a year with no spending returns an empty list, not NaN percentages', () => {
+    expect(buildAnnualCategoryBreakdown([], 2026, CATEGORIES)).toEqual([]);
+  });
+});
+
+describe('buildYearlyBreakdown', () => {
+  it('always returns all 12 months, Jan through Dec, zero-filled', () => {
+    const rows = [catRow({ year: 2026, month: 3, categoryId: 'cat-1', amountCents: 5000 })];
+    const breakdown = buildYearlyBreakdown(rows, 2026, CATEGORIES, 6);
+    expect(breakdown.months).toHaveLength(12);
+    expect(breakdown.months.map((m) => m.month)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(breakdown.months[0]!.totalCents).toBe(0);
+    expect(breakdown.months[2]!.totalCents).toBe(5000);
+  });
+
+  it('keeps the top (maxSeries - 1) categories by ANNUAL total as their own series, folds the rest into Other', () => {
+    const rows = [
+      catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 9000 }),
+      catRow({ year: 2026, month: 1, categoryId: 'cat-2', amountCents: 100 }),
+      catRow({ year: 2026, month: 1, categoryId: null, amountCents: 50 }),
+    ];
+    const breakdown = buildYearlyBreakdown(rows, 2026, CATEGORIES, 2);
+    expect(breakdown.series).toEqual([
+      { key: 'cat-1', name: 'Groceries' },
+      { key: '__other__', name: 'Other' },
+    ]);
+    const jan = breakdown.months[0]!;
+    expect(jan.segments['cat-1']).toBe(9000);
+    expect(jan.segments['__other__']).toBe(150);
+    expect(jan.totalCents).toBe(9150);
+  });
+
+  it('no "Other" series at all when every category fits within maxSeries', () => {
+    const rows = [catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 100 })];
+    const breakdown = buildYearlyBreakdown(rows, 2026, CATEGORIES, 6);
+    expect(breakdown.series.some((s) => s.key === '__other__')).toBe(false);
+  });
+
+  it('the SAME series set applies to every month — a category not present in an early month still has its own key later', () => {
+    const rows = [
+      catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 9000 }),
+      catRow({ year: 2026, month: 6, categoryId: 'cat-2', amountCents: 100 }),
+    ];
+    const breakdown = buildYearlyBreakdown(rows, 2026, CATEGORIES, 6);
+    const june = breakdown.months[5]!;
+    expect(june.segments['cat-2']).toBe(100);
+    expect(breakdown.series.map((s) => s.key)).toContain('cat-2');
+  });
+
+  it('an empty year is still 12 zero-filled months with an empty series list', () => {
+    const breakdown = buildYearlyBreakdown([], 2026, CATEGORIES, 6);
+    expect(breakdown.months).toHaveLength(12);
+    expect(breakdown.months.every((m) => m.totalCents === 0)).toBe(true);
+    expect(breakdown.series).toEqual([]);
   });
 });

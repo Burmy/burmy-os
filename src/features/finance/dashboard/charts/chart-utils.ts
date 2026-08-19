@@ -29,3 +29,29 @@ export function formatAxisDollars(amountCents: number): string {
 export function formatTooltipDollars(amountCents: number): string {
   return format(cents(Math.round(amountCents)));
 }
+
+/**
+ * A Y-axis domain that always includes the zero baseline and never
+ * degenerates to a single repeated value.
+ *
+ * Left to its own defaults, Recharts computes a domain from `[dataMin,
+ * dataMax]` of whatever is plotted — with exactly one data point (or every
+ * point identical, e.g. a net-cash-flow chart with only one populated
+ * month), `dataMin === dataMax` and its tick generator then prints the SAME
+ * label 5 times (`-$43`, `-$43`, `-$43`, `-$43`) instead of a real scale.
+ * Always folding `0` into the min/max fixes the common case (a single
+ * non-zero value now spans `[value, 0]` or `[0, value]`); the explicit pad
+ * below only fires for the genuinely degenerate remainder — all-zero data,
+ * or (in principle) a single data point that happens to be exactly `0`.
+ */
+export function computeChartDomain(values: readonly number[]): [number, number] {
+  const withZero = [0, ...values];
+  let min = Math.min(...withZero);
+  let max = Math.max(...withZero);
+  if (min === max) {
+    const pad = Math.max(Math.abs(min) * 0.2, 1000);
+    min -= pad;
+    max += pad;
+  }
+  return [min, max];
+}

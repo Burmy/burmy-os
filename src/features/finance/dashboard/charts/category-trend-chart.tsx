@@ -4,13 +4,17 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 
 import { EmptyState } from '@/components/finance/empty-state';
 import type { CategoryTrendSeries } from '@/server/finance/dashboard';
-import { categoryColor, formatAxisDollars, formatTooltipDollars } from './chart-utils';
+import { categoryColor, computeChartDomain, formatAxisDollars, formatTooltipDollars } from './chart-utils';
 
 /**
  * Top categories over the trailing window, one line each — `series` share
  * one x-axis (`buildCategoryTrend` zero-fills every series against the same
  * month list), so this just pivots them into recharts' one-row-per-month
  * shape: `{ label, [categoryName]: amountCents }`.
+ *
+ * `type="linear"`, not `"monotone"` — see `IncomeExpenseTrendChart`'s note:
+ * a smooth curve through mostly-zero neighbors around one real month reads
+ * as a gradual ramp that never happened.
  */
 export function CategoryTrendChart({
   series,
@@ -34,12 +38,15 @@ export function CategoryTrendChart({
     return row;
   });
 
+  const domain = computeChartDomain(series.flatMap((s) => s.points.map((p) => p.amountCents)));
+
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={280}>
       <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
         <XAxis dataKey="label" tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }} tickLine={false} axisLine={false} />
         <YAxis
+          domain={domain}
           tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }}
           tickLine={false}
           axisLine={false}
@@ -60,12 +67,12 @@ export function CategoryTrendChart({
         {series.map((s, index) => (
           <Line
             key={seriesKey(s)}
-            type="monotone"
+            type="linear"
             dataKey={seriesKey(s)}
             name={s.name}
             stroke={categoryColor(index)}
             strokeWidth={2}
-            dot={false}
+            dot={{ r: 2.5 }}
           />
         ))}
       </LineChart>

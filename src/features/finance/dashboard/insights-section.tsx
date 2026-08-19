@@ -14,7 +14,7 @@ function InsightItem({
   readonly sub?: string;
 }): React.ReactElement {
   return (
-    <div className="rounded-lg border bg-card p-3">
+    <div className="min-w-40 max-w-64 flex-1 basis-40 rounded-lg border bg-card p-3">
       <div className="text-muted-foreground text-xs">{label}</div>
       <div className="tabular mt-0.5 truncate text-sm font-semibold" title={value}>
         {value}
@@ -137,7 +137,12 @@ export function InsightsSection({
   return (
     <div>
       <h2 className="text-sm font-medium">Insights</h2>
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">{items}</div>
+      {/* flex-wrap, not a fixed grid — with only 1-2 insights available (a
+          brand-new owner), a 4-column grid leaves large empty cells that read
+          as unfinished. Flexible, bounded-width cards just sit compactly
+          instead, and still wrap into a full grid-like row once there are
+          enough of them. */}
+      <div className="mt-2 flex flex-wrap gap-2">{items}</div>
     </div>
   );
 }

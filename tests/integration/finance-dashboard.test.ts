@@ -214,6 +214,33 @@ describe('getCategoryTotalsForWindow', () => {
     expect(categorySum).toBe(augustExpense);
     expect(categorySum).toBe(90750);
   });
+
+  it('a full-calendar-year window reconciles with the SUM of that year’s monthly expenses (the Year Overview’s own reconciliation guarantee)', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const groceries = await categories.createCategory(owner, { name: 'Groceries', slug: 'groceries', kind: 'spending' });
+
+    await seedTransaction({ ownerId: owner, accountId, date: '2026-01-15', categoryId: groceries.id, amountCents: 5000 });
+    await seedTransaction({ ownerId: owner, accountId, date: '2026-06-15', categoryId: null, amountCents: 3000 });
+    await seedTransaction({ ownerId: owner, accountId, date: '2026-12-31', categoryId: groceries.id, amountCents: 7500 });
+    // Outside the year, and an excluded type inside it — neither may leak in.
+    await seedTransaction({ ownerId: owner, accountId, date: '2025-12-31', categoryId: groceries.id, amountCents: 99900 });
+    await seedTransaction({ ownerId: owner, accountId, date: '2027-01-01', categoryId: groceries.id, amountCents: 99900 });
+    await seedTransaction({ ownerId: owner, accountId, date: '2026-07-04', categoryId: null, transactionType: 'transfer', amountCents: 40000 });
+
+    const [monthlyTotals, yearCategoryTotals] = await Promise.all([
+      grid.getMonthlyTotalsAllTime(owner),
+      grid.getCategoryTotalsForWindow(owner, '2026-01-01', '2027-01-01'),
+    ]);
+
+    const annualExpenseFromMonths = monthlyTotals
+      .filter((row) => row.year === 2026)
+      .reduce((sum, row) => sum + row.expenseCents, 0);
+    const annualExpenseFromCategories = yearCategoryTotals.reduce((sum, row) => sum + row.amountCents, 0);
+
+    expect(annualExpenseFromCategories).toBe(annualExpenseFromMonths);
+    expect(annualExpenseFromCategories).toBe(15500);
+  });
 });
 
 describe('getDailyTotalsForMonth', () => {

@@ -357,3 +357,115 @@ export function computeYtdSummary(monthRows: readonly YtdMonthRow[], year: numbe
     highestSpendingMonth,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Year Overview — annual category breakdown and the Yearly Breakdown chart
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every category's spend across the WHOLE year, sorted largest first — the
+ * annual counterpart to `buildCategoryBreakdown` (one month). Takes the same
+ * `getCategoryTotalsForWindow` rows that function does, just queried with a
+ * full-calendar-year window instead of one month's — no separate query.
+ */
+export function buildAnnualCategoryBreakdown(
+  categoryTotals: readonly CategoryMonthlyTotal[],
+  year: number,
+  categories: readonly CategoryMeta[],
+): CategoryAmount[] {
+  const nameById = new Map(categories.map((c) => [c.id, c.name]));
+  const rowsForYear = categoryTotals.filter((row) => row.year === year);
+
+  const byCategory = new Map<string | null, { amountCents: number; txnCount: number }>();
+  for (const row of rowsForYear) {
+    const existing = byCategory.get(row.categoryId) ?? { amountCents: 0, txnCount: 0 };
+    byCategory.set(row.categoryId, {
+      amountCents: existing.amountCents + row.amountCents,
+      txnCount: existing.txnCount + row.txnCount,
+    });
+  }
+
+  const totalCents = [...byCategory.values()].reduce((sum, v) => sum + v.amountCents, 0);
+
+  return [...byCategory.entries()]
+    .map(([categoryId, v]) => ({
+      categoryId,
+      name: nameById.get(categoryId) ?? 'Uncategorized',
+      amountCents: v.amountCents,
+      txnCount: v.txnCount,
+      percentOfExpenses: totalCents === 0 ? 0 : (v.amountCents / totalCents) * 100,
+    }))
+    .sort((a, b) => b.amountCents - a.amountCents);
+}
+
+/** Chart-display-only stack key for everything past the top series — never written back to a real category. */
+const OTHER_SERIES_KEY = '__other__';
+
+export interface YearlyBreakdownMonth {
+  readonly month: number;
+  readonly label: string;
+  readonly totalCents: number;
+  /** `series[i].key -> amountCents`, 0/absent when that series had no spend this month. */
+  readonly segments: Readonly<Record<string, number>>;
+}
+
+export interface YearlyBreakdownSeries {
+  readonly key: string;
+  readonly name: string;
+}
+
+export interface YearlyBreakdown {
+  /** Always all 12 months, Jan → Dec, zero-filled — mirrors the Full year grid's own row set. */
+  readonly months: readonly YearlyBreakdownMonth[];
+  /** Fixed for the whole year (ranked by ANNUAL total, not recomputed per month) so a category keeps the same stack segment across every bar. */
+  readonly series: readonly YearlyBreakdownSeries[];
+}
+
+/**
+ * One stacked-bar row per calendar month — the Yearly Breakdown chart's data,
+ * modeled on the "why was this month more expensive" horizontal stacked bar
+ * from the owner's old spreadsheet. Only the top `maxSeries - 1` categories
+ * (by annual total) get their own segment; everything else folds into a
+ * single "Other" segment PER MONTH, purely for this chart's readability —
+ * `buildAnnualCategoryBreakdown`'s real per-category rows are what the
+ * annual distribution chart and the yearly matrix use, untouched by this.
+ */
+export function buildYearlyBreakdown(
+  categoryTotals: readonly CategoryMonthlyTotal[],
+  year: number,
+  categories: readonly CategoryMeta[],
+  maxSeries: number,
+): YearlyBreakdown {
+  const nameById = new Map(categories.map((c) => [c.id, c.name]));
+  const rowsForYear = categoryTotals.filter((row) => row.year === year);
+
+  const totalByCategory = new Map<string | null, number>();
+  for (const row of rowsForYear) {
+    totalByCategory.set(row.categoryId, (totalByCategory.get(row.categoryId) ?? 0) + row.amountCents);
+  }
+
+  const rankedCategoryIds = [...totalByCategory.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  const topCategoryIds = rankedCategoryIds.slice(0, Math.max(0, maxSeries - 1));
+  const topSet = new Set(topCategoryIds);
+  const hasOther = rankedCategoryIds.length > topCategoryIds.length;
+
+  const series: YearlyBreakdownSeries[] = topCategoryIds.map((id) => ({
+    key: id ?? 'uncategorized',
+    name: nameById.get(id) ?? 'Uncategorized',
+  }));
+  if (hasOther) series.push({ key: OTHER_SERIES_KEY, name: 'Other' });
+
+  const months: YearlyBreakdownMonth[] = [];
+  for (let month = 1; month <= 12; month += 1) {
+    const segments: Record<string, number> = {};
+    let totalCents = 0;
+    for (const row of rowsForYear.filter((r) => r.month === month)) {
+      totalCents += row.amountCents;
+      const key = topSet.has(row.categoryId) ? (row.categoryId ?? 'uncategorized') : OTHER_SERIES_KEY;
+      segments[key] = (segments[key] ?? 0) + row.amountCents;
+    }
+    months.push({ month, label: MONTH_ABBREVIATIONS[month - 1] ?? '', totalCents, segments });
+  }
+
+  return { months, series };
+}

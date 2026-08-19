@@ -27,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 import { TRANSACTION_TYPE_LABELS } from '@/server/finance/classify/manual';
 import { MONTH_ABBREVIATIONS, type GridColumn, type GridRowTotals, type MonthlyGrid } from '@/server/finance/grid';
 import { cents, format } from '@/server/finance/money';
@@ -96,7 +97,8 @@ export function MonthlyGridTable({
   const yearsWithCurrent = years.includes(year) ? years : [year, ...years];
 
   const clickableCell = 'text-foreground underline-offset-2 hover:underline focus-visible:underline';
-  const stickyMonthCell = 'bg-background sticky left-0 z-10';
+  const stickyMonthCell = 'bg-background group-hover:bg-muted/40 sticky left-0 z-10';
+  const negativeCell = (valueCents: number): string | undefined => (valueCents < 0 ? 'text-destructive' : undefined);
 
   return (
     <div className="mt-3 space-y-3">
@@ -132,7 +134,7 @@ export function MonthlyGridTable({
         </TableHeader>
         <TableBody>
           {grid.rows.map((row) => (
-            <TableRow key={row.month}>
+            <TableRow key={row.month} className="group">
               <TableCell className={`text-muted-foreground whitespace-nowrap ${stickyMonthCell}`}>
                 {monthLabel(row.month)}
               </TableCell>
@@ -191,7 +193,7 @@ export function MonthlyGridTable({
               <TableCell className="tabular text-right whitespace-nowrap">
                 <button
                   type="button"
-                  className={clickableCell}
+                  className={cn(clickableCell, negativeCell(row.grossSavingsCents))}
                   onClick={() => openBreakdown(`Gross Savings — ${monthLabel(row.month)} ${year}`, row.month, row)}
                 >
                   {money(row.grossSavingsCents)}
@@ -248,7 +250,7 @@ export function MonthlyGridTable({
             <TableCell className="tabular text-right whitespace-nowrap">
               <button
                 type="button"
-                className={clickableCell}
+                className={cn(clickableCell, negativeCell(grid.yearTotal.grossSavingsCents))}
                 onClick={() => openBreakdown(`Gross Savings — ${year}`, null, grid.yearTotal)}
               >
                 {money(grid.yearTotal.grossSavingsCents)}
@@ -377,7 +379,9 @@ export function MonthlyGridTable({
                 </div>
                 <div className="flex items-center justify-between border-t pt-3 font-medium">
                   <dt>Gross Savings</dt>
-                  <dd className="tabular">{money(dialog.totals.grossSavingsCents)}</dd>
+                  <dd className={cn('tabular', negativeCell(dialog.totals.grossSavingsCents))}>
+                    {money(dialog.totals.grossSavingsCents)}
+                  </dd>
                 </div>
               </dl>
             </>

@@ -13,15 +13,24 @@ import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
  * the URL rather than through shared component state. Navigation is never
  * clamped to months with data — a month with nothing imported yet is a
  * valid, useful thing to look at (it shows the dashboard's own empty state).
+ *
+ * `mode="year"` (the This Year tab) drops the month `Select` and steps
+ * prev/next by a whole year instead of a month — one component, not a
+ * second competing navigator, since both modes share the exact same
+ * `?year=&month=` URL and the same "always enabled, never clamped to data"
+ * navigation rule. The month stays whatever it already was in the URL so
+ * switching back to Month view lands where the owner left it.
  */
 export function MonthNavigator({
   year,
   month,
   years,
+  mode = 'month',
 }: {
   readonly year: number;
   readonly month: number;
   readonly years: readonly number[];
+  readonly mode?: 'month' | 'year';
 }): React.ReactElement {
   const router = useRouter();
 
@@ -30,10 +39,18 @@ export function MonthNavigator({
   }
 
   function goPrevious(): void {
+    if (mode === 'year') {
+      go(year - 1, month);
+      return;
+    }
     go(month === 1 ? year - 1 : year, month === 1 ? 12 : month - 1);
   }
 
   function goNext(): void {
+    if (mode === 'year') {
+      go(year + 1, month);
+      return;
+    }
     go(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1);
   }
 
@@ -41,22 +58,30 @@ export function MonthNavigator({
 
   return (
     <div className="flex items-center gap-1.5">
-      <Button variant="outline" size="icon" className="size-8" aria-label="Previous month" onClick={goPrevious}>
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-8"
+        aria-label={mode === 'year' ? 'Previous year' : 'Previous month'}
+        onClick={goPrevious}
+      >
         <ChevronLeft className="size-4" />
       </Button>
 
-      <Select value={String(month)} onValueChange={(value) => go(year, Number.parseInt(value, 10))}>
-        <SelectTrigger aria-label="Month" className="h-8 w-28 font-medium">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {MONTH_ABBREVIATIONS.map((label, index) => (
-            <SelectItem key={label} value={String(index + 1)}>
-              {label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      {mode === 'month' ? (
+        <Select value={String(month)} onValueChange={(value) => go(year, Number.parseInt(value, 10))}>
+          <SelectTrigger aria-label="Month" className="h-8 w-28 font-medium">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MONTH_ABBREVIATIONS.map((label, index) => (
+              <SelectItem key={label} value={String(index + 1)}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      ) : null}
 
       <Select value={String(year)} onValueChange={(value) => go(Number.parseInt(value, 10), month)}>
         <SelectTrigger aria-label="Year" className="h-8 w-24 font-medium">
@@ -71,7 +96,13 @@ export function MonthNavigator({
         </SelectContent>
       </Select>
 
-      <Button variant="outline" size="icon" className="size-8" aria-label="Next month" onClick={goNext}>
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-8"
+        aria-label={mode === 'year' ? 'Next year' : 'Next month'}
+        onClick={goNext}
+      >
         <ChevronRight className="size-4" />
       </Button>
     </div>
