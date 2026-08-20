@@ -47,6 +47,20 @@ export function formatHours(value: Hours): string {
   return remainder === 0 ? `${whole}h` : `${(value / 10).toFixed(1)}h`;
 }
 
+/**
+ * The inverse of `fromHoursInput`, for a form's `defaultValue` — `"53"`,
+ * `"0.7"`, no trailing `h`. The only other place that converts tenths back to
+ * owner-facing text is `formatHours`, which is for DISPLAY (always carries the
+ * `h` suffix); a form field needs plain numeric text a user can keep editing,
+ * so this stays a distinct function rather than stripping the `h` at the call
+ * site every time.
+ */
+export function toHoursInput(value: Hours): string {
+  const whole = Math.trunc(value / 10);
+  const remainder = value % 10;
+  return remainder === 0 ? String(whole) : (value / 10).toFixed(1);
+}
+
 export function sumHours(values: readonly Hours[]): Hours {
   return hours(values.reduce<number>((total, value) => total + value, 0));
 }

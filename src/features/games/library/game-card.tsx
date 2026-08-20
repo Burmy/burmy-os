@@ -7,7 +7,7 @@ import { RatingStars } from '@/components/games/rating-stars';
 import { StatusBadge } from '@/components/games/status-badge';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
-import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import { PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import { formatHours, hours } from '@/server/games/hours';
 
 /**
@@ -28,15 +28,16 @@ export function GameCard({
   return (
     <button
       type="button"
-      // Without this, the button's accessible name is computed from its
-      // whole visible content — status badge, title, platform, rating, hours
-      // — in DOM order, so it would start with "Backlog"/"Playing"/etc. for
-      // every card in that status. That's a wall of text for a screen reader
-      // to read on every card, and it collides with the status filter
-      // chips' own "Backlog"/"Playing" names. The title alone identifies
-      // which game the button opens; everything else stays visible for
-      // sighted users without being folded into the accessible name.
-      aria-label={game.title}
+      // Without an explicit aria-label, the accessible name is computed from
+      // ALL visible content in DOM order — status badge, title, platform,
+      // rating, hours — a wall of text on every card, and it collides with
+      // the status filter chips' own "Backlog"/"Playing" names. Title alone
+      // isn't enough either: status is the card's most prominent visual
+      // signal (a colored badge) with no other channel for a screen-reader
+      // user tabbing the gallery — unlike the table view, which exposes
+      // status in its own dedicated "Status" cell. So the name is title plus
+      // status, and nothing else from the card's remaining content.
+      aria-label={`${game.title} — ${STATUS_LABELS[game.status]}`}
       onClick={() => onOpen(game)}
       className={cn(
         'group focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left',

@@ -16,8 +16,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import type { Game } from '@/server/db/games/games';
+import { hours, toHoursInput } from '@/server/games/hours';
 import {
   GAME_OWNERSHIPS,
   GAME_PLATFORMS,
@@ -28,6 +30,16 @@ import {
 import type { GameSuggestion } from '@/server/games/metadata';
 import { createGameAction, deleteGameAction, updateGameAction } from '../game-actions';
 import { searchGameMetadataAction } from '../metadata-actions';
+
+/**
+ * Radix `Select` treats an item `value=""` as "no selection" — `<SelectValue />`
+ * then renders blank instead of the item's label, so an unset-ownership game
+ * looked like a broken empty box. This sentinel stands in for "not set" only
+ * inside the `<Select>`'s own `value`/`onChange`; the ownership `FieldSelect`
+ * below translates it back to `''` before it ever reaches `ownership` state or
+ * `FormData`, so it is never submitted as a literal value.
+ */
+const OWNERSHIP_UNSET = 'unset';
 
 /**
  * Add or edit one game.
@@ -78,6 +90,9 @@ export function GameDialog({
   }
 
   function submit(formData: FormData): void {
+    // Cleared here, not just on success, so a second submit never shows the
+    // PREVIOUS attempt's error while the new one is still pending.
+    setError(null);
     formData.set('platform', platform);
     formData.set('status', status);
     formData.set('ownership', ownership);
@@ -182,15 +197,23 @@ export function GameDialog({
                 onChange={(value) => setStatus(value as typeof status)}
                 options={GAME_STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] }))}
               />
-              <Field id="hours" label="Hours played" defaultValue={game?.hoursTenths === null || game === null ? '' : String(game.hoursTenths / 10)} placeholder="23.5" />
+              <Field
+                id="hours"
+                label="Hours played"
+                defaultValue={game === null || game.hoursTenths === null ? '' : toHoursInput(hours(game.hoursTenths))}
+                placeholder="23.5"
+              />
               <Field id="firstPlayedYear" label="First played (year)" defaultValue={game?.firstPlayedYear ?? ''} placeholder="2026" />
               <Field id="rating" label="Rating (1-5)" defaultValue={game?.rating ?? ''} placeholder="4" />
               <FieldSelect
                 id="ownership"
                 label="Ownership"
-                value={ownership}
-                onChange={setOwnership}
-                options={[{ value: '', label: 'Not set' }, ...GAME_OWNERSHIPS.map((value) => ({ value, label: value === 'physical' ? 'Physical' : 'Digital' }))]}
+                value={ownership === '' ? OWNERSHIP_UNSET : ownership}
+                onChange={(value) => setOwnership(value === OWNERSHIP_UNSET ? '' : (value as typeof ownership))}
+                options={[
+                  { value: OWNERSHIP_UNSET, label: 'Not set' },
+                  ...GAME_OWNERSHIPS.map((value) => ({ value, label: value === 'physical' ? 'Physical' : 'Digital' })),
+                ]}
               />
               <Field id="achievementsUnlocked" label="Achievements earned" defaultValue={game?.achievementsUnlocked ?? ''} placeholder="42" />
               <Field id="achievementsTotal" label="Achievements total" defaultValue={game?.achievementsTotal ?? ''} placeholder="54" />
@@ -202,7 +225,13 @@ export function GameDialog({
 
             <div className="space-y-2">
               <Label htmlFor="notes">Notes</Label>
-              <Input id="notes" name="notes" defaultValue={game?.notes ?? ''} placeholder="e.g. 6 hrs of that was the DLC in 2026" />
+              <Textarea
+                id="notes"
+                name="notes"
+                defaultValue={game?.notes ?? ''}
+                placeholder="e.g. 6 hrs of that was the DLC in 2026"
+                rows={3}
+              />
             </div>
 
             <DialogFooter className="justify-between sm:justify-between">

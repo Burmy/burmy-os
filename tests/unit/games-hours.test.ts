@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatHours, fromHoursInput, hours, sumHours } from '@/server/games/hours';
+import { formatHours, fromHoursInput, hours, sumHours, toHoursInput } from '@/server/games/hours';
 
 describe('fromHoursInput', () => {
   it('parses a whole number of hours into tenths', () => {
@@ -34,6 +34,20 @@ describe('formatHours', () => {
 
   it('renders zero without a sign or decimal', () => {
     expect(formatHours(hours(0))).toBe('0h');
+  });
+});
+
+describe('toHoursInput', () => {
+  it('is the inverse of fromHoursInput for a whole number of hours', () => {
+    expect(toHoursInput(hours(230))).toBe('23');
+  });
+
+  it('is the inverse of fromHoursInput for a partial hour', () => {
+    expect(toHoursInput(hours(235))).toBe('23.5');
+  });
+
+  it('renders zero as "0", not an empty string', () => {
+    expect(toHoursInput(hours(0))).toBe('0');
   });
 });
 
