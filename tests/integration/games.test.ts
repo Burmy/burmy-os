@@ -77,6 +77,11 @@ describe('updateGame', () => {
     const owner = await makeOwner('owner@burmy.test');
     const created = await games.createGame(owner, { title: 'Prey', platform: 'ps5' });
 
+    // updatedAt is set from a JS clock; without a beat between the two writes the
+    // create and update can land in the same millisecond and a strict comparison
+    // would flake. 5ms costs nothing in a suite that already runs against a container.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
     const updated = await games.updateGame(owner, created.id, {
       title: 'Prey',
       platform: 'ps5',
@@ -87,7 +92,10 @@ describe('updateGame', () => {
 
     expect(updated.status).toBe('completed');
     expect(updated.hoursTenths).toBe(240);
-    expect(updated.updatedAt.getTime()).toBeGreaterThanOrEqual(created.updatedAt.getTime());
+    // Strict: proves updateGame's manual `updatedAt: new Date()` actually ran.
+    // A dropped manual set would leave this byte-identical to created.updatedAt,
+    // which `toBeGreaterThanOrEqual` would have let pass silently.
+    expect(updated.updatedAt.getTime()).toBeGreaterThan(created.updatedAt.getTime());
   });
 
   it('throws GameNotFoundError for an id that does not exist', async () => {
