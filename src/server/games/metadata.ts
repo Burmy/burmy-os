@@ -18,16 +18,6 @@
 
 const RAWG_SEARCH_ENDPOINT = 'https://api.rawg.io/api/games';
 
-export interface RawgGame {
-  readonly id: number;
-  readonly name: string;
-  readonly background_image?: string;
-  readonly released?: string;
-  readonly genres?: readonly { readonly name: string }[];
-  readonly developers?: readonly { readonly name: string }[];
-  readonly publishers?: readonly { readonly name: string }[];
-}
-
 export interface GameSuggestion {
   readonly externalId: string;
   readonly title: string;
