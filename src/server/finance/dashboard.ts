@@ -450,7 +450,11 @@ export function buildYearlyBreakdown(
     key: id ?? 'uncategorized',
     name: nameById.get(id) ?? 'Uncategorized',
   }));
-  if (hasOther) series.push({ key: OTHER_SERIES_KEY, name: 'Other' });
+  // "Other categories", not "Other" — a real category can itself be named
+  // "Other" (nothing stops it), and a bare 'Other' label here would be
+  // visually indistinguishable from that category's own bar segment in the
+  // tooltip/legend, even though the two are unrelated numbers.
+  if (hasOther) series.push({ key: OTHER_SERIES_KEY, name: 'Other categories' });
 
   const months: YearlyBreakdownMonth[] = [];
   for (let month = 1; month <= 12; month += 1) {

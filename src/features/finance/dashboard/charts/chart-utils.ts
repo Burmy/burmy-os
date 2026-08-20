@@ -1,6 +1,6 @@
 import { cents, format } from '@/server/finance/money';
 
-/** Category series colors — cycles through the 6-color muted palette in `globals.css`, same tokens the breakdown bar chart and the trend lines both read, so a category keeps the same color in both charts. */
+/** Category series colors — cycles through the 16-color muted palette in `globals.css`, same tokens the breakdown bar chart and the trend lines both read, so a category keeps the same color in both charts. Past 16 simultaneous categories, colors repeat — an acceptable limit, since that many concurrent hues stop being visually distinguishable to a human regardless of how they're chosen. */
 const CATEGORY_CHART_COLORS = [
   'var(--color-chart-cat-1)',
   'var(--color-chart-cat-2)',
@@ -8,6 +8,16 @@ const CATEGORY_CHART_COLORS = [
   'var(--color-chart-cat-4)',
   'var(--color-chart-cat-5)',
   'var(--color-chart-cat-6)',
+  'var(--color-chart-cat-7)',
+  'var(--color-chart-cat-8)',
+  'var(--color-chart-cat-9)',
+  'var(--color-chart-cat-10)',
+  'var(--color-chart-cat-11)',
+  'var(--color-chart-cat-12)',
+  'var(--color-chart-cat-13)',
+  'var(--color-chart-cat-14)',
+  'var(--color-chart-cat-15)',
+  'var(--color-chart-cat-16)',
 ] as const;
 
 export function categoryColor(index: number): string {

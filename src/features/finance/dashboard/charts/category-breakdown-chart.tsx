@@ -51,6 +51,11 @@ export function CategoryBreakdownChart({
             borderRadius: 'var(--radius-md)',
             fontSize: 13,
           }}
+          // Recharts defaults each item's text to the series' own fill color
+          // (readable on a bar, not guaranteed readable as text on the
+          // popover background) — force it back to the theme foreground.
+          itemStyle={{ color: 'var(--color-popover-foreground)' }}
+          labelStyle={{ color: 'var(--color-popover-foreground)' }}
         />
         <Bar dataKey="amountCents" radius={[0, 3, 3, 0]} maxBarSize={22}>
           {categories.map((category, index) => (

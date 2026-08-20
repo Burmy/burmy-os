@@ -37,6 +37,10 @@ export function NetCashflowChart({ points }: { readonly points: readonly TrendPo
             borderRadius: 'var(--radius-md)',
             fontSize: 13,
           }}
+          // Recharts defaults each item's text to the series' own fill
+          // color, not guaranteed readable against the popover background.
+          itemStyle={{ color: 'var(--color-popover-foreground)' }}
+          labelStyle={{ color: 'var(--color-popover-foreground)' }}
         />
         <Bar dataKey="netCents" name="Net" radius={[3, 3, 3, 3]}>
           {points.map((point) => (

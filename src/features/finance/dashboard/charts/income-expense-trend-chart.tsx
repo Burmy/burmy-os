@@ -44,6 +44,10 @@ export function IncomeExpenseTrendChart({ points }: { readonly points: readonly 
             borderRadius: 'var(--radius-md)',
             fontSize: 13,
           }}
+          // Recharts defaults each item's text to the series' own fill
+          // color, not guaranteed readable against the popover background.
+          itemStyle={{ color: 'var(--color-popover-foreground)' }}
+          labelStyle={{ color: 'var(--color-popover-foreground)' }}
         />
         <Legend wrapperStyle={{ fontSize: 12 }} />
         <Line type="linear" dataKey="incomeCents" name="Income" stroke="var(--color-chart-income)" strokeWidth={2} dot={{ r: 3 }} />

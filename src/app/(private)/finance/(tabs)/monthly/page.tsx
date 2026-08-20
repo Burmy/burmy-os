@@ -214,8 +214,16 @@ export default async function MonthlyPage({
   }));
 
   const annualCategories = buildAnnualCategoryBreakdown(yearCategoryTotals, year, categoryMetaForBreakdown);
-  // 6 series max: 5 real categories + "Other" — matches the 6-color chart palette exactly.
-  const yearlyBreakdown = buildYearlyBreakdown(yearCategoryTotals, year, categoryMetaForBreakdown, 6);
+  // Every real category gets its own series — `+ 2` covers an uncategorized
+  // bucket too, so the "Other categories" catch-all never actually triggers
+  // for a normal category list. The 16-color chart palette is sized to
+  // match; past that many simultaneous categories, colors start repeating.
+  const yearlyBreakdown = buildYearlyBreakdown(
+    yearCategoryTotals,
+    year,
+    categoryMetaForBreakdown,
+    categoryMetaForBreakdown.length + 2,
+  );
 
   // The "Transactions" toolbar button was removed once Transactions became
   // a SubNav tab (see the (tabs) route group's layout) — a second way to

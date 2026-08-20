@@ -356,7 +356,7 @@ describe('buildYearlyBreakdown', () => {
     const breakdown = buildYearlyBreakdown(rows, 2026, CATEGORIES, 2);
     expect(breakdown.series).toEqual([
       { key: 'cat-1', name: 'Groceries' },
-      { key: '__other__', name: 'Other' },
+      { key: '__other__', name: 'Other categories' },
     ]);
     const jan = breakdown.months[0]!;
     expect(jan.segments['cat-1']).toBe(9000);
