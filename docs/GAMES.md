@@ -36,7 +36,7 @@ not an incidental one.
 One row per game owned, wanted, or played — replacing one line of the spreadsheet. Only `title` and
 `platform` are required (`platform` defaults to `other`, `status` to `backlog`); every other column is
 nullable, and a bare backlog entry with nothing else filled in is legitimate data, not an incomplete
-row. Pre-2015 PSP/PS2 entries in the real import routinely carry a rating and nothing else —
+row. Pre-2015 PSP/PS2 entries in the source spreadsheet routinely carry a rating and nothing else —
 `firstPlayedYear` is genuinely sparse, and that sparseness is preserved rather than backfilled with a
 guess.
 
