@@ -116,6 +116,21 @@ export const ruleOperatorEnum = pgEnum('rule_operator', [
   'between',
 ]);
 
+// ── Games ───────────────────────────────────────────────────────────────────
+
+/** Where a game was played. `other` covers retro/emulated/misc without inventing a taxonomy. */
+export const gamePlatformEnum = pgEnum('game_platform', ['ps5', 'ps4', 'psp', 'steam', 'pc', 'other']);
+
+export const gameOwnershipEnum = pgEnum('game_ownership', ['physical', 'digital']);
+
+/**
+ * Lifecycle. `paused_dropped` is deliberately ONE state, not two: the
+ * difference between "I'll come back" and "I won't" is a sentence in `notes`,
+ * not a schema decision, and splitting it would put two nearly-identical
+ * buckets in every filter.
+ */
+export const gameStatusEnum = pgEnum('game_status', ['backlog', 'playing', 'completed', 'paused_dropped']);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity
 // ─────────────────────────────────────────────────────────────────────────────
@@ -780,4 +795,66 @@ export const auditEvents = pgTable(
     metadata: jsonb('metadata'),
   },
   (t) => [index('audit_events_owner_at_idx').on(t.ownerId, t.at)],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Games
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One row per game owned, wanted, or played. Replaces a hand-maintained
+ * spreadsheet.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * HOURS ARE ONE NUMBER, NOT A SESSION LOG.
+ *
+ * The source spreadsheet wrote "53 + 6" in an hours cell — which looks like
+ * session tracking but is not. It meant "53 hours on the base game in 2025, 6
+ * on the DLC in 2026", kept visually separate only so a manual yearly rollup
+ * stayed readable. A `play_sessions` table was considered and REJECTED: the
+ * owner logs a total, once, by hand. `notes` carries the DLC nuance in plain
+ * language.
+ *
+ * `firstPlayedYear` is nullable and genuinely sparse — pre-2015 PSP/PS2 entries
+ * carry a rating and nothing else. That is data, not an omission to backfill.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const games = pgTable(
+  'games',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    platform: gamePlatformEnum('platform').notNull().default('other'),
+    developer: text('developer'),
+    publisher: text('publisher'),
+    ownership: gameOwnershipEnum('ownership'),
+    /** Signed cents, same convention as finance. Independent of finance_transactions by design. */
+    priceCents: bigint('price_cents', { mode: 'number' }),
+    status: gameStatusEnum('status').notNull().default('backlog'),
+    /** 1-5. Nullable: an unplayed backlog entry has no opinion yet. */
+    rating: smallint('rating'),
+    /** Tenths of an hour, stored as an integer so no float ever touches a total. 235 = 23.5h. */
+    hoursTenths: integer('hours_tenths'),
+    firstPlayedYear: smallint('first_played_year'),
+    achievementsUnlocked: smallint('achievements_unlocked'),
+    achievementsTotal: smallint('achievements_total'),
+    coverUrl: text('cover_url'),
+    genre: text('genre'),
+    notes: text('notes'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Case-insensitive uniqueness per platform: the same title legitimately
+    // exists twice when replayed on a different platform (PS4 then PS5), but
+    // twice on ONE platform is always a duplicate entry.
+    uniqueIndex('games_owner_title_platform_idx').on(t.ownerId, sql`lower(${t.title})`, t.platform),
+    index('games_owner_idx').on(t.ownerId),
+    index('games_owner_status_idx').on(t.ownerId, t.status),
+    index('games_owner_year_idx').on(t.ownerId, t.firstPlayedYear),
+  ],
 );
