@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 
 import { StatusBadge } from '@/components/finance/status-badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -97,6 +98,7 @@ export function ImportReviewTable({
   const [filter, setFilter] = useState<'all' | RowBucket>('all');
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<CommitResult | null>(null);
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
 
   // Checked BEFORE `status`, deliberately. `commitImportAction` calls
   // `revalidatePath()`, which re-renders this Server Component subtree with
@@ -230,7 +232,6 @@ export function ImportReviewTable({
   }
 
   function discard(): void {
-    if (!window.confirm('Discard this import? Nothing has been added to your history yet.')) return;
     startTransition(async () => {
       const outcome = await discardImportAction(importId);
       if (!outcome.ok) {
@@ -387,10 +388,20 @@ export function ImportReviewTable({
         <Button onClick={commit} disabled={pending || willImport === 0}>
           {pending ? 'Working…' : `Import ${willImport} transaction${willImport === 1 ? '' : 's'}`}
         </Button>
-        <Button variant="ghost" onClick={discard} disabled={pending}>
+        <Button variant="ghost" onClick={() => setConfirmingDiscard(true)} disabled={pending}>
           Discard
         </Button>
       </div>
+
+      <ConfirmDialog
+        open={confirmingDiscard}
+        onOpenChange={setConfirmingDiscard}
+        title="Discard this import?"
+        description="Nothing has been added to your history yet."
+        confirmLabel="Discard"
+        destructive
+        onConfirm={discard}
+      />
     </div>
   );
 }

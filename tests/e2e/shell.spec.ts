@@ -85,12 +85,23 @@ test.describe('app shell', () => {
 
     await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible();
 
-    // Settings has nothing left but Categories (Accounts is gone entirely —
-    // round-2 UX pass), so the sidebar link redirects straight there instead
-    // of landing on a one-item list of sections.
+    // Settings is a real landing page, grouped by section — Finance today,
+    // with room for more sections as more of the app grows (round-3 UX pass).
     await page.getByRole('link', { name: 'Settings' }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Finance' })).toBeVisible();
+    // General holds preferences that apply everywhere, not to one module —
+    // Theme today, the same control the sidebar footer already exposes.
+    await expect(page.getByRole('heading', { name: 'General' })).toBeVisible();
+    await expect(page.getByText('Theme')).toBeVisible();
+
+    await page.getByRole('link', { name: 'Categories' }).click();
     await expect(page).toHaveURL(/\/settings\/finance\/categories$/);
     await expect(page.getByRole('heading', { name: 'Categories' })).toBeVisible();
+
+    await page.getByRole('link', { name: '← Settings' }).click();
+    await expect(page).toHaveURL(/\/settings$/);
 
     await page.getByRole('link', { name: 'Finance' }).click();
     await expect(page).toHaveURL(/\/finance\/monthly$/);

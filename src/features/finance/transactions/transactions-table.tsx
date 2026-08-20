@@ -22,8 +22,10 @@ import {
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 import { EmptyState } from '@/components/finance/empty-state';
+import { InlineEditText } from '@/components/finance/inline-edit-text';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
+import { formatHumanDate } from '@/lib/format-date';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type {
   LedgerFilters,
@@ -274,26 +276,25 @@ export function TransactionsTable({
                 return (
                   <TableRow key={row.id}>
                     <TableCell className="text-muted-foreground whitespace-nowrap">
-                      {row.transactionDate}
+                      {formatHumanDate(row.transactionDate)}
                     </TableCell>
-                    <TableCell className="w-48">
-                      <Input
-                        defaultValue={row.normalizedMerchant ?? ''}
-                        aria-label={`Merchant for ${rowName}`}
-                        className="h-8"
-                        onBlur={(event) => saveMerchant(row, event.target.value)}
+                    <TableCell className="max-w-48">
+                      <InlineEditText
+                        value={row.normalizedMerchant ?? ''}
+                        onSave={(value) => saveMerchant(row, value)}
+                        ariaLabel={`Merchant for ${rowName}`}
+                        placeholder="(no merchant)"
                       />
                       <div className="text-muted-foreground truncate text-xs" title={row.originalDescription}>
                         {row.originalDescription}
                       </div>
                     </TableCell>
-                    <TableCell className="w-40">
-                      <Input
-                        defaultValue={row.notes ?? ''}
-                        aria-label={`Note for ${rowName}`}
-                        placeholder="Optional"
-                        className="h-8"
-                        onBlur={(event) => saveNote(row, event.target.value)}
+                    <TableCell className="max-w-40">
+                      <InlineEditText
+                        value={row.notes ?? ''}
+                        onSave={(value) => saveNote(row, value)}
+                        ariaLabel={`Note for ${rowName}`}
+                        placeholder="Add note"
                       />
                     </TableCell>
                     <TableCell>

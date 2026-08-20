@@ -176,6 +176,8 @@ test.describe('transactions ledger', () => {
     await expect(page.getByText('2 transactions', { exact: true })).toBeVisible();
     await expect(page.getByText("LARSEN'S #0366 PURCHASE")).toBeVisible();
     await expect(page.getByText('VIA 313 PURCHASE')).toBeVisible();
+    // Human-readable, not the raw "2026-05-03" the row was seeded with.
+    await expect(page.getByText('May 3, 2026')).toBeVisible();
 
     // Filter by category — a shareable URL, same convention as Review.
     await page.getByRole('combobox', { name: 'Category', exact: true }).click();
@@ -286,5 +288,59 @@ test.describe('transactions ledger', () => {
     expect(lines[1]).toContain("LARSEN'S #0366 PURCHASE");
     expect(lines[1]).toContain('25.00');
     expect(lines[1]).not.toContain('VIA 313');
+  });
+
+  test('merchant and note are plain text until clicked, then edit inline', async ({ page }) => {
+    await signIntoApp(page);
+    await addCategory(page, 'Groceries');
+
+    const ownerId = await getOwnerId();
+    const accountId = await seedAccount(ownerId);
+    const groceries = await getCategoryId(ownerId, 'Groceries');
+
+    await seedTransaction({
+      ownerId,
+      accountId,
+      date: '2026-05-08',
+      amountCents: 1500,
+      categoryId: groceries,
+      description: "LARSEN'S #0366 PURCHASE",
+      normalizedMerchant: "LARSEN'S",
+    });
+
+    await page.goto('/finance/transactions?year=2026');
+    const row = page.getByRole('row', { name: /LARSEN'S/ });
+
+    // Not an input by default — clicking reveals one.
+    await expect(row.getByRole('textbox', { name: /^Merchant for/ })).toHaveCount(0);
+    await row.getByRole('button', { name: /^Merchant for/ }).click();
+    const merchantInput = row.getByRole('textbox', { name: /^Merchant for/ });
+    await merchantInput.fill('RENAMED MARKET');
+    await merchantInput.blur();
+    await expect(row.getByRole('button', { name: /^Merchant for/ })).toHaveText('RENAMED MARKET');
+
+    // Note starts as a muted placeholder, not an empty bordered box.
+    await expect(row.getByRole('button', { name: /^Note for/ })).toHaveText('Add note');
+    await row.getByRole('button', { name: /^Note for/ }).click();
+    const noteInput = row.getByRole('textbox', { name: /^Note for/ });
+    await noteInput.fill('Weekly groceries');
+    await noteInput.blur();
+    await expect(row.getByRole('button', { name: /^Note for/ })).toHaveText('Weekly groceries');
+
+    // The optimistic UI assertions above prove the local state updated, not
+    // that the Server Action's write landed — `saveMerchant`/`saveNote` fire
+    // it via `startTransition` without the blur handler awaiting it, so a
+    // plain one-shot read right after can race ahead of the actual write.
+    // `expect.poll` retries instead of trusting a single snapshot.
+    await expect
+      .poll(async () =>
+        withDb(async (sql) => {
+          const rows = await sql<{ normalized_merchant: string | null; notes: string | null }[]>`
+            select "normalized_merchant", "notes" from "finance_transactions" where "owner_id" = ${ownerId}
+          `;
+          return rows[0];
+        }),
+      )
+      .toEqual({ normalized_merchant: 'RENAMED MARKET', notes: 'Weekly groceries' });
   });
 });

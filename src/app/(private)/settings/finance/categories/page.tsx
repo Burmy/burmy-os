@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { CategoriesManager } from '@/features/finance/settings/categories-manager';
 import { requireOwner } from '@/server/auth/owner';
@@ -6,6 +7,11 @@ import { listCategories } from '@/server/db/finance/categories';
 
 export const metadata: Metadata = { title: 'Categories — Burmy' };
 
+/**
+ * Calls `requireOwner()` directly, not because the layout forgot to, but because
+ * the owner id is what scopes the read. There is no way to call `listCategories`
+ * without one.
+ */
 export default async function CategoriesPage(): Promise<React.ReactElement> {
   const owner = await requireOwner();
 
@@ -14,9 +20,16 @@ export default async function CategoriesPage(): Promise<React.ReactElement> {
   const all = await listCategories(owner.userId, { includeArchived: true });
 
   return (
-    <CategoriesManager
-      live={all.filter((category) => category.archivedAt === null)}
-      archived={all.filter((category) => category.archivedAt !== null)}
-    />
+    <div>
+      <Link href="/settings" className="text-muted-foreground hover:text-foreground text-sm">
+        ← Settings
+      </Link>
+      <div className="mt-2">
+        <CategoriesManager
+          live={all.filter((category) => category.archivedAt === null)}
+          archived={all.filter((category) => category.archivedAt !== null)}
+        />
+      </div>
+    </div>
   );
 }

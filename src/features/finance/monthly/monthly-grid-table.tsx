@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
+import { InlineEditText } from '@/components/finance/inline-edit-text';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,7 +13,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -29,6 +29,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
+import { formatHumanDate } from '@/lib/format-date';
 import { cn } from '@/lib/utils';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type { DrillDownTransaction } from '@/server/db/finance/grid';
@@ -333,7 +334,14 @@ export function MonthlyGridTable({
       </Table>
 
       <Dialog open={dialog !== null} onOpenChange={(open) => (open ? null : closeDialog())}>
-        <DialogContent className="flex max-h-[85vh] max-w-4xl flex-col overflow-hidden">
+        {/* `sm:max-w-5xl` — not the unprefixed `max-w-5xl` it looks like it should
+            be: DialogContent's own base class is `sm:max-w-lg`, and Tailwind
+            emits responsive variants AFTER their unprefixed base utility in the
+            stylesheet regardless of className order, so an unprefixed override
+            here would silently lose to `sm:max-w-lg` at any viewport ≥640px.
+            Confirmed by screenshot — an earlier `max-w-4xl` here rendered at
+            ~512px (lg), not 896px (4xl), until this was corrected. */}
+        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-5xl">
           {dialog?.mode === 'transactions' ? (
             <>
               <DialogHeader>
@@ -361,8 +369,8 @@ export function MonthlyGridTable({
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
-                        <TableHead className="w-48">Merchant</TableHead>
-                        <TableHead className="w-40">Note</TableHead>
+                        <TableHead>Merchant</TableHead>
+                        <TableHead>Note</TableHead>
                         <TableHead>Category</TableHead>
                         <TableHead>Type</TableHead>
                         <TableHead className="text-right">Amount</TableHead>
@@ -374,26 +382,25 @@ export function MonthlyGridTable({
                         return (
                           <TableRow key={transaction.id}>
                             <TableCell className="text-muted-foreground whitespace-nowrap">
-                              {transaction.transactionDate}
+                              {formatHumanDate(transaction.transactionDate)}
                             </TableCell>
-                            <TableCell className="w-48">
-                              <Input
-                                defaultValue={transaction.normalizedMerchant ?? ''}
-                                aria-label={`Merchant for ${rowName}`}
-                                className="h-8"
-                                onBlur={(event) => saveMerchant(transaction, event.target.value)}
+                            <TableCell className="max-w-40">
+                              <InlineEditText
+                                value={transaction.normalizedMerchant ?? ''}
+                                onSave={(value) => saveMerchant(transaction, value)}
+                                ariaLabel={`Merchant for ${rowName}`}
+                                placeholder="(no merchant)"
                               />
                               <div className="text-muted-foreground truncate text-xs" title={transaction.originalDescription}>
                                 {transaction.originalDescription}
                               </div>
                             </TableCell>
-                            <TableCell className="w-40">
-                              <Input
-                                defaultValue={transaction.notes ?? ''}
-                                aria-label={`Note for ${rowName}`}
-                                placeholder="Optional"
-                                className="h-8"
-                                onBlur={(event) => saveNote(transaction, event.target.value)}
+                            <TableCell className="max-w-32">
+                              <InlineEditText
+                                value={transaction.notes ?? ''}
+                                onSave={(value) => saveNote(transaction, value)}
+                                ariaLabel={`Note for ${rowName}`}
+                                placeholder="Add note"
                               />
                             </TableCell>
                             <TableCell>

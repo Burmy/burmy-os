@@ -276,15 +276,20 @@ test.describe('monthly grid', () => {
     await julyRow.getByRole('cell').nth(1).getByRole('button').click();
 
     const dialog = page.getByRole('dialog');
-    const merchantInput = dialog.getByLabel(/^Merchant for/);
+    // Merchant/note are plain text until clicked (round-3 UX pass) — click
+    // reveals the input, blur/Enter commits and reverts to text.
+    await dialog.getByRole('button', { name: /^Merchant for/ }).click();
+    const merchantInput = dialog.getByRole('textbox', { name: /^Merchant for/ });
     await expect(merchantInput).toHaveValue('CORNER MARKET');
-
     await merchantInput.fill('RENAMED MARKET');
     await merchantInput.blur();
+    await expect(dialog.getByRole('button', { name: /^Merchant for/ })).toHaveText('RENAMED MARKET');
 
-    const noteInput = dialog.getByLabel(/^Note for/);
+    await dialog.getByRole('button', { name: /^Note for/ }).click();
+    const noteInput = dialog.getByRole('textbox', { name: /^Note for/ });
     await noteInput.fill('Weekly groceries');
     await noteInput.blur();
+    await expect(dialog.getByRole('button', { name: /^Note for/ })).toHaveText('Weekly groceries');
 
     await dialog.getByLabel(/^Category for/).click();
     await page.getByRole('option', { name: 'Dining' }).click();
@@ -307,15 +312,21 @@ test.describe('monthly grid', () => {
     const julyRowAfter = page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'Jul', exact: true }) });
     await expect(julyRowAfter.getByRole('cell').nth(1).getByRole('button')).toHaveCount(0);
 
-    const merchantCheck = await withDb(async (sql) => {
-      const rows = await sql<{ normalized_merchant: string | null; notes: string | null; transaction_type: string }[]>`
-        select "normalized_merchant", "notes", "transaction_type" from "finance_transactions"
-        where "owner_id" = ${ownerId}
-      `;
-      return rows[0];
-    });
-    expect(merchantCheck?.normalized_merchant).toBe('RENAMED MARKET');
-    expect(merchantCheck?.notes).toBe('Weekly groceries');
-    expect(merchantCheck?.transaction_type).toBe('refund');
+    // Merchant/note save fire-and-forget on blur (`startTransition`, not
+    // awaited by the handler), so a one-shot read right after can race ahead
+    // of the actual write landing — `expect.poll` retries instead of
+    // trusting a single snapshot. See transactions.spec.ts's own version of
+    // this same fix for the longer version of this reasoning.
+    await expect
+      .poll(async () =>
+        withDb(async (sql) => {
+          const rows = await sql<{ normalized_merchant: string | null; notes: string | null; transaction_type: string }[]>`
+            select "normalized_merchant", "notes", "transaction_type" from "finance_transactions"
+            where "owner_id" = ${ownerId}
+          `;
+          return rows[0];
+        }),
+      )
+      .toEqual({ normalized_merchant: 'RENAMED MARKET', notes: 'Weekly groceries', transaction_type: 'refund' });
   });
 });

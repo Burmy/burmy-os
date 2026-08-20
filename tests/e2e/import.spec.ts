@@ -266,4 +266,31 @@ test.describe('import', () => {
     });
     expect(accountTypes).toEqual(['checking', 'credit_card']);
   });
+
+  test('discarding an import asks for confirmation via the app\'s own dialog, not the browser\'s', async ({ page }) => {
+    await signIntoApp(page);
+    await openSheetAndSelectFile(page, DEPOSIT_FIXTURE);
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
+
+    await page.getByRole('button', { name: 'Discard' }).click();
+
+    const confirmDialog = page.getByRole('dialog', { name: 'Discard this import?' });
+    await expect(confirmDialog).toBeVisible();
+    await expect(confirmDialog.getByText('Nothing has been added to your history yet.')).toBeVisible();
+
+    // Cancel first — proves it does not discard on its own.
+    await confirmDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(confirmDialog).not.toBeVisible();
+    await expect(page).toHaveURL(/\/finance\/import\/[0-9a-f-]+$/);
+
+    await page.getByRole('button', { name: 'Discard' }).click();
+    await page.getByRole('dialog', { name: 'Discard this import?' }).getByRole('button', { name: 'Discard' }).click();
+    await expect(page).toHaveURL(/\/finance\/monthly$/);
+
+    const status = await withDb(async (sql) => {
+      const rows = await sql<{ status: string }[]>`select "status" from "finance_imports" limit 1`;
+      return rows[0]?.status;
+    });
+    expect(status).toBe('discarded');
+  });
 });
