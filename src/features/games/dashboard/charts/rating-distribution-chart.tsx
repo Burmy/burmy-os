@@ -5,12 +5,23 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { type GameStatRow, buildDistribution } from '@/server/games/stats';
 import { TOOLTIP_STYLES, computeChartDomain } from '../chart-utils';
 
+const RATING_VALUES = [1, 2, 3, 4, 5] as const;
+
 /**
  * Five fixed 1★–5★ buckets, not the shared `DistributionChart` — that
- * component sorts by frequency (largest slice first), which would scramble a
- * rating scale that has to read 1→5 left to right instead. `buildDistribution`
- * still does the counting; this component re-sorts its output ascending by
- * the numeric rating before charting it.
+ * component sorts by frequency (largest slice first) and drops zero-count
+ * keys entirely, both wrong for rating: it is a closed 1-5 ordinal scale
+ * (enforced by the schema), unlike genre/platform/ownership, which are
+ * open-ended sets where dropping an absent key is exactly right. A library
+ * with 3★ and 5★ games but no 4★ must still show 4★ as a real zero-count
+ * bucket next to its neighbours, not skip straight from 3★ to 5★ as if they
+ * were adjacent values.
+ *
+ * `buildDistribution` still does the counting and is left untouched here —
+ * platform/ownership/genre correctly depend on it dropping zero-count keys,
+ * so this component builds the five buckets itself and looks each one up,
+ * defaulting to 0 when `buildDistribution` didn't emit it. Because the five
+ * buckets are constructed in order, no re-sort is needed afterward.
  */
 export function RatingDistributionChart({
   rows,
@@ -27,7 +38,11 @@ export function RatingDistributionChart({
     return <p className="text-muted-foreground py-12 text-center text-sm">No ratings recorded yet.</p>;
   }
 
-  const data = [...distribution].sort((a, b) => Number(a.key) - Number(b.key));
+  const countByRating = new Map(distribution.map((slice) => [slice.key, slice.count]));
+  const data = RATING_VALUES.map((value) => ({
+    label: `${value}★`,
+    count: countByRating.get(String(value)) ?? 0,
+  }));
 
   return (
     <ResponsiveContainer width="100%" height={240}>
