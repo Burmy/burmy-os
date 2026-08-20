@@ -106,6 +106,50 @@ describe('updateGame', () => {
       games.updateGame(owner, randomUUID(), { title: 'Nope', platform: 'ps5' }),
     ).rejects.toBeInstanceOf(errors.GameNotFoundError);
   });
+
+  /**
+   * Regression for the M12 fix-wave bug: the editor could set an optional
+   * field but never clear one. `text()` in `game-actions.ts` maps a blanked
+   * form field to `undefined`, and `parse()` used to OMIT that key from the
+   * update input regardless — an omitted key is absent from Drizzle's `.set()`
+   * clause, so the column was silently left untouched. Rate a game 5, clear
+   * the box, save: the toast said "Game updated" and the value stayed 5.
+   *
+   * This exercises the DAL directly (the layer `updateGame` at games.ts:141
+   * actually writes), asserting that an update whose input carries an
+   * EXPLICIT `null` — the shape the fixed `parse()` now produces for a
+   * cleared field — really does null the column out, not merely leave it
+   * alone the way an omitted key would.
+   */
+  it('clears a previously-set optional field to null when the input explicitly says null', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const created = await games.createGame(owner, {
+      title: 'Persona 5 Royal',
+      platform: 'ps5',
+      rating: 5,
+      hoursTenths: 1200,
+      notes: 'New Game+ is worth it',
+      developer: 'Atlus',
+    });
+    expect(created.rating).toBe(5);
+    expect(created.hoursTenths).toBe(1200);
+    expect(created.notes).toBe('New Game+ is worth it');
+    expect(created.developer).toBe('Atlus');
+
+    const cleared = await games.updateGame(owner, created.id, {
+      title: created.title,
+      platform: created.platform,
+      rating: null,
+      hoursTenths: null,
+      notes: null,
+      developer: null,
+    });
+
+    expect(cleared.rating).toBeNull();
+    expect(cleared.hoursTenths).toBeNull();
+    expect(cleared.notes).toBeNull();
+    expect(cleared.developer).toBeNull();
+  });
 });
 
 describe('deleteGame', () => {
