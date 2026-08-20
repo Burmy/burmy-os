@@ -7,23 +7,26 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
-import { GAME_STATUSES, STATUS_LABELS } from '@/server/games/taxonomy';
-import type { GameStatus } from '@/server/games/taxonomy';
+import { GAME_PLATFORMS, GAME_STATUSES, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
+import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { GameDialog } from './game-dialog';
 import { GameGrid } from './game-grid';
 import { GameTable } from './game-table';
 
 type ViewMode = 'gallery' | 'table';
 type StatusFilter = GameStatus | 'all';
+type PlatformFilter = GamePlatform | 'all';
 
 /**
- * The library screen. Owns view mode, status filter, and search — all client
- * state, because every one of them is a pure re-render of data already loaded,
- * and round-tripping to the server to hide a card would be latency for nothing.
+ * The library screen. Owns view mode, status filter, platform filter, and
+ * search — all client state, because every one of them is a pure re-render of
+ * data already loaded, and round-tripping to the server to hide a card would
+ * be latency for nothing.
  */
 export function LibraryView({ games }: { readonly games: readonly Game[] }): React.ReactElement {
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
+  const [platform, setPlatform] = useState<PlatformFilter>('all');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Game | null>(null);
   const [creating, setCreating] = useState(false);
@@ -32,6 +35,7 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
     const needle = search.trim().toLowerCase();
     return games.filter((game) => {
       if (status !== 'all' && game.status !== status) return false;
+      if (platform !== 'all' && game.platform !== platform) return false;
       if (needle === '') return true;
       return (
         game.title.toLowerCase().includes(needle) ||
@@ -39,12 +43,18 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
         (game.publisher ?? '').toLowerCase().includes(needle)
       );
     });
-  }, [games, status, search]);
+  }, [games, status, platform, search]);
 
   const counts = useMemo(() => {
     const byStatus = new Map<GameStatus, number>();
     for (const game of games) byStatus.set(game.status, (byStatus.get(game.status) ?? 0) + 1);
     return byStatus;
+  }, [games]);
+
+  const platformCounts = useMemo(() => {
+    const byPlatform = new Map<GamePlatform, number>();
+    for (const game of games) byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
+    return byPlatform;
   }, [games]);
 
   return (
@@ -109,6 +119,24 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
               count={counts.get(value) ?? 0}
               active={status === value}
               onClick={() => setStatus(value)}
+            />
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-1">
+          <FilterChip
+            label="All platforms"
+            count={games.length}
+            active={platform === 'all'}
+            onClick={() => setPlatform('all')}
+          />
+          {GAME_PLATFORMS.map((value) => (
+            <FilterChip
+              key={value}
+              label={PLATFORM_LABELS[value]}
+              count={platformCounts.get(value) ?? 0}
+              active={platform === value}
+              onClick={() => setPlatform(value)}
             />
           ))}
         </div>
