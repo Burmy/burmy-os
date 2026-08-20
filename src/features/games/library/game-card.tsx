@@ -1,0 +1,77 @@
+'use client';
+
+import Image from 'next/image';
+import { Gamepad2 } from 'lucide-react';
+
+import { RatingStars } from '@/components/games/rating-stars';
+import { StatusBadge } from '@/components/games/status-badge';
+import { cn } from '@/lib/utils';
+import type { Game } from '@/server/db/games/games';
+import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import { formatHours, hours } from '@/server/games/hours';
+
+/**
+ * One game in the gallery. Cover art is the primary affordance; everything else
+ * is secondary metadata layered beneath it. Games with no cover fall back to a
+ * typographic tile rather than a broken-image box — roughly half the historical
+ * library predates cover art being available at all.
+ */
+export function GameCard({
+  game,
+  onOpen,
+}: {
+  readonly game: Game;
+  readonly onOpen: (game: Game) => void;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(game)}
+      className={cn(
+        'group focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left',
+        'transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:outline-none',
+      )}
+    >
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
+        {game.coverUrl === null ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-center">
+            <Gamepad2 className="text-muted-foreground/40 size-8" aria-hidden />
+            <span className="text-muted-foreground line-clamp-3 text-xs font-medium">{game.title}</span>
+          </div>
+        ) : (
+          <Image
+            src={game.coverUrl}
+            alt=""
+            fill
+            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 200px"
+            className="object-cover transition-transform group-hover:scale-[1.03]"
+          />
+        )}
+        <div className="absolute top-2 left-2">
+          <StatusBadge status={game.status} />
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-1 p-3">
+        {/* Omitted when there is no cover: the fallback tile above already
+            displays the title, and repeating it here would put the same text
+            node in the DOM twice for no new information. */}
+        {game.coverUrl === null ? null : (
+          <span className="line-clamp-2 text-sm font-medium">{game.title}</span>
+        )}
+        <span className="text-muted-foreground text-xs">
+          {PLATFORM_LABELS[game.platform]}
+          {game.firstPlayedYear === null ? '' : ` · ${game.firstPlayedYear}`}
+        </span>
+        <div className="mt-auto flex items-center justify-between pt-2">
+          <RatingStars rating={game.rating} />
+          {game.hoursTenths === null ? null : (
+            <span className="text-muted-foreground tabular text-xs">
+              {formatHours(hours(game.hoursTenths))}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}

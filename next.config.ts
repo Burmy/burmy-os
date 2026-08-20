@@ -12,6 +12,11 @@ const nextConfig: NextConfig = {
   // Do not advertise the framework version to the internet.
   poweredByHeader: false,
 
+  // RAWG (Games module cover art) serves images from media.rawg.io.
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: 'media.rawg.io' }],
+  },
+
   // Security headers. The nonce-based CSP is added in src/proxy.ts during M2 —
   // it needs per-request state that static headers cannot express.
   async headers() {
