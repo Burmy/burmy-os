@@ -3,15 +3,17 @@
 Private, single-user personal web application. Deployed to `app.burmy.me`. The public portfolio at
 `burmy.me` is a **separate** project and is not in this repository.
 
-**Finance is the only product module.** "OS" is a metaphor for a personal workspace — this is not an
-operating system and not a platform. Do not build Notes, Files, Sheets, Inbox, Bookmarks, Garage,
-Receipts or Subscriptions. Do not build abstractions in anticipation of them.
+**Two product modules: Finance and Games.** "OS" is a metaphor for a personal workspace — this is
+not an operating system and not a platform. Do not build Notes, Files, Sheets, Inbox, Bookmarks,
+Garage, Receipts or Subscriptions. Do not build abstractions in anticipation of them, and do not
+build a shared "module framework" for the two that exist — they deliberately share nothing but
+generic UI primitives and the owner auth boundary.
 
 `docs/FINANCE.md` is the canonical Finance-domain reference (money model, categorization, dedup,
-reconciliation). `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md` and
-`docs/BACKUP_RESTORE.md` are canonical for their own areas. `docs/ROADMAP.md` is authoritative on
-current milestone status. If any of these disagree with the code, the code is authoritative — that's
-a bug to resolve, not a discrepancy to document around.
+reconciliation); `docs/GAMES.md` is canonical for the Games domain. `docs/ARCHITECTURE.md`,
+`docs/SECURITY.md`, `docs/DEPLOYMENT.md` and `docs/BACKUP_RESTORE.md` are canonical for their own
+areas. `docs/ROADMAP.md` is authoritative on current milestone status. If any of these disagree with
+the code, the code is authoritative — that's a bug to resolve, not a discrepancy to document around.
 
 ---
 
@@ -303,6 +305,14 @@ These are verified, not folklore. Do not "fix" them back.
   `localhost`/`127.0.0.1`/`::1`. Deliberately NOT a `NODE_ENV` check — an ad-hoc operator shell running
   production commands often has no `NODE_ENV` set at all, so a `NODE_ENV !== 'production'` gate would
   have silently passed in exactly the scenario that caused the original mistake.
+- **Games stores play time as TENTHS OF AN HOUR in an integer, never a float.** The source
+  spreadsheet holds values like `0.7` and `532.8`; summing those as JS numbers reintroduces
+  `0.1 + 0.2 !== 0.3` in a module whose headline stat is a lifetime hours total. All conversion
+  happens in `src/server/games/hours.ts` and nothing else does hours math — the same containment
+  rule `money.ts` has.
+- **`RAWG_API_KEY` is optional and its absence is a normal state, not an error.** Cover-art lookup
+  fails soft and returns `[]` on a missing key, a timeout, a non-200, or malformed JSON. The full
+  test suite must pass with no key present, exactly like the AI-optional rule for Finance.
 
 ---
 
@@ -312,7 +322,10 @@ These are verified, not folklore. Do not "fix" them back.
 src/proxy.ts              Access JWT verification, security headers, CSP nonce
 src/app/                  routes; / redirects to /finance/monthly (the landing view)
 src/features/finance/     Finance UI
+src/features/games/       Games UI
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
+src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
+src/server/db/games/      owner-scoped data access + the one HTTP boundary (rawg.ts)
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only
@@ -320,9 +333,10 @@ scripts/                  migrate.mjs, provision-owner.mjs — plain host-run No
 docs/                     the approved plan and supporting documents
 ```
 
-**`src/server/finance/` must stay framework-free.** Money math, merchant normalization, deduplication,
-categorization and classification are all testable without a browser or a server. That is what makes
-financial correctness verifiable — protect this boundary.
+**`src/server/finance/` and `src/server/games/` must stay framework-free.** Money math, merchant
+normalization, deduplication, categorization and classification are all testable without a browser or
+a server; hours conversion, taxonomy and stats aggregation hold the same property for Games. That is
+what makes financial (and library) correctness verifiable — protect this boundary.
 
 ---
 
