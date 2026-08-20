@@ -21,6 +21,20 @@
  * the CLI body lives in `main()` and is invoked ONLY when this file is run
  * directly (guarded below via `import.meta.url`) — importing this module for
  * its exports must never open a database connection or touch `process.argv`.
+ *
+ * SHAPE OF THE REAL EXPORT
+ *
+ * This script was rewritten once already, against the owner's actual "Game
+ * log" export rather than an assumed CSV shape. Every quirk below is real,
+ * confirmed against that file — see
+ * .superpowers/sdd/2026-08-20-game-tracker/real-csv-analysis.md for the full
+ * analysis. In short: the sheet's own first column is a blank spacer, so
+ * every field a naive reader would expect is one position further right;
+ * columns are therefore resolved BY HEADER NAME, never a fixed offset. One
+ * row is missing that spacer entirely. One title spans two physical lines
+ * inside a quoted field. Ratings are 5-glyph star strings, not integers. And
+ * the sheet has no Platform column at all — the owner decided platform by
+ * SECTION of the sheet instead (see `guessPlatform` below).
  */
 
 import { readFile } from 'node:fs/promises';
@@ -28,23 +42,37 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import postgres from 'postgres';
 
-// `\bpc\b` is deliberately anchored on word boundaries — the earlier
-// unanchored `pc` matched as a bare substring anywhere in a title, so a
-// developer/title token like "Capcom" produced a false Steam guess. `steam`
-// stays unanchored: it is not a common substring of other English words the
-// way "pc" is, so anchoring it buys nothing.
-const PLATFORM_BY_HINT = [
-  [/psp|playstation portable/i, 'psp'],
-  [/ps4|playstation 4/i, 'ps4'],
-  [/steam|\bpc\b/i, 'steam'],
-];
-
 // Same set src/server/db/seed-guard.ts uses for the identical `db:seed`
 // local-only guard. Duplicated rather than imported: that module is
 // TypeScript, and this script stays plain ESM on purpose (see house-style
 // note above) — importing a .ts file from a .mjs script would need a loader
 // this script deliberately has no reason to carry.
 const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/** The sheet's named data columns, in the order `games` wants to read them. */
+const DATA_COLUMNS = [
+  'Title',
+  'Publisher',
+  'Developer',
+  'Ownership',
+  'Price',
+  'Hours',
+  'First Played',
+  'Trophies',
+  'Rating',
+];
+
+/**
+ * Header rows are detected by which columns are PRESENT, not by any fixed
+ * position — a coincidental single-column match (e.g. some other row that
+ * happens to contain the literal text "Rating") shouldn't false-positive, so
+ * all three of these must appear together.
+ */
+const REQUIRED_HEADER_COLUMNS = ['Title', 'Hours', 'Rating'];
+
+const FILLED_STAR = '★'; // U+2605
+const EMPTY_STAR = '☆'; // U+2606
+const STAR_RATING_RE = new RegExp(`^[${FILLED_STAR}${EMPTY_STAR}]+$`);
 
 /** Split a CSV line honouring quoted fields — titles contain commas. */
 export function splitCsvLine(line) {
@@ -70,6 +98,110 @@ export function splitCsvLine(line) {
   }
   fields.push(current);
   return fields.map((field) => field.trim());
+}
+
+/**
+ * Splits raw CSV text into logical RECORDS, honouring a quoted field that
+ * embeds a literal newline — one real title in the source sheet ("Slay the
+ * Spire 2") is a single logical row split across two physical lines this
+ * way. A naive `raw.split(/\r?\n/)` treats that embedded newline as a record
+ * boundary and corrupts both halves of the row: the first fragment has a
+ * title but no other fields, and the second fragment's stray unterminated
+ * quote swallows every comma in it into one field. See real-csv-analysis.md,
+ * Mismatch #5.
+ *
+ * Quote state is tracked by toggling on every `"` encountered, including
+ * within a doubled `""` escape — two toggles in a row net back to the
+ * original state, so this stays correct for escaped quotes without needing
+ * to special-case them (unlike `splitCsvLine`, which has to, because it also
+ * has to UNESCAPE the content; this function only needs to know whether a
+ * newline is currently inside a quoted field, not what the field says).
+ */
+export function splitCsvRecords(raw) {
+  const records = [];
+  let current = '';
+  let inQuotes = false;
+
+  const pushRecord = () => {
+    records.push(current.endsWith('\r') ? current.slice(0, -1) : current);
+  };
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const char = raw[i];
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      current += char;
+    } else if (char === '\n' && !inQuotes) {
+      pushRecord();
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  pushRecord();
+
+  return records;
+}
+
+/**
+ * Locates the header row by its FIELDS, not by where the line starts. The
+ * real export's header begins with a leading empty column before "Title"
+ * (`,Title,Publisher,...`), so a regex anchored on the start of the line —
+ * the original approach — never matches a single line in the file. See
+ * real-csv-analysis.md, Mismatch #1.
+ */
+export function findHeaderRowIndex(records) {
+  return records.findIndex((record) => {
+    const fields = splitCsvLine(record);
+    return REQUIRED_HEADER_COLUMNS.every((column) => fields.includes(column));
+  });
+}
+
+/**
+ * Resolves each of `DATA_COLUMNS` to its field index in the header row. The
+ * real export shifts every column one place right of what a naive
+ * fixed-offset destructure expects (a blank spacer column before Title) —
+ * see Mismatch #2 — so every row has to be read BY COLUMN NAME, resolved
+ * once here, never a hardcoded offset. A column not found in the header
+ * comes back as `-1`; the caller decides whether that's fatal.
+ */
+/**
+ * @param {string[]} headerFields
+ * @returns {Record<string, number>}
+ */
+export function buildColumnIndex(headerFields) {
+  const index = {};
+  for (const column of DATA_COLUMNS) {
+    index[column] = headerFields.indexOf(column);
+  }
+  return index;
+}
+
+/**
+ * Realigns a data row that is missing its leading spacer column. Every other
+ * row in the real export — game data, decorative, and trailing summary rows
+ * alike — begins with an empty first field; exactly one game row does not
+ * (its own leading comma was dropped during export), which shifts every one
+ * of ITS fields one position left of what `buildColumnIndex` expects. That
+ * broken invariant (field 0 unexpectedly non-empty) is what's detected here
+ * — generically, not by matching the specific title string that happens to
+ * be affected in the real file. See real-csv-analysis.md, Mismatch #4.
+ *
+ * The fused field isn't pure title text: this row's own spacer-column value
+ * was the sheet's own "-" ("not tracked") placeholder, glued directly onto
+ * the Title text with no comma between them (`-Uncharted: Legacy of...`).
+ * Recovering the real title means splitting off exactly that leading "-",
+ * not just prepending a blank — the sheet's own placeholder convention
+ * decides where the boundary falls, not anything specific to this title.
+ * Any other missing-comma row that DOESN'T start with "-" (none exist in
+ * the real file, but the field-0-non-empty signature alone doesn't
+ * guarantee one) still gets realigned safely: its whole fused field becomes
+ * the Title as-is, same as before.
+ */
+export function realignRowFields(fields) {
+  if (fields[0] === '') return fields;
+  const [spacer, title] = fields[0].startsWith('-') ? ['-', fields[0].slice(1)] : ['', fields[0]];
+  return [spacer, title, ...fields.slice(1)];
 }
 
 /**
@@ -139,6 +271,30 @@ export function parsePriceCents(raw) {
 }
 
 /**
+ * The Rating column holds 5-glyph star strings (`★★★★☆` = 4 filled, 1
+ * empty), not integers — `Number('★★★★☆')` is `NaN`, so the original
+ * `parseInteger` silently nulled every real rating in the file. See
+ * real-csv-analysis.md, Mismatch #3.
+ *
+ * Accepts exactly two shapes: a run of star glyphs (counts the FILLED ones,
+ * `★`; `☆` is a deliberate empty slot, not a character to count), or a bare
+ * digit string (a handful of the sheet's own rows, and any future manual
+ * entry, could plausibly use a plain number instead of stars). "-" / "" /
+ * whitespace-only -> null. Anything else -> null too, rather than silently
+ * miscounting: a garbage string that happens to contain zero `★` characters
+ * must not be reported as "rated zero stars".
+ */
+export function parseStarRating(raw) {
+  const trimmed = raw?.trim();
+  if (!trimmed || trimmed === '-') return null;
+  if (/^\d+$/.test(trimmed)) return Number(trimmed);
+  if (STAR_RATING_RE.test(trimmed)) {
+    return [...trimmed].filter((char) => char === FILLED_STAR).length;
+  }
+  return null;
+}
+
+/**
  * Whether a row reads as `'completed'` or `'backlog'`.
  *
  * `hoursTenths === null` alone is NOT "never started" — every pre-2015 retro
@@ -160,20 +316,60 @@ export function deriveStatus(hoursTenths, ratingValue) {
 }
 
 /**
- * The source sheet has no Platform column at all, so this can only return a
- * real guess when the TITLE ITSELF names a platform (e.g. an owner-added
- * "(PSP)" suffix) — that is recorded signal, however informal. There used to
- * also be a fallback that guessed PSP/PS4/PS5 from the first-played YEAR, but
- * a year carries zero platform information; that fallback was fabricating a
- * platform and presenting it with no visual distinction from a real one.
- * `'other'` is the honest answer for "no in-title hint" — the same value
- * `games.platform` already defaults to for exactly this case.
+ * The source sheet has no Platform column at all, and no in-title platform
+ * hint either (verified: 0 of 161 real titles contain one) — so platform
+ * assignment can't come from parsing anything about an individual row in
+ * isolation. What the sheet DOES encode, structurally, is three contiguous
+ * SECTIONS, confirmed by the sheet's own summary rows (separate PS5/PS4, PSP
+ * and Steam/PC totals): a block of modern PlayStation titles, then a block
+ * of retro titles (every field but Title and Rating recorded as "-", since
+ * hours/ownership/year/trophies were never tracked for them), then a block
+ * of native Steam/PC titles. The owner's explicit decision, given that
+ * shape: every modern PlayStation game is `'ps5'` (no PS4/PS5 split by
+ * year — a year carries zero platform information), the retro block is
+ * `'psp'`, and everything after it is `'steam'`. See real-csv-analysis.md.
+ *
+ * This has to be STATEFUL across rows (which section are we in right now?),
+ * so it's a factory: call it once per import to get a per-row assigner
+ * function, then feed it each row's Ownership/Hours/First Played/Trophies
+ * text IN FILE ORDER. The retro block itself is detected by its own
+ * signature — all four of those fields reading "-" — not by row number or
+ * year, and once that signature is seen and then left behind, every
+ * subsequent row is `'steam'` for the rest of the file (confirmed: the
+ * all-dash signature is unique to the one contiguous retro block; later
+ * rows with an untracked Ownership still carry a real Hours or Trophies
+ * value, so they never match all four).
  */
-export function guessPlatform(title) {
-  for (const [pattern, platform] of PLATFORM_BY_HINT) {
-    if (pattern.test(title)) return platform;
-  }
-  return 'other';
+export function guessPlatform() {
+  // A strictly ONE-WAY walk through the three sections — ps5 -> psp ->
+  // steam — never back. Once a non-retro row is seen after the retro
+  // block, every later row is 'steam' even if it happens to match the
+  // all-dash signature again (a real, if unlikely, possibility: the sheet
+  // itself notes a handful of untracked Steam titles also carry "-" values
+  // for individual fields). The sheet has exactly one contiguous retro
+  // block, not a repeatable pattern — modelling it as three ordered
+  // sections, rather than "classify every all-dash row as psp wherever it
+  // appears," is the more defensive reading of the owner's rule.
+  let stage = 'ps5';
+
+  return (ownershipText, hoursText, firstPlayedText, trophiesText) => {
+    if (stage === 'steam') return 'steam';
+
+    const isRetroRow =
+      ownershipText === '-' && hoursText === '-' && firstPlayedText === '-' && trophiesText === '-';
+
+    if (isRetroRow) {
+      stage = 'psp';
+      return 'psp';
+    }
+
+    if (stage === 'psp') {
+      stage = 'steam';
+      return 'steam';
+    }
+
+    return 'ps5';
+  };
 }
 
 /**
@@ -236,45 +432,74 @@ async function main() {
     }
 
     const raw = await readFile(csvPath, 'utf8');
-    const lines = raw.split(/\r?\n/).filter((line) => line.trim() !== '');
-    const header = lines.findIndex((line) => /^\s*"?Title"?\s*,/i.test(line));
-    if (header === -1) {
-      console.error('Could not find the header row (expected a line starting with "Title,").');
+    const records = splitCsvRecords(raw).filter((record) => record.trim() !== '');
+    const headerIndex = findHeaderRowIndex(records);
+    if (headerIndex === -1) {
+      console.error(
+        'Could not find the header row (expected a row whose fields include "Title", "Hours", and "Rating").',
+      );
       process.exitCode = 1;
       return;
     }
 
+    const headerFields = splitCsvLine(records[headerIndex]);
+    const columnIndex = buildColumnIndex(headerFields);
+    const missingColumns = DATA_COLUMNS.filter((column) => columnIndex[column] === -1);
+    if (missingColumns.length > 0) {
+      console.error(`Header row is missing expected column(s): ${missingColumns.join(', ')}.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    const assignPlatform = guessPlatform();
     let imported = 0;
     let skipped = 0;
 
-    for (const line of lines.slice(header + 1)) {
-      const [title, publisher, developer, ownership, price, hoursText, yearText, trophies, rating] =
-        splitCsvLine(line);
-      if (!title || title === '-') {
+    for (const record of records.slice(headerIndex + 1)) {
+      const fields = realignRowFields(splitCsvLine(record));
+
+      const title = fields[columnIndex.Title] ?? '';
+      // Trailing summary/total rows (game count, per-platform cost totals,
+      // etc.) all have an empty Title field, and are the only rows that do
+      // — every real game row, including every sparse collection-stub row,
+      // has a title. The first empty-Title row therefore marks the end of
+      // real data; everything from here on is a footer, not a game.
+      if (!title) break;
+      if (title === '-') {
         skipped += 1;
         continue;
       }
 
+      const publisher = fields[columnIndex.Publisher] ?? '';
+      const developer = fields[columnIndex.Developer] ?? '';
+      const ownershipText = fields[columnIndex.Ownership] ?? '';
+      const priceText = fields[columnIndex.Price] ?? '';
+      const hoursText = fields[columnIndex.Hours] ?? '';
+      const yearText = fields[columnIndex['First Played']] ?? '';
+      const trophiesText = fields[columnIndex.Trophies] ?? '';
+      const ratingText = fields[columnIndex.Rating] ?? '';
+
       const firstPlayedYear = parseFirstYear(yearText);
       const hoursTenths = parseHoursTenths(hoursText);
-      const parsedRating = parseInteger(rating);
+      const parsedRating = parseStarRating(ratingText);
       const ratingValue = parsedRating !== null && parsedRating >= 1 && parsedRating <= 5 ? parsedRating : null;
+      const platform = assignPlatform(ownershipText, hoursText, yearText, trophiesText);
 
       const result = await sql`
         insert into games (
           owner_id, title, platform, developer, publisher, ownership, price_cents,
           status, rating, hours_tenths, first_played_year, achievements_unlocked, notes
         ) values (
-          ${owner.id}, ${title}, ${guessPlatform(title)},
+          ${owner.id}, ${title}, ${platform},
           ${developer && developer !== '-' ? developer : null},
           ${publisher && publisher !== '-' ? publisher : null},
-          ${/^physical$/i.test(ownership) ? 'physical' : /^digital$/i.test(ownership) ? 'digital' : null},
-          ${parsePriceCents(price)},
+          ${/^physical$/i.test(ownershipText) ? 'physical' : /^digital$/i.test(ownershipText) ? 'digital' : null},
+          ${parsePriceCents(priceText)},
           ${deriveStatus(hoursTenths, ratingValue)},
           ${ratingValue},
           ${hoursTenths},
           ${firstPlayedYear},
-          ${parseInteger(trophies)},
+          ${parseInteger(trophiesText)},
           ${hoursText && hoursText.includes('+') ? `Imported as "${hoursText}" across ${yearText}` : null}
         )
         on conflict do nothing

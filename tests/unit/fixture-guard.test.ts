@@ -259,7 +259,7 @@ describe('the corpus is checksummed', () => {
       'finance/boa-deposit-totals-mismatch.csv': '5b69ba0e436e0558',
       'finance/malformed.csv': 'f84991711e93801e',
       'finance/unknown-headers.csv': '49c4a0ed672b72f8',
-      'games/game-log-sample.csv': '304c8ae038eadbed',
+      'games/game-log-sample.csv': '7d8bc2382bf1376c',
     };
 
     const actual = Object.fromEntries(
