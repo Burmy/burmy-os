@@ -1,24 +1,22 @@
 'use client';
 
-import { Settings, Table2 } from 'lucide-react';
+import { Gamepad2, Settings, Table2 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { cn } from '@/lib/utils';
 
 /**
- * Two destinations. That is the whole application.
+ * Three destinations: Finance, Games, Settings.
  *
- * Finance and Settings — no Home dashboard (the monthly grid IS the landing
- * experience), and no nav entries for modules that do not exist. Adding a third
- * entry should require a real second module, not an anticipated one.
- *
- * `/settings` (not `/settings/finance/accounts`) — Settings has its own real
- * landing page now, so the primary nav points at the section, not one page
- * inside it.
+ * Finance and Games are the two product modules; Settings is separated from
+ * them by a rule below. There is no Home dashboard — each module's own landing
+ * view IS its home. A fourth entry should require a real third module, not an
+ * anticipated one.
  */
 const LINKS = [
   { href: '/finance/monthly', label: 'Finance', Icon: Table2, match: '/finance' },
+  { href: '/games/library', label: 'Games', Icon: Gamepad2, match: '/games' },
   { href: '/settings', label: 'Settings', Icon: Settings, match: '/settings' },
 ] as const;
 
@@ -27,11 +25,12 @@ const LINKS = [
  * inside the fixed desktop `Sidebar`, once inside the mobile `MobileNav`
  * sheet. `onNavigate` lets the mobile sheet close itself on a link click.
  *
- * A rule appears before Settings — not before Finance — because Settings is
- * configuration, set-and-forget, while Finance is the thing the app is for.
- * Hardcoded at the one, permanent gap between the two rather than a general
- * "grouped links" prop: there are exactly two destinations by design (see
- * above), so a generic grouping API would serve a case that doesn't exist.
+ * A rule appears before Settings — not before Finance or Games — because
+ * Settings is configuration, set-and-forget, while Finance and Games are what
+ * the app is for. Hardcoded at the one, permanent gap between the product
+ * modules and Settings rather than a general "grouped links" prop: there is
+ * exactly one such gap by design (see above), so a generic grouping API would
+ * serve a case that doesn't exist.
  */
 export function Nav({
   onNavigate,
