@@ -28,10 +28,15 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import postgres from 'postgres';
 
+// `\bpc\b` is deliberately anchored on word boundaries — the earlier
+// unanchored `pc` matched as a bare substring anywhere in a title, so a
+// developer/title token like "Capcom" produced a false Steam guess. `steam`
+// stays unanchored: it is not a common substring of other English words the
+// way "pc" is, so anchoring it buys nothing.
 const PLATFORM_BY_HINT = [
   [/psp|playstation portable/i, 'psp'],
   [/ps4|playstation 4/i, 'ps4'],
-  [/steam|pc/i, 'steam'],
+  [/steam|\bpc\b/i, 'steam'],
 ];
 
 // Same set src/server/db/seed-guard.ts uses for the identical `db:seed`
@@ -155,17 +160,20 @@ export function deriveStatus(hoursTenths, ratingValue) {
 }
 
 /**
- * The source sheet has no Platform column, so this is a heuristic guess from
- * the title text and the first-played year, not a parse of recorded data.
+ * The source sheet has no Platform column at all, so this can only return a
+ * real guess when the TITLE ITSELF names a platform (e.g. an owner-added
+ * "(PSP)" suffix) — that is recorded signal, however informal. There used to
+ * also be a fallback that guessed PSP/PS4/PS5 from the first-played YEAR, but
+ * a year carries zero platform information; that fallback was fabricating a
+ * platform and presenting it with no visual distinction from a real one.
+ * `'other'` is the honest answer for "no in-title hint" — the same value
+ * `games.platform` already defaults to for exactly this case.
  */
-export function guessPlatform(title, firstYear) {
+export function guessPlatform(title) {
   for (const [pattern, platform] of PLATFORM_BY_HINT) {
     if (pattern.test(title)) return platform;
   }
-  // The retro block (no year recorded at all) is the PSP-era library.
-  if (firstYear === null) return 'psp';
-  if (firstYear <= 2020) return 'ps4';
-  return 'ps5';
+  return 'other';
 }
 
 /**
@@ -257,7 +265,7 @@ async function main() {
           owner_id, title, platform, developer, publisher, ownership, price_cents,
           status, rating, hours_tenths, first_played_year, achievements_unlocked, notes
         ) values (
-          ${owner.id}, ${title}, ${guessPlatform(title, firstPlayedYear)},
+          ${owner.id}, ${title}, ${guessPlatform(title)},
           ${developer && developer !== '-' ? developer : null},
           ${publisher && publisher !== '-' ? publisher : null},
           ${/^physical$/i.test(ownership) ? 'physical' : /^digital$/i.test(ownership) ? 'digital' : null},

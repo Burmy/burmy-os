@@ -147,27 +147,35 @@ describe('parsePriceCents', () => {
 
 describe('guessPlatform', () => {
   it('matches a PSP hint in the title', () => {
-    expect(guessPlatform('Some Game (PSP)', 2012)).toBe('psp');
+    expect(guessPlatform('Some Game (PSP)')).toBe('psp');
   });
 
   it('matches a PS4 hint in the title', () => {
-    expect(guessPlatform('Some Game (PS4)', 2018)).toBe('ps4');
+    expect(guessPlatform('Some Game (PS4)')).toBe('ps4');
   });
 
-  it('matches a Steam/PC hint in the title', () => {
-    expect(guessPlatform('Some Game (Steam)', 2021)).toBe('steam');
+  it('matches a Steam hint in the title', () => {
+    expect(guessPlatform('Some Game (Steam)')).toBe('steam');
   });
 
-  it('falls back to psp for the retro block with no recorded year', () => {
-    expect(guessPlatform('Crimson Labyrinth', null)).toBe('psp');
+  it('matches a standalone PC hint in the title', () => {
+    expect(guessPlatform('Some Game (PC)')).toBe('steam');
   });
 
-  it('falls back to ps4 for an undated-hint year at or before 2020', () => {
-    expect(guessPlatform('Kōhaku no Kaze', 2020)).toBe('ps4');
+  it('does not treat "pc" inside an unrelated word as a platform hint', () => {
+    // Regression: the original /steam|pc/i pattern matched "pc" as an
+    // unanchored substring anywhere in the title, so a title or developer
+    // token like "Capcom" produced a false Steam guess with nothing to do
+    // with the actual platform.
+    expect(guessPlatform('Capcom Arcade Stadium')).toBe('other');
   });
 
-  it('falls back to ps5 for an undated-hint year after 2020', () => {
-    expect(guessPlatform('Nightfall Requiem', 2024)).toBe('ps5');
+  it('defaults to "other" — the column\'s own default — when no hint matches', () => {
+    // The source sheet has no Platform column at all, so anything without an
+    // explicit in-title hint is genuinely unknown. There is no fallback
+    // guess from the first-played year: a year carries no platform
+    // information whatsoever.
+    expect(guessPlatform('Crimson Labyrinth')).toBe('other');
   });
 });
 
