@@ -67,10 +67,20 @@ export function splitCsvLine(line) {
   return fields.map((field) => field.trim());
 }
 
-/** "53 + 6" -> 590 tenths. "-" / "" -> null, never 0 — unknown is not zero. */
+/**
+ * "53 + 6" -> 590 tenths. "-" / "" / whitespace-only -> null, never 0 —
+ * unknown is not zero. Trims BEFORE the empty/dash check: an untrimmed ""
+ * from `''.trim()` still satisfies `Number.isFinite(Number(''))` (0 is
+ * finite), so without trimming first, "   " would silently sum to 0 instead
+ * of returning null. `splitCsvLine` already trims every field in the shipped
+ * pipeline, so this only self-guards a caller that hands raw, untrimmed text
+ * straight to the exported function — which is exactly what a standalone
+ * unit test does.
+ */
 export function parseHoursTenths(raw) {
-  if (!raw || raw === '-') return null;
-  const parts = raw
+  const trimmed = raw?.trim();
+  if (!trimmed || trimmed === '-') return null;
+  const parts = trimmed
     .split('+')
     .map((part) => Number(part.trim()))
     .filter((n) => Number.isFinite(n));
@@ -78,17 +88,28 @@ export function parseHoursTenths(raw) {
   return Math.round(parts.reduce((sum, n) => sum + n, 0) * 10);
 }
 
-/** "2024 + 2025" -> 2024 (when it was STARTED, the first component). "-" -> null. */
+/**
+ * "2024 + 2025" -> 2024 (when it was STARTED, the first component).
+ * "-" / "" / whitespace-only -> null. Trimmed first for the same reason as
+ * `parseHoursTenths` — without it, "   " parses as `Number('') === 0`, which
+ * only failed to leak through here by accident, because 0 happens to fail
+ * the `> 1970` range check below. That's not a guarantee worth relying on.
+ */
 export function parseFirstYear(raw) {
-  if (!raw || raw === '-') return null;
-  const first = Number(raw.split('+')[0]?.trim());
+  const trimmed = raw?.trim();
+  if (!trimmed || trimmed === '-') return null;
+  const first = Number(trimmed.split('+')[0]?.trim());
   return Number.isInteger(first) && first > 1970 && first < 2100 ? first : null;
 }
 
-/** Plain or composite ("+"-summed) integer field. "-" / "" -> null, never 0. */
+/**
+ * Plain or composite ("+"-summed) integer field. "-" / "" / whitespace-only
+ * -> null, never 0. Trimmed first — see `parseHoursTenths`.
+ */
 export function parseInteger(raw) {
-  if (!raw || raw === '-') return null;
-  const parts = raw
+  const trimmed = raw?.trim();
+  if (!trimmed || trimmed === '-') return null;
+  const parts = trimmed
     .split('+')
     .map((part) => Number(part.trim()))
     .filter((n) => Number.isFinite(n));
@@ -96,16 +117,41 @@ export function parseInteger(raw) {
   return Math.round(parts.reduce((sum, n) => sum + n, 0));
 }
 
-/** "$49.99 +29.99" -> 7998 cents. "-" / "" -> null, never 0. */
+/**
+ * "$49.99 +29.99" -> 7998 cents. "-" / "" / whitespace-only -> null, never 0.
+ * Trimmed first — see `parseHoursTenths`.
+ */
 export function parsePriceCents(raw) {
-  if (!raw || raw === '-') return null;
-  const parts = raw
+  const trimmed = raw?.trim();
+  if (!trimmed || trimmed === '-') return null;
+  const parts = trimmed
     .replace(/\$/g, '')
     .split('+')
     .map((p) => Number(p.trim()))
     .filter((n) => Number.isFinite(n));
   if (parts.length === 0) return null;
   return Math.round(parts.reduce((sum, n) => sum + n, 0) * 100);
+}
+
+/**
+ * Whether a row reads as `'completed'` or `'backlog'`.
+ *
+ * `hoursTenths === null` alone is NOT "never started" — every pre-2015 retro
+ * row has null hours by definition (the sheet records every field but Title
+ * and Rating as "-" for that whole block), and using hours-null as the sole
+ * signal would mislabel the owner's entire retro library as backlog on the
+ * first real import. A 1-5 rating is only meaningful for a game that was
+ * actually played, so hours OR a stored rating is treated as evidence of
+ * having played it. This is an inference, not a certainty — a game played
+ * but not finished still reads as `'completed'`, and a row with neither
+ * hours nor a rating (a genuine unplayed backlog entry, which the real sheet
+ * also has) correctly stays `'backlog'`. The owner can correct individual
+ * rows in the UI after import. `ratingValue` must be the CLAMPED value that
+ * will actually be stored (1-5 or null) — an out-of-range rating that gets
+ * nulled for storage should not count as evidence either.
+ */
+export function deriveStatus(hoursTenths, ratingValue) {
+  return hoursTenths !== null || ratingValue !== null ? 'completed' : 'backlog';
 }
 
 /**
@@ -203,7 +249,8 @@ async function main() {
 
       const firstPlayedYear = parseFirstYear(yearText);
       const hoursTenths = parseHoursTenths(hoursText);
-      const ratingValue = parseInteger(rating);
+      const parsedRating = parseInteger(rating);
+      const ratingValue = parsedRating !== null && parsedRating >= 1 && parsedRating <= 5 ? parsedRating : null;
 
       const result = await sql`
         insert into games (
@@ -215,8 +262,8 @@ async function main() {
           ${publisher && publisher !== '-' ? publisher : null},
           ${/^physical$/i.test(ownership) ? 'physical' : /^digital$/i.test(ownership) ? 'digital' : null},
           ${parsePriceCents(price)},
-          ${hoursTenths === null ? 'backlog' : 'completed'},
-          ${ratingValue !== null && ratingValue >= 1 && ratingValue <= 5 ? ratingValue : null},
+          ${deriveStatus(hoursTenths, ratingValue)},
+          ${ratingValue},
           ${hoursTenths},
           ${firstPlayedYear},
           ${parseInteger(trophies)},

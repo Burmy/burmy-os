@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  deriveStatus,
   guessPlatform,
   isLocalDatabaseUrl,
   parseFirstYear,
@@ -73,9 +74,14 @@ describe('parseHoursTenths', () => {
     expect(parseHoursTenths('24')).toBe(240);
   });
 
-  it('returns null, never 0, for "-" and empty', () => {
+  it('returns null, never 0, for "-", empty, and whitespace-only', () => {
     expect(parseHoursTenths('-')).toBeNull();
     expect(parseHoursTenths('')).toBeNull();
+    // Regression: '   '.trim() -> '', but Number('') is 0, not NaN — without
+    // trimming BEFORE the empty check, whitespace-only input silently summed
+    // to a false 0 instead of returning null. The one bug this script must
+    // never have is treating "unknown" as "zero".
+    expect(parseHoursTenths('   ')).toBeNull();
   });
 });
 
@@ -88,9 +94,13 @@ describe('parseFirstYear', () => {
     expect(parseFirstYear('2023')).toBe(2023);
   });
 
-  it('returns null, never 0, for "-" and empty', () => {
+  it('returns null, never 0, for "-", empty, and whitespace-only', () => {
     expect(parseFirstYear('-')).toBeNull();
     expect(parseFirstYear('')).toBeNull();
+    // Regression: this one only avoided returning 0 for '   ' BY ACCIDENT —
+    // Number('') is 0, and 0 happens to fail the `> 1970` range check below.
+    // Trimming before the empty check now makes that a guarantee, not luck.
+    expect(parseFirstYear('   ')).toBeNull();
   });
 
   it('rejects an out-of-range value rather than trusting garbage', () => {
@@ -108,9 +118,10 @@ describe('parseInteger', () => {
     expect(parseInteger('10 + 5')).toBe(15);
   });
 
-  it('returns null, never 0, for "-" and empty', () => {
+  it('returns null, never 0, for "-", empty, and whitespace-only', () => {
     expect(parseInteger('-')).toBeNull();
     expect(parseInteger('')).toBeNull();
+    expect(parseInteger('   ')).toBeNull();
   });
 });
 
@@ -127,9 +138,10 @@ describe('parsePriceCents', () => {
     expect(parsePriceCents('$59.99')).toBe(5999);
   });
 
-  it('returns null, never 0, for "-" and empty', () => {
+  it('returns null, never 0, for "-", empty, and whitespace-only', () => {
     expect(parsePriceCents('-')).toBeNull();
     expect(parsePriceCents('')).toBeNull();
+    expect(parsePriceCents('   ')).toBeNull();
   });
 });
 
@@ -156,6 +168,25 @@ describe('guessPlatform', () => {
 
   it('falls back to ps5 for an undated-hint year after 2020', () => {
     expect(guessPlatform('Nightfall Requiem', 2024)).toBe('ps5');
+  });
+});
+
+describe('deriveStatus', () => {
+  it('reads as completed when hours are logged', () => {
+    expect(deriveStatus(590, null)).toBe('completed');
+  });
+
+  it('reads as completed when a rating is on record even with no hours', () => {
+    // This is the retro-library case: every pre-2015 row has null hours by
+    // definition (all fields but Title/Rating are "-"), but a 1-5 rating is
+    // only meaningful for a game the owner actually played. Using
+    // hours-null alone as "backlog" would mislabel the whole retro block as
+    // never-started.
+    expect(deriveStatus(null, 4)).toBe('completed');
+  });
+
+  it('reads as backlog only when neither hours nor a rating is on record', () => {
+    expect(deriveStatus(null, null)).toBe('backlog');
   });
 });
 
@@ -231,6 +262,10 @@ describe('the synthetic fixture, parsed end to end', () => {
     expect(parseFirstYear(year)).toBeNull();
     expect(parseInteger(trophies)).toBeNull();
     expect(parseInteger(rating)).toBe(3);
+    // The end-to-end proof for the status fix: this row has null hours (like
+    // every retro row) but DOES carry a rating, and must import as
+    // 'completed', not 'backlog' — the whole retro library hinges on this.
+    expect(deriveStatus(parseHoursTenths(hours), parseInteger(rating))).toBe('completed');
   });
 
   it('imports the collection sub-row with only a title and a year, price null', async () => {
