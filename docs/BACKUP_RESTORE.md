@@ -7,9 +7,11 @@ and "a restore has actually been tested". Everything below is sequenced to close
 
 ---
 
-## What is actually irreplaceable
+## What is actually irreplaceable (Finance)
 
-Ranked, because the ranking drives the order of work.
+Ranked, because the ranking drives the order of work. **This ranking, and the "database is derived"
+framing below it, describe Finance only** — see "Games is the exception" further down for why Games
+inverts it completely.
 
 | Asset | Replaceable? | Where it lives |
 | --- | --- | --- |
@@ -19,8 +21,30 @@ Ranked, because the ranking drives the order of work.
 | Secrets / recovery credentials | Yes, by rotation — but rotation requires access, which requires them | Password manager, offline |
 | Source code | Yes | GitHub |
 
-The database is *derived*. The CSV archive is *source*. That is why the archive is backed up before a
-single line of import code is written.
+For **Finance**, the database is *derived*. The CSV archive is *source*. That is why the archive is
+backed up before a single line of import code is written.
+
+---
+
+## Games is the exception — for Games, Postgres IS the source
+
+Everything above is scoped to Finance's BoA CSV history, which genuinely lives on the owner's disk
+independent of Postgres and can rebuild the database if it is ever lost. **Games has no such archive.**
+
+The one-time import (`scripts/import-game-log.mjs`, see `docs/GAMES.md`, "The problem being solved")
+reads the owner's "Game log" Google Sheet export once. The plan requires that export be deleted after
+the import runs and never committed — there is no on-disk copy retained anywhere, by design, unlike
+Finance's CSVs. Once that import completes:
+
+| Asset | Replaceable? | Where it lives |
+| --- | --- | --- |
+| The source Google Sheet export | Irrelevant after import — deliberately not kept anywhere | Nowhere |
+| The `games` table (Postgres) | **No.** The only copy of the Games data that exists, anywhere | Supabase |
+
+Every status change, hours update, rating, note, and game added by hand since the import exists **only**
+in Postgres. There is no CSV archive to re-import from if that table is lost — the Supabase
+backup/restore procedure in `docs/DEPLOYMENT.md`, "Backup strategy" is Games' *only* protection, not a
+convenience layered on top of a recoverable source file the way it is for Finance.
 
 ---
 
