@@ -13,8 +13,10 @@ import { formatHours, hours } from '@/server/games/hours';
 /**
  * One game in the gallery. Cover art is the primary affordance; everything else
  * is secondary metadata layered beneath it. Games with no cover fall back to a
- * typographic tile rather than a broken-image box — roughly half the historical
- * library predates cover art being available at all.
+ * plain icon tile rather than a broken-image box — roughly half the historical
+ * library predates cover art being available at all. The title always renders
+ * in the info panel below, cover or not, so every card has identical structure
+ * and a mixed grid never looks ragged.
  */
 export function GameCard({
   game,
@@ -26,6 +28,15 @@ export function GameCard({
   return (
     <button
       type="button"
+      // Without this, the button's accessible name is computed from its
+      // whole visible content — status badge, title, platform, rating, hours
+      // — in DOM order, so it would start with "Backlog"/"Playing"/etc. for
+      // every card in that status. That's a wall of text for a screen reader
+      // to read on every card, and it collides with the status filter
+      // chips' own "Backlog"/"Playing" names. The title alone identifies
+      // which game the button opens; everything else stays visible for
+      // sighted users without being folded into the accessible name.
+      aria-label={game.title}
       onClick={() => onOpen(game)}
       className={cn(
         'group focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left',
@@ -34,9 +45,8 @@ export function GameCard({
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
         {game.coverUrl === null ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 p-3 text-center">
+          <div className="flex h-full items-center justify-center p-3">
             <Gamepad2 className="text-muted-foreground/40 size-8" aria-hidden />
-            <span className="text-muted-foreground line-clamp-3 text-xs font-medium">{game.title}</span>
           </div>
         ) : (
           <Image
@@ -53,12 +63,7 @@ export function GameCard({
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-3">
-        {/* Omitted when there is no cover: the fallback tile above already
-            displays the title, and repeating it here would put the same text
-            node in the DOM twice for no new information. */}
-        {game.coverUrl === null ? null : (
-          <span className="line-clamp-2 text-sm font-medium">{game.title}</span>
-        )}
+        <span className="line-clamp-2 text-sm font-medium">{game.title}</span>
         <span className="text-muted-foreground text-xs">
           {PLATFORM_LABELS[game.platform]}
           {game.firstPlayedYear === null ? '' : ` · ${game.firstPlayedYear}`}

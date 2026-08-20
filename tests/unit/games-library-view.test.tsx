@@ -65,6 +65,19 @@ describe('LibraryView', () => {
     expect(screen.getByText('Elden Ring')).toBeInTheDocument();
   });
 
+  it('opens the editor from the table view by keyboard, not just by clicking the row', async () => {
+    render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' })]} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /table view/i }));
+
+    // The row itself is not a focusable control — a real button inside the
+    // title cell is, so this is what tab order actually lands on.
+    screen.getByRole('button', { name: 'Elden Ring' }).focus();
+    await userEvent.keyboard('{Enter}');
+
+    expect(screen.getByRole('heading', { name: 'Elden Ring', level: 2 })).toBeInTheDocument();
+  });
+
   it('filters by status', async () => {
     render(
       <LibraryView

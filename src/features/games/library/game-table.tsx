@@ -3,6 +3,7 @@
 import { RatingStars } from '@/components/games/rating-stars';
 import { StatusBadge } from '@/components/games/status-badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import { formatHours, hours } from '@/server/games/hours';
@@ -11,6 +12,19 @@ import { formatHours, hours } from '@/server/games/hours';
  * The dense view — deliberately close to the spreadsheet this replaces, because
  * scanning and comparing 100 rows is a genuinely different task from browsing,
  * and a card grid is bad at it.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ROW ACTIVATION IS A REAL BUTTON IN THE FIRST CELL, NOT `onClick` ON `<tr>`.
+ *
+ * `TableRow` keeps its `onClick` as a mouse-only convenience (click anywhere in
+ * the row), but that alone leaves keyboard users with no way to open a game —
+ * a `<tr>` is not natively focusable and giving it `role="button"` would strip
+ * its implicit `row` semantics from screen readers, along with its cells'
+ * `cell` semantics, for no real gain. A native `<button>` around the title gets
+ * correct tab-order focus, a visible focus ring, and Enter/Space activation
+ * for free from the browser — no `onKeyDown` hand-rolling needed — and its
+ * accessible name (the title text) says exactly which game it opens.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function GameTable({
   games,
@@ -39,7 +53,22 @@ export function GameTable({
             className="cursor-pointer"
             onClick={() => onOpen(game)}
           >
-            <TableCell className="font-medium">{game.title}</TableCell>
+            <TableCell className="font-medium">
+              <button
+                type="button"
+                onClick={(event) => {
+                  // The row above already opens on click; stop the event
+                  // reaching it so a mouse click doesn't call onOpen twice.
+                  event.stopPropagation();
+                  onOpen(game);
+                }}
+                className={cn(
+                  'rounded-sm text-left focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
+                )}
+              >
+                {game.title}
+              </button>
+            </TableCell>
             <TableCell className="text-muted-foreground">{PLATFORM_LABELS[game.platform]}</TableCell>
             <TableCell>
               <StatusBadge status={game.status} />
