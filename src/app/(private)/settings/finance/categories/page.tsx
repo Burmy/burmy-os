@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 import { CategoriesManager } from '@/features/finance/settings/categories-manager';
 import { requireOwner } from '@/server/auth/owner';
-import { listCategories } from '@/server/db/finance/categories';
+import { getCategoryTransactionCounts, listCategories } from '@/server/db/finance/categories';
 
 export const metadata: Metadata = { title: 'Categories — Burmy' };
 
@@ -17,7 +17,10 @@ export default async function CategoriesPage(): Promise<React.ReactElement> {
 
   // One read, split here. Archived rows are needed for the restore list but must
   // never reach a picker, which is why `listCategories` excludes them by default.
-  const all = await listCategories(owner.userId, { includeArchived: true });
+  const [all, transactionCountsByCategory] = await Promise.all([
+    listCategories(owner.userId, { includeArchived: true }),
+    getCategoryTransactionCounts(owner.userId),
+  ]);
 
   return (
     <div>
@@ -28,6 +31,7 @@ export default async function CategoriesPage(): Promise<React.ReactElement> {
         <CategoriesManager
           live={all.filter((category) => category.archivedAt === null)}
           archived={all.filter((category) => category.archivedAt !== null)}
+          transactionCounts={Object.fromEntries(transactionCountsByCategory)}
         />
       </div>
     </div>

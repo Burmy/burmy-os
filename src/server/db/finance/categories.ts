@@ -20,12 +20,12 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
-import { financeCategories } from '@/server/db/schema';
+import { financeCategories, financeTransactions } from '@/server/db/schema';
 import { denseOrder } from '@/server/finance/taxonomy';
-import { DuplicateNameError, NotFoundError, isUniqueViolation } from './errors';
+import { CategoryInUseError, DuplicateNameError, NotFoundError, isUniqueViolation } from './errors';
 
 /** Drives grid sectioning and subtotals. See docs/FINANCE.md. */
 export const CATEGORY_KINDS = ['spending', 'income', 'investment'] as const;
@@ -189,6 +189,46 @@ export async function restoreCategory(ownerId: string, id: string): Promise<Fina
     }
     throw error;
   }
+}
+
+/**
+ * True delete — the one case Archive doesn't cover: a category created by
+ * mistake (a typo, a duplicate, an experiment) that was never actually used.
+ * Every other category, with real history, stays archive-only; see
+ * `CategoryInUseError`'s own doc comment for why.
+ *
+ * @throws CategoryInUseError · NotFoundError
+ */
+export async function deleteCategory(ownerId: string, id: string): Promise<void> {
+  const [row] = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(financeTransactions)
+    .where(and(eq(financeTransactions.ownerId, ownerId), eq(financeTransactions.categoryId, id)));
+
+  const transactionCount = row?.count ?? 0;
+  if (transactionCount > 0) throw new CategoryInUseError(transactionCount);
+
+  const deleted = await getDb()
+    .delete(financeCategories)
+    .where(and(eq(financeCategories.ownerId, ownerId), eq(financeCategories.id, id)))
+    .returning();
+
+  if (!deleted[0]) throw new NotFoundError('Category');
+}
+
+/**
+ * One `GROUP BY` for the whole list rather than one query per category — the
+ * Settings page needs this to decide which categories can offer Delete
+ * (zero transactions) versus Archive-only.
+ */
+export async function getCategoryTransactionCounts(ownerId: string): Promise<Map<string, number>> {
+  const rows = await getDb()
+    .select({ categoryId: financeTransactions.categoryId, count: sql<number>`count(*)::int` })
+    .from(financeTransactions)
+    .where(and(eq(financeTransactions.ownerId, ownerId), isNotNull(financeTransactions.categoryId)))
+    .groupBy(financeTransactions.categoryId);
+
+  return new Map(rows.map((r) => [r.categoryId!, r.count]));
 }
 
 /**

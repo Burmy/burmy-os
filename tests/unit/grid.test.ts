@@ -154,6 +154,13 @@ describe('buildMonthlyGrid — the invariant-violation (unreconciled) bucket', (
     const grid = buildMonthlyGrid([row({ categoryId: 'cat-1' })], [category({})]);
     expect(grid.unreconciled).toEqual({ count: 0, totalCents: 0 });
   });
+
+  it('never counts income with no category — income does not need one', () => {
+    const rows = [row({ month: 1, categoryId: null, transactionType: 'income', totalCents: -50000, txnCount: 1 })];
+    const grid = buildMonthlyGrid(rows, [category({})]);
+    expect(grid.rows[0]!.incomeCents).toBe(50000);
+    expect(grid.unreconciled).toEqual({ count: 0, totalCents: 0 });
+  });
 });
 
 describe('buildMonthlyGrid — the year Total row', () => {

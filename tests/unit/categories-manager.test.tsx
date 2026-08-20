@@ -21,6 +21,7 @@ const archiveCategoryAction = vi.fn(async () => ({ ok: true as const }));
 const restoreCategoryAction = vi.fn(async () => ({ ok: true as const }));
 const createCategoryAction = vi.fn(async () => ({ ok: true as const }));
 const updateCategoryAction = vi.fn(async () => ({ ok: true as const }));
+const deleteCategoryAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/finance/settings/category-actions', () => ({
   reorderCategoriesAction,
@@ -28,6 +29,7 @@ vi.mock('@/features/finance/settings/category-actions', () => ({
   restoreCategoryAction,
   createCategoryAction,
   updateCategoryAction,
+  deleteCategoryAction,
 }));
 
 vi.mock('@/components/ui/toast', () => ({
@@ -53,11 +55,12 @@ const LIVE = [category('Mortgage', 0), category('Gas', 1), category('Food', 2)];
 
 beforeEach(() => {
   reorderCategoriesAction.mockClear();
+  deleteCategoryAction.mockClear();
 });
 
 describe('CategoriesManager — reorder controls', () => {
   it('renders a category per row with its kind', () => {
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     expect(screen.getByText('Mortgage')).toBeInTheDocument();
     expect(screen.getByText('Gas')).toBeInTheDocument();
@@ -67,7 +70,7 @@ describe('CategoriesManager — reorder controls', () => {
   it('gives every row keyboard-reachable, labelled move buttons', () => {
     // The reason drag-and-drop was rejected: these are accessible by
     // construction, with no bespoke keyboard handling to get wrong.
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     for (const name of ['Mortgage', 'Gas', 'Food']) {
       expect(screen.getByRole('button', { name: `Move ${name} up` })).toBeInTheDocument();
@@ -76,7 +79,7 @@ describe('CategoriesManager — reorder controls', () => {
   });
 
   it('disables "up" on the first row and "down" on the last', () => {
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     expect(screen.getByRole('button', { name: 'Move Mortgage up' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Move Food down' })).toBeDisabled();
@@ -89,7 +92,7 @@ describe('CategoriesManager — reorder controls', () => {
   it('sends the FULL reordered id list, not a "move" instruction', () => {
     // Sending "move X up" per click would let interleaved requests produce
     // duplicate sort orders. One dense list per request cannot.
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     return userEvent
       .click(screen.getByRole('button', { name: 'Move Gas up' }))
@@ -105,7 +108,7 @@ describe('CategoriesManager — reorder controls', () => {
   });
 
   it('moves a row down by one position', async () => {
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     await userEvent.click(screen.getByRole('button', { name: 'Move Mortgage down' }));
 
@@ -127,7 +130,7 @@ describe('CategoriesManager — reorder controls', () => {
         }),
     );
 
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     // Mortgage, Gas, Food → move Food up → Mortgage, Food, Gas.
     await userEvent.click(screen.getByRole('button', { name: 'Move Food up' }));
@@ -145,18 +148,19 @@ describe('CategoriesManager — reorder controls', () => {
 });
 
 describe('CategoriesManager — archive', () => {
-  it('offers archive, never delete', () => {
-    // Categories are archived because every transaction ever assigned to one
-    // keeps pointing at it. There must be no delete affordance at all.
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+  it('offers archive on every live category', () => {
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
 
     expect(screen.getByRole('button', { name: 'Archive Mortgage' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /delete/i })).not.toBeInTheDocument();
   });
 
   it('lists archived categories separately, with restore', () => {
     render(
-      <CategoriesManager live={LIVE} archived={[category('Old Travel', 9, true)]} />,
+      <CategoriesManager
+        live={LIVE}
+        archived={[category('Old Travel', 9, true)]}
+        transactionCounts={{}}
+      />,
     );
 
     expect(screen.getByText('Archived')).toBeInTheDocument();
@@ -165,21 +169,54 @@ describe('CategoriesManager — archive', () => {
   });
 
   it('hides the archived section entirely when there is nothing archived', () => {
-    render(<CategoriesManager live={LIVE} archived={[]} />);
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
     expect(screen.queryByText('Archived')).not.toBeInTheDocument();
   });
 
   it('explains that archived names are free to reuse', () => {
     // The partial unique index allows it, and the owner has no way to know that
     // unless the UI says so.
-    render(<CategoriesManager live={LIVE} archived={[category('Old Travel', 9, true)]} />);
+    render(
+      <CategoriesManager
+        live={LIVE}
+        archived={[category('Old Travel', 9, true)]}
+        transactionCounts={{}}
+      />,
+    );
     expect(screen.getByText(/free to\s+reuse/i)).toBeInTheDocument();
+  });
+});
+
+describe('CategoriesManager — delete', () => {
+  it('disables delete for a category with transaction history, and explains why', () => {
+    render(
+      <CategoriesManager
+        live={LIVE}
+        archived={[]}
+        transactionCounts={{ [LIVE[0]!.id]: 3 }}
+      />,
+    );
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete Mortgage' });
+    expect(deleteButton).toBeDisabled();
+    expect(deleteButton).toHaveAttribute('title', expect.stringContaining('archive'));
+  });
+
+  it('deletes a category with no transactions after confirming', async () => {
+    render(<CategoriesManager live={LIVE} archived={[]} transactionCounts={{}} />);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Mortgage' }));
+    expect(screen.getByText('Delete "Mortgage"?')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteCategoryAction).toHaveBeenCalledWith(LIVE[0]!.id));
   });
 });
 
 describe('CategoriesManager — empty state', () => {
   it('says so rather than rendering an empty list', () => {
-    render(<CategoriesManager live={[]} archived={[]} />);
+    render(<CategoriesManager live={[]} archived={[]} transactionCounts={{}} />);
     expect(screen.getByText('No categories yet.')).toBeInTheDocument();
   });
 });

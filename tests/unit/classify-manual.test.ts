@@ -41,7 +41,6 @@ describe('reviewStatusForCorrection', () => {
 
   it('is needs_review with no category, for an ordinary type — never confirmed-but-uncategorized', () => {
     expect(reviewStatusForCorrection(null, 'expense')).toBe('needs_review');
-    expect(reviewStatusForCorrection(null, 'income')).toBe('needs_review');
     expect(reviewStatusForCorrection(null, 'refund')).toBe('needs_review');
     expect(reviewStatusForCorrection(null, 'fee')).toBe('needs_review');
   });
@@ -54,5 +53,9 @@ describe('reviewStatusForCorrection', () => {
 
   it('is confirmed for an exclusionary type even WITH a category — the two are independent', () => {
     expect(reviewStatusForCorrection('cat-1', 'transfer')).toBe('confirmed');
+  });
+
+  it('is confirmed with NO category when the type is income — the grid sums it by type, not category', () => {
+    expect(reviewStatusForCorrection(null, 'income')).toBe('confirmed');
   });
 });

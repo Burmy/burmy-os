@@ -1,10 +1,11 @@
 'use client';
 
-import { ArrowDown, ArrowUp, Archive, Pencil, Plus, RotateCcw } from 'lucide-react';
+import { ArrowDown, ArrowUp, Archive, Pencil, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { useOptimistic, useState, useTransition } from 'react';
 import { toast } from '@/components/ui/toast';
 
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
@@ -29,6 +30,7 @@ import type { ActionResult } from './action-result';
 import {
   archiveCategoryAction,
   createCategoryAction,
+  deleteCategoryAction,
   reorderCategoriesAction,
   restoreCategoryAction,
   updateCategoryAction,
@@ -60,12 +62,16 @@ const KIND_LABELS: Record<CategoryKind, string> = {
 export function CategoriesManager({
   live,
   archived,
+  transactionCounts,
 }: {
   readonly live: readonly FinanceCategory[];
   readonly archived: readonly FinanceCategory[];
+  /** Category id -> committed transaction count. Absent means 0. Delete is only offered at 0 — see `deleteCategoryAction`'s own doc comment for why. */
+  readonly transactionCounts: Readonly<Record<string, number>>;
 }): React.ReactElement {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<FinanceCategory | null>(null);
+  const [deleting, setDeleting] = useState<FinanceCategory | null>(null);
   const [pending, startTransition] = useTransition();
 
   /**
@@ -194,6 +200,13 @@ export function CategoriesManager({
               >
                 <Archive className="size-4" />
               </Button>
+
+              <DeleteCategoryButton
+                category={category}
+                count={transactionCounts[category.id] ?? 0}
+                pending={pending}
+                onRequestDelete={setDeleting}
+              />
             </li>
           ))}
         </ul>
@@ -223,12 +236,60 @@ export function CategoriesManager({
                   <RotateCcw className="size-4" />
                   Restore
                 </Button>
+
+                <DeleteCategoryButton
+                  category={category}
+                  count={transactionCounts[category.id] ?? 0}
+                  pending={pending}
+                  onRequestDelete={setDeleting}
+                />
               </li>
             ))}
           </ul>
         </section>
       ) : null}
+
+      <ConfirmDialog
+        open={deleting !== null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null);
+        }}
+        title={`Delete "${deleting?.name}"?`}
+        description="This category has no transactions, so nothing else is affected. This can't be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={() => {
+          if (!deleting) return;
+          run(() => deleteCategoryAction(deleting.id), `${deleting.name} deleted`);
+        }}
+      />
     </div>
+  );
+}
+
+function DeleteCategoryButton({
+  category,
+  count,
+  pending,
+  onRequestDelete,
+}: {
+  readonly category: FinanceCategory;
+  readonly count: number;
+  readonly pending: boolean;
+  readonly onRequestDelete: (category: FinanceCategory) => void;
+}): React.ReactElement {
+  const canDelete = count === 0;
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={`Delete ${category.name}`}
+      disabled={pending || !canDelete}
+      {...(canDelete ? {} : { title: `${count} transaction${count === 1 ? '' : 's'} — archive instead` })}
+      onClick={() => onRequestDelete(category)}
+    >
+      <Trash2 className="size-4" />
+    </Button>
   );
 }
 

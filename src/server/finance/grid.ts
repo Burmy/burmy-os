@@ -64,14 +64,18 @@ interface GridMonthRow extends GridRowTotals {
 }
 
 /**
- * `confirmed`/`auto`, non-exclusionary transactions with NO category should be
- * impossible under M7's invariant — but if one exists anyway (old data, a
- * future bug, a manual edit), the money is never dropped: it is already
- * counted in `totalExpenditureCents`/`incomeCents` above (grouped by TYPE, not
- * by category-cell membership), just absent from every category column since
- * there is no column to place it in. This is the count/amount that number
- * represents, so the UI can say so rather than let the totals and the visible
- * columns silently disagree.
+ * `confirmed`/`auto`, non-exclusionary, non-income transactions with NO
+ * category should be impossible under M7's invariant — but if one exists
+ * anyway (old data, a future bug, a manual edit), the money is never dropped:
+ * it is already counted in `totalExpenditureCents` above (grouped by TYPE,
+ * not by category-cell membership), just absent from every category column
+ * since there is no column to place it in. This is the count/amount that
+ * number represents, so the UI can say so rather than let the totals and the
+ * visible columns silently disagree.
+ *
+ * `income` is excluded from this bucket entirely: it never needs a category
+ * (see `reviewStatusForCorrection`), so a category-less income deposit is
+ * expected, not a discrepancy to flag.
  */
 interface UnreconciledSummary {
   readonly count: number;
@@ -102,7 +106,7 @@ function computeRowTotals(rowsInScope: readonly GridAggregateRow[]): GridRowTota
         amountCents: existing.amountCents + row.totalCents,
         txnCount: existing.txnCount + row.txnCount,
       };
-    } else {
+    } else if (row.transactionType !== 'income') {
       unreconciledCount += row.txnCount;
       unreconciledCents += row.totalCents;
     }

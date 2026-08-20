@@ -8,11 +8,12 @@ import {
   CATEGORY_KINDS,
   archiveCategory,
   createCategory,
+  deleteCategory,
   reorderCategories,
   restoreCategory,
   updateCategory,
 } from '@/server/db/finance/categories';
-import { DuplicateNameError, NotFoundError } from '@/server/db/finance/errors';
+import { CategoryInUseError, DuplicateNameError, NotFoundError } from '@/server/db/finance/errors';
 import { InvalidNameError, assertValidName, slugifyName } from '@/server/finance/taxonomy';
 import { type ActionResult, fail, ok } from './action-result';
 
@@ -38,6 +39,7 @@ function toResult(error: unknown): ActionResult {
     );
   }
   if (error instanceof NotFoundError) return fail(error.message);
+  if (error instanceof CategoryInUseError) return fail(error.message);
   throw error;
 }
 
@@ -85,11 +87,11 @@ export async function updateCategoryAction(id: string, formData: FormData): Prom
 }
 
 /**
- * Archive — never delete.
- *
- * Every transaction ever assigned to this category keeps pointing at it. Deleting
- * would set those `category_id`s to null and silently move real spending out of
- * its grid row. See categories.ts.
+ * Archive — the only option for a category with real transaction history.
+ * Every transaction ever assigned to it keeps pointing at it; deleting would
+ * set those `category_id`s to null and silently move real spending out of
+ * its grid row. `deleteCategoryAction` below covers the other case — a
+ * category with zero transactions, where there is nothing to orphan.
  */
 export async function archiveCategoryAction(id: string): Promise<ActionResult> {
   const owner = await requireOwner();
@@ -110,6 +112,21 @@ export async function restoreCategoryAction(id: string): Promise<ActionResult> {
 
   try {
     await restoreCategory(owner.userId, idSchema.parse(id));
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/settings/finance/categories');
+  revalidatePath('/finance/monthly');
+  return ok();
+}
+
+/** @throws nothing to the caller — CategoryInUseError becomes a field error via toResult(). */
+export async function deleteCategoryAction(id: string): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await deleteCategory(owner.userId, idSchema.parse(id));
   } catch (error) {
     return toResult(error);
   }

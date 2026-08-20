@@ -579,10 +579,11 @@ function classifyRow(
     };
   }
 
+  const transactionType = defaultTransactionType(fromDb(row.amountCents));
   return {
-    transactionType: defaultTransactionType(fromDb(row.amountCents)),
+    transactionType,
     typeSource: 'default',
-    reviewStatus: reviewStatusFor(categoryId, categorizationSource),
+    reviewStatus: reviewStatusFor(categoryId, categorizationSource, transactionType),
     viaLocalFallback: false,
   };
 }

@@ -57,12 +57,19 @@ export function isExclusionaryType(transactionType: string): boolean {
  * The result of an OWNER-DRIVEN category or type correction — never `'auto'`,
  * which is reserved for the system's own classification (M6). An owner acting
  * always produces either a resolved `'confirmed'` or an honest `'needs_review'`.
+ *
+ * `income` needs no category to be resolved, same as the exclusionary types:
+ * the grid's Income total sums by `transaction_type` alone, never by
+ * category — a category only matters for an opt-in breakdown by source
+ * (`kind: 'income'` categories), not to be counted at all.
  */
 export function reviewStatusForCorrection(
   categoryId: string | null,
   transactionType: string,
 ): 'confirmed' | 'needs_review' {
-  return categoryId !== null || isExclusionaryType(transactionType) ? 'confirmed' : 'needs_review';
+  return categoryId !== null || isExclusionaryType(transactionType) || transactionType === 'income'
+    ? 'confirmed'
+    : 'needs_review';
 }
 
 /**

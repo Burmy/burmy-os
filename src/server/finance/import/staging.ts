@@ -94,15 +94,22 @@ export function defaultTransactionType(amountCents: Cents): 'expense' | 'income'
 /**
  * `confirmed` — the OWNER picked this category (`categorizationSource ===
  * 'manual'`). `auto` — the system suggested it from merchant memory and
- * nothing overrode that. `needs_review` — no category at all. This is the
+ * nothing overrode that, OR the transaction needs no category at all.
+ * `needs_review` — no category, and one is actually needed. This is the
  * "obvious vs uncertain" split M6 exists to produce: an owner reviewing their
  * import only needs to look at `needs_review` rows.
+ *
+ * `income` is the one type that never needs a category to leave `needs_review`
+ * — see `reviewStatusForCorrection`'s own comment for why. A category-less
+ * income deposit is `auto`: nothing was actually suggested, but nothing needs
+ * the owner's attention either.
  */
 export function reviewStatusFor(
   categoryId: string | null,
   categorizationSource: 'manual' | 'merchant_memory' | null,
+  transactionType: 'expense' | 'income',
 ): 'confirmed' | 'auto' | 'needs_review' {
-  if (categoryId === null) return 'needs_review';
+  if (categoryId === null) return transactionType === 'income' ? 'auto' : 'needs_review';
   return categorizationSource === 'manual' ? 'confirmed' : 'auto';
 }
 

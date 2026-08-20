@@ -232,15 +232,17 @@ export async function updateTransactionType(
     // other side, and this transaction's own link is already cleared above.
     if (!counterpart) return;
 
+    const counterpartTransactionType = defaultTransactionType(fromDb(counterpart.amountCents));
     await tx
       .update(financeTransactions)
       .set({
-        transactionType: defaultTransactionType(fromDb(counterpart.amountCents)),
+        transactionType: counterpartTransactionType,
         typeSource: 'default',
         counterpartTransactionId: null,
         reviewStatus: reviewStatusFor(
           counterpart.categoryId,
           counterpart.categorizationSource as 'manual' | 'merchant_memory' | null,
+          counterpartTransactionType,
         ),
         updatedAt: new Date(),
       })

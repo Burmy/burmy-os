@@ -115,17 +115,26 @@ describe('parseBoaCardAddressHint', () => {
 
 describe('reviewStatusFor', () => {
   it('is needs_review with no category at all, regardless of source', () => {
-    expect(reviewStatusFor(null, null)).toBe('needs_review');
+    expect(reviewStatusFor(null, null, 'expense')).toBe('needs_review');
     // A source with no category is not a state staging ever produces, but the
     // function should still treat "no category" as the deciding fact.
-    expect(reviewStatusFor(null, 'merchant_memory')).toBe('needs_review');
+    expect(reviewStatusFor(null, 'merchant_memory', 'expense')).toBe('needs_review');
   });
 
   it('is confirmed when the OWNER picked the category', () => {
-    expect(reviewStatusFor('cat-1', 'manual')).toBe('confirmed');
+    expect(reviewStatusFor('cat-1', 'manual', 'expense')).toBe('confirmed');
   });
 
   it('is auto when merchant memory supplied the category and nothing overrode it', () => {
-    expect(reviewStatusFor('cat-1', 'merchant_memory')).toBe('auto');
+    expect(reviewStatusFor('cat-1', 'merchant_memory', 'expense')).toBe('auto');
+  });
+
+  it('is auto for income with no category — income never needs one to be resolved', () => {
+    expect(reviewStatusFor(null, null, 'income')).toBe('auto');
+  });
+
+  it('still respects an explicit category on income, same as expense', () => {
+    expect(reviewStatusFor('cat-1', 'manual', 'income')).toBe('confirmed');
+    expect(reviewStatusFor('cat-1', 'merchant_memory', 'income')).toBe('auto');
   });
 });

@@ -42,6 +42,21 @@ export class ImportNotReviewableError extends Error {
 }
 
 /**
+ * A category with real transaction history cannot be deleted — only
+ * archived. Deleting it would silently move that spending out of its grid
+ * row (`category_id` set null on delete). Archive is always available
+ * regardless of history; delete only when `transactionCount` is 0.
+ */
+export class CategoryInUseError extends Error {
+  constructor(readonly transactionCount: number) {
+    super(
+      `This category has ${transactionCount} transaction${transactionCount === 1 ? '' : 's'} — archive it instead of deleting.`,
+    );
+    this.name = 'CategoryInUseError';
+  }
+}
+
+/**
  * Is this a Postgres unique-constraint violation?
  *
  * ─────────────────────────────────────────────────────────────────────────────

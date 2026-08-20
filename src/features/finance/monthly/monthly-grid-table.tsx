@@ -1,5 +1,6 @@
 'use client';
 
+import { Columns3 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -13,6 +14,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Select,
   SelectContent,
@@ -43,6 +52,7 @@ import {
   updateTransactionTypeAction,
 } from '../transactions/actions';
 import { getCellDrillDownAction, type DrillDownResult } from './actions';
+import { setHiddenGridColumns } from './grid-columns-actions';
 
 type Selector = { readonly kind: 'category'; readonly categoryId: string } | { readonly kind: 'expenditure' } | { readonly kind: 'income' };
 
@@ -74,17 +84,38 @@ export function MonthlyGridTable({
   year,
   years,
   categories,
+  initialHiddenColumnIds,
 }: {
   readonly grid: MonthlyGrid;
   readonly year: number;
   readonly years: readonly number[];
   readonly categories: readonly FinanceCategory[];
+  readonly initialHiddenColumnIds: readonly string[];
 }): React.ReactElement {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [result, setResult] = useState<DrillDownResult | null>(null);
   const [pending, startTransition] = useTransition();
   const [, startEditTransition] = useTransition();
+  const [hiddenColumnIds, setHiddenColumnIds] = useState(() => new Set(initialHiddenColumnIds));
+
+  // Purely a display preference — every total below is still computed across
+  // ALL categories server-side (CLAUDE.md: the grid is a view, nothing here
+  // changes what it aggregates). Toggling instantly updates local state, then
+  // persists to the cookie in the background, same pattern as the sidebar's
+  // collapse toggle.
+  function toggleColumn(columnId: string): void {
+    const next = new Set(hiddenColumnIds);
+    if (next.has(columnId)) next.delete(columnId);
+    else next.add(columnId);
+    setHiddenColumnIds(next);
+    // Best-effort persistence, same reasoning as the sidebar's own toggle: the
+    // visual state above is already correct regardless of whether this
+    // succeeds.
+    setHiddenGridColumns([...next]).catch(() => {});
+  }
+
+  const visibleColumns = grid.columns.filter((column) => !hiddenColumnIds.has(column.id));
 
   function patchTransaction(id: string, patch: Partial<DrillDownTransaction>): void {
     setResult((prev) =>
@@ -188,13 +219,38 @@ export function MonthlyGridTable({
             ))}
           </SelectContent>
         </Select>
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8">
+              <Columns3 className="size-4" />
+              Columns
+              {hiddenColumnIds.size > 0 ? ` (${hiddenColumnIds.size} hidden)` : ''}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-80 overflow-y-auto">
+            <DropdownMenuLabel>Show columns</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {grid.columns.map((column) => (
+              <DropdownMenuCheckboxItem
+                key={column.id}
+                checked={!hiddenColumnIds.has(column.id)}
+                onSelect={(event) => event.preventDefault()}
+                onCheckedChange={() => toggleColumn(column.id)}
+              >
+                {column.name}
+                {column.archived ? ' (archived)' : ''}
+              </DropdownMenuCheckboxItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <Table>
         <TableHeader>
           <TableRow>
             <TableHead className={stickyMonthCell}>Month</TableHead>
-            {grid.columns.map((column) => (
+            {visibleColumns.map((column) => (
               <TableHead key={column.id} className="text-right whitespace-nowrap">
                 {column.name}
                 {column.archived ? ' (archived)' : ''}
@@ -211,7 +267,7 @@ export function MonthlyGridTable({
               <TableCell className={`text-muted-foreground whitespace-nowrap ${stickyMonthCell}`}>
                 {monthLabel(row.month)}
               </TableCell>
-              {grid.columns.map((column) => {
+              {visibleColumns.map((column) => {
                 const cell = row.cells[column.id];
                 return (
                   <TableCell key={column.id} className="tabular text-right whitespace-nowrap">
@@ -277,7 +333,7 @@ export function MonthlyGridTable({
 
           <TableRow className="bg-muted/40 border-t-2 font-semibold">
             <TableCell className={`bg-muted/40 ${stickyMonthCell}`}>Total</TableCell>
-            {grid.columns.map((column) => {
+            {visibleColumns.map((column) => {
               const cell = grid.yearTotal.cells[column.id];
               return (
                 <TableCell key={column.id} className="tabular text-right whitespace-nowrap">

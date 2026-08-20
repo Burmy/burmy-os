@@ -16,6 +16,7 @@ import {
 } from '@/server/db/finance/grid';
 import { listInProgressImports } from '@/server/db/finance/imports';
 import { getNeedsReviewCount } from '@/server/db/finance/transactions';
+import { readHiddenGridColumns } from '@/server/security/grid-columns';
 import {
   buildAnnualCategoryBreakdown,
   buildCategoryBreakdown,
@@ -115,6 +116,7 @@ export default async function MonthlyPage({
     dailyTotals,
     topExpenses,
     yearCategoryTotals,
+    hiddenGridColumnIds,
   ] = await Promise.all([
     listTransactionYears(owner.userId),
     listCategories(owner.userId, { includeArchived: true }),
@@ -129,6 +131,7 @@ export default async function MonthlyPage({
     // calendar year instead of a trailing 6-month window — the Year Overview's
     // annual category breakdown and Yearly Breakdown chart both read this.
     getCategoryTotalsForWindow(owner.userId, `${year}-01-01`, `${year + 1}-01-01`),
+    readHiddenGridColumns(),
   ]);
 
   const categoryMeta: GridCategoryMeta[] = categories.map((category) => ({
@@ -281,6 +284,7 @@ export default async function MonthlyPage({
               year={year}
               years={years}
               categories={categories.filter((category) => category.archivedAt === null)}
+              initialHiddenColumnIds={hiddenGridColumnIds}
             />
           </div>
         </>
