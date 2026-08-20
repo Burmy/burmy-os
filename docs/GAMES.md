@@ -195,15 +195,14 @@ network request. Everything around it stays pure and unit-testable without a net
 contract — a missing or wrong-typed field degrades to `null`, never a thrown error). This split
 mirrors Finance's own discipline of keeping the domain core free of I/O.
 
-That module also exports `scoreMatch`/`pickBestMatch` — asymmetric token-overlap scoring meant to rank
-RAWG results against the owner's typed title (deliberately scored against how much of the *candidate*
-title the query covers, so an entry like "Uncharted: Legacy of Thieves Collection - Uncharted 4" still
-matches "Uncharted 4" despite the collection-name prefix). Both are pure and unit-tested, but as of
-this writing neither is wired into the live add/edit form: the owner types a title, triggers a lookup,
-sees the raw RAWG result list, and clicks one to apply it (`applySuggestion` in
-`src/features/games/library/game-dialog.tsx`) — a manual search-and-pick, not an automatic best-match
-fill. `pickBestMatch` is available for a future "auto-suggest the top match" pass without needing new
-matching logic, but nothing calls it today.
+The add/edit form is a manual search-and-pick, not an automatic best-match fill: the owner types a
+title, triggers a lookup, sees the raw RAWG result list, and clicks one to apply it (`applySuggestion`
+in `src/features/games/library/game-dialog.tsx`). An earlier draft of this module also carried
+`scoreMatch`/`pickBestMatch` — asymmetric token-overlap scoring meant to auto-rank RAWG results against
+the owner's typed title, for a bulk auto-match flow that was descoped before it shipped. Nothing in the
+live form ever called either function, so both were deleted (final-review fix wave) rather than kept as
+code with no production caller — see CLAUDE.md's rule against speculative abstractions. Git history has
+the implementation if a future auto-suggest pass wants the starting point.
 
 ### `RAWG_API_KEY` is optional, and its absence is a normal state
 

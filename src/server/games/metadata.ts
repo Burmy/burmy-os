@@ -22,7 +22,6 @@ export interface GameSuggestion {
   readonly externalId: string;
   readonly title: string;
   readonly coverUrl: string | null;
-  readonly releaseYear: number | null;
   readonly genre: string | null;
   readonly developer: string | null;
   readonly publisher: string | null;
@@ -74,58 +73,15 @@ export function toSuggestions(payload: unknown): GameSuggestion[] {
     const record = entry as Record<string, unknown>;
     if (typeof record.name !== 'string' || record.id === undefined) return [];
 
-    const released = typeof record.released === 'string' ? Number(record.released.slice(0, 4)) : NaN;
-
     return [
       {
         externalId: String(record.id),
         title: record.name,
         coverUrl: typeof record.background_image === 'string' ? record.background_image : null,
-        releaseYear: Number.isFinite(released) ? released : null,
         genre: joinNames(record.genres),
         developer: firstName(record.developers),
         publisher: firstName(record.publishers),
       },
     ];
   });
-}
-
-function normalize(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[‘’']/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
-}
-
-/**
- * 0-1 similarity by token overlap, scored against the CANDIDATE's tokens.
- *
- * Deliberately asymmetric: the owner's log contains entries like "Uncharted:
- * Legacy of Thieves Collection - UNCHARTED 4: A Thief's End", where the extra
- * collection prefix is noise. Scoring "how much of the candidate did the query
- * cover" rather than plain Jaccard keeps that entry matching "Uncharted 4: A
- * Thief's End" instead of being penalized for the prefix.
- */
-export function scoreMatch(query: string, candidate: string): number {
-  const queryTokens = new Set(normalize(query).split(' ').filter(Boolean));
-  const candidateTokens = normalize(candidate).split(' ').filter(Boolean);
-  if (candidateTokens.length === 0 || queryTokens.size === 0) return 0;
-
-  const covered = candidateTokens.filter((token) => queryTokens.has(token)).length;
-  return covered / candidateTokens.length;
-}
-
-export function pickBestMatch(
-  query: string,
-  suggestions: readonly GameSuggestion[],
-): { readonly suggestion: GameSuggestion; readonly confidence: number } | null {
-  let best: { suggestion: GameSuggestion; confidence: number } | null = null;
-
-  for (const suggestion of suggestions) {
-    const confidence = scoreMatch(query, suggestion.title);
-    if (best === null || confidence > best.confidence) best = { suggestion, confidence };
-  }
-
-  return best;
 }

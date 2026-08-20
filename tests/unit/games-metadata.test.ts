@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSearchUrl, pickBestMatch, scoreMatch, toSuggestions } from '@/server/games/metadata';
+import { buildSearchUrl, toSuggestions } from '@/server/games/metadata';
 
 describe('buildSearchUrl', () => {
   it('encodes the query and attaches the key', () => {
@@ -30,7 +30,6 @@ describe('toSuggestions', () => {
       externalId: '1',
       title: 'Elden Ring',
       coverUrl: 'https://media.rawg.io/elden.jpg',
-      releaseYear: 2022,
       genre: 'Action, RPG',
       developer: 'FromSoftware',
       publisher: 'Bandai Namco',
@@ -46,40 +45,5 @@ describe('toSuggestions', () => {
     expect(toSuggestions(null)).toEqual([]);
     expect(toSuggestions({})).toEqual([]);
     expect(toSuggestions({ results: 'nope' })).toEqual([]);
-  });
-});
-
-describe('scoreMatch', () => {
-  it('scores an exact case-insensitive match highest', () => {
-    expect(scoreMatch('Elden Ring', 'elden ring')).toBe(1);
-  });
-
-  it('scores an unrelated title near zero', () => {
-    expect(scoreMatch('Elden Ring', 'FIFA 17')).toBeLessThan(0.3);
-  });
-
-  it('still scores well when the log title carries a collection prefix', () => {
-    // The real spreadsheet has entries shaped exactly like this.
-    const score = scoreMatch(
-      'Uncharted: Legacy of Thieves Collection - UNCHARTED 4: A Thief’s End',
-      'Uncharted 4: A Thief’s End',
-    );
-    expect(score).toBeGreaterThan(0.5);
-  });
-});
-
-describe('pickBestMatch', () => {
-  it('returns the highest-scoring suggestion with its confidence', () => {
-    const best = pickBestMatch('Elden Ring', [
-      { externalId: '1', title: 'Elden Ring II', coverUrl: null, releaseYear: null, genre: null, developer: null, publisher: null },
-      { externalId: '2', title: 'Elden Ring', coverUrl: null, releaseYear: null, genre: null, developer: null, publisher: null },
-    ]);
-
-    expect(best?.suggestion.externalId).toBe('2');
-    expect(best?.confidence).toBe(1);
-  });
-
-  it('returns null when there are no suggestions at all', () => {
-    expect(pickBestMatch('Anything', [])).toBeNull();
   });
 });

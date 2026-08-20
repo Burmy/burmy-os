@@ -2,13 +2,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-const setGameStatusAction = vi.fn(async () => ({ ok: true as const }));
 const deleteGameAction = vi.fn(async () => ({ ok: true as const }));
 const createGameAction = vi.fn(async () => ({ ok: true as const }));
 const updateGameAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/games/game-actions', () => ({
-  setGameStatusAction,
   deleteGameAction,
   createGameAction,
   updateGameAction,
@@ -92,6 +90,41 @@ describe('LibraryView', () => {
 
     expect(screen.getByText('Queued Game')).toBeInTheDocument();
     expect(screen.queryByText('Finished Game')).not.toBeInTheDocument();
+  });
+
+  it('filters by platform', async () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', title: 'Console Game', platform: 'ps5' }),
+          game({ id: 'b', title: 'Desktop Game', platform: 'steam' }),
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /^steam/i }));
+
+    expect(screen.getByText('Desktop Game')).toBeInTheDocument();
+    expect(screen.queryByText('Console Game')).not.toBeInTheDocument();
+  });
+
+  it('combines status and platform filters', async () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', title: 'Match', status: 'completed', platform: 'steam' }),
+          game({ id: 'b', title: 'Wrong status', status: 'backlog', platform: 'steam' }),
+          game({ id: 'c', title: 'Wrong platform', status: 'completed', platform: 'ps5' }),
+        ]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: /^completed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^steam/i }));
+
+    expect(screen.getByText('Match')).toBeInTheDocument();
+    expect(screen.queryByText('Wrong status')).not.toBeInTheDocument();
+    expect(screen.queryByText('Wrong platform')).not.toBeInTheDocument();
   });
 
   it('shows a searchable count that reflects the active filter', async () => {

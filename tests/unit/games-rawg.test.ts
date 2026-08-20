@@ -129,7 +129,6 @@ describe('searchGames', () => {
         externalId: '1',
         title: 'Elden Ring',
         coverUrl: 'https://media.rawg.io/elden.jpg',
-        releaseYear: 2022,
         genre: 'Action, RPG',
         developer: 'FromSoftware',
         publisher: 'Bandai Namco',
