@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSearchQuery, buildTimeToBeatQuery, coverUrl, toSuggestions, withPlaytime } from '@/server/games/metadata';
+import {
+  bestTitleMatch,
+  buildSearchQuery,
+  buildTimeToBeatQuery,
+  coverUrl,
+  type GameSuggestion,
+  metadataFieldsToFill,
+  normalizeGameTitle,
+  scoreTitleMatch,
+  type StoredGameMetadata,
+  toSuggestions,
+  withPlaytime,
+} from '@/server/games/metadata';
 
 describe('buildSearchQuery', () => {
   it('wraps the title in a search clause and requests the expected fields', () => {
@@ -150,5 +162,175 @@ describe('withPlaytime', () => {
     expect(withPlaytime(suggestions, null)).toEqual(suggestions);
     expect(withPlaytime(suggestions, 'nope')).toEqual(suggestions);
     expect(withPlaytime(suggestions, [{ game_id: 1942, normally: 'not a number' }])).toEqual(suggestions);
+  });
+});
+
+/**
+ * The functions below back `scripts/backfill-game-metadata.mjs`. Every title
+ * here is invented for the test — never a real title from the owner's
+ * library — per CLAUDE.md's "fixtures are never the owner's real data" rule,
+ * applied here even though this is a unit fixture, not tests/fixtures/.
+ */
+describe('normalizeGameTitle', () => {
+  it('lowercases and collapses whitespace', () => {
+    expect(normalizeGameTitle('  Quest   Of   Legends  ')).toBe('quest of legends');
+  });
+
+  it('strips punctuation entirely rather than turning it into a space run', () => {
+    expect(normalizeGameTitle("Quest's: Legend! (Remastered)")).toBe('quest s legend remastered');
+  });
+
+  it('strips combining diacritics left behind by NFKD normalization', () => {
+    expect(normalizeGameTitle('Pokémon Quest')).toBe('pokemon quest');
+  });
+});
+
+describe('scoreTitleMatch', () => {
+  it('is HIGH confidence for an identical title', () => {
+    expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends')).toEqual({ confidence: 'high', distance: 0 });
+  });
+
+  it('is HIGH confidence when only case, punctuation, or spacing differs', () => {
+    expect(scoreTitleMatch('quest of legends', 'Quest of Legends')).toMatchObject({ confidence: 'high' });
+    expect(scoreTitleMatch('Quest of Legends', 'Quest: of Legends!')).toMatchObject({ confidence: 'high' });
+  });
+
+  it('is HIGH confidence after stripping a trailing parenthetical store suffix', () => {
+    // Mirrors the real "(itch)" artifact documented in fix-game-platforms.mjs.
+    expect(scoreTitleMatch('Quest of Legends (itch)', 'Quest of Legends')).toMatchObject({ confidence: 'high' });
+    expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends (Steam Edition)')).toMatchObject({
+      confidence: 'high',
+    });
+  });
+
+  it('is LOW confidence for a remaster/edition suffix, never HIGH', () => {
+    // The exact risk CLAUDE.md and the task both call out: an HD remaster
+    // must never silently match the original release.
+    const score = scoreTitleMatch('Quest of Legends', 'Quest of Legends HD Remastered');
+    expect(score.confidence).toBe('low');
+  });
+
+  it('is LOW confidence for a numbered sequel matching its predecessor, never HIGH', () => {
+    const score = scoreTitleMatch('Quest of Legends', 'Quest of Legends 2');
+    expect(score.confidence).toBe('low');
+  });
+
+  it('is LOW confidence with a large distance for an unrelated title', () => {
+    const score = scoreTitleMatch('Quest of Legends', 'Farming Simulator');
+    expect(score.confidence).toBe('low');
+    expect(score.distance).toBeGreaterThan(0.5);
+  });
+});
+
+function suggestion(overrides: Partial<GameSuggestion> & { title: string }): GameSuggestion {
+  return {
+    externalId: '1',
+    coverUrl: null,
+    genre: null,
+    developer: null,
+    publisher: null,
+    metacritic: null,
+    averagePlaytimeHours: null,
+    esrbRating: null,
+    releaseYear: null,
+    ...overrides,
+  };
+}
+
+describe('bestTitleMatch', () => {
+  it('returns null for an empty candidate list — "no match" is distinct from "low confidence"', () => {
+    expect(bestTitleMatch('Quest of Legends', [])).toBeNull();
+  });
+
+  it('picks the exact match over closer-looking but inexact candidates', () => {
+    const candidates = [
+      suggestion({ externalId: '10', title: 'Quest of Legends II' }),
+      suggestion({ externalId: '11', title: 'Quest of Legends' }),
+      suggestion({ externalId: '12', title: 'Quest of Legends Remastered' }),
+    ];
+    const match = bestTitleMatch('Quest of Legends', candidates);
+    expect(match?.suggestion.externalId).toBe('11');
+    expect(match?.score.confidence).toBe('high');
+  });
+
+  it('picks the lowest-distance candidate when nothing is an exact match', () => {
+    const candidates = [
+      suggestion({ externalId: '20', title: 'Farming Simulator' }),
+      suggestion({ externalId: '21', title: 'Quest of Legend' }), // one character off
+    ];
+    const match = bestTitleMatch('Quest of Legends', candidates);
+    expect(match?.suggestion.externalId).toBe('21');
+    expect(match?.score.confidence).toBe('low');
+  });
+});
+
+describe('metadataFieldsToFill', () => {
+  const emptyCurrent: StoredGameMetadata = {
+    coverUrl: null,
+    genre: null,
+    metacritic: null,
+    averagePlaytimeHours: null,
+    esrbRating: null,
+  };
+
+  it('fills every null column when the suggestion has values for all of them', () => {
+    const fill = metadataFieldsToFill(
+      emptyCurrent,
+      suggestion({
+        title: 'Quest of Legends',
+        coverUrl: 'https://images.igdb.com/x.jpg',
+        genre: 'RPG',
+        metacritic: 88,
+        averagePlaytimeHours: 40,
+        esrbRating: 'T',
+      }),
+    );
+    expect(fill).toEqual({
+      coverUrl: 'https://images.igdb.com/x.jpg',
+      genre: 'RPG',
+      metacritic: 88,
+      averagePlaytimeHours: 40,
+      esrbRating: 'T',
+    });
+  });
+
+  it('never includes a column the owner already has a value for, even if IGDB disagrees', () => {
+    const current: StoredGameMetadata = {
+      ...emptyCurrent,
+      genre: 'Action', // owner-supplied or already-backfilled; must never be overwritten
+    };
+    const fill = metadataFieldsToFill(
+      current,
+      suggestion({ title: 'Quest of Legends', genre: 'RPG', metacritic: 88 }),
+    );
+    expect(fill).toEqual({ metacritic: 88 });
+    expect(fill.genre).toBeUndefined();
+  });
+
+  it('omits a field the suggestion has no value for, rather than writing null', () => {
+    const fill = metadataFieldsToFill(emptyCurrent, suggestion({ title: 'Quest of Legends', genre: 'RPG' }));
+    expect(fill).toEqual({ genre: 'RPG' });
+  });
+
+  it('returns an empty object when every column is already filled', () => {
+    const current: StoredGameMetadata = {
+      coverUrl: 'https://images.igdb.com/x.jpg',
+      genre: 'RPG',
+      metacritic: 88,
+      averagePlaytimeHours: 40,
+      esrbRating: 'T',
+    };
+    const fill = metadataFieldsToFill(
+      current,
+      suggestion({
+        title: 'Quest of Legends',
+        coverUrl: 'https://images.igdb.com/y.jpg',
+        genre: 'Action',
+        metacritic: 70,
+        averagePlaytimeHours: 10,
+        esrbRating: 'M',
+      }),
+    );
+    expect(fill).toEqual({});
   });
 });

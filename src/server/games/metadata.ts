@@ -229,3 +229,169 @@ export function withPlaytime(
     return hoursValue === undefined ? suggestion : { ...suggestion, averagePlaytimeHours: hoursValue };
   });
 }
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * MATCHING A STORED TITLE AGAINST AN IGDB SEARCH RESULT
+ *
+ * Used by `scripts/backfill-game-metadata.mjs`, the one-off script that fills
+ * cover art/genre/metacritic/playtime/ESRB for games already sitting in the
+ * library. Kept here rather than inline in the script because title matching
+ * against a third-party catalog is genuinely error-prone — an HD remaster can
+ * match a PSP original, a numbered sequel can match its predecessor — and
+ * getting the confidence classification right is worth a real, unit-tested
+ * function, not inline script logic nobody exercises against a fixture.
+ *
+ * The policy is deliberately conservative: HIGH confidence requires the
+ * normalized titles to be IDENTICAL, either directly or after stripping a
+ * single trailing parenthetical from either side (the owner's own data has
+ * store-suffix artifacts like "(itch)" — see fix-game-platforms.mjs's
+ * identical `stripTrailingParenthetical`, duplicated there for the same
+ * reason every script in this repo stays self-contained). Anything else — a
+ * close-but-not-exact title, a remaster/edition suffix, a roman-numeral-vs-
+ * digit mismatch, a colon-subtitle difference — is LOW confidence and is
+ * never auto-applied by the backfill script. The edit-distance ratio below
+ * exists only so the script can pick the single best candidate out of
+ * several IGDB search results to show the owner; it never promotes a fuzzy
+ * match to HIGH, no matter how small the distance.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+export interface TitleMatchScore {
+  readonly confidence: 'high' | 'low';
+  /** 0 = identical after normalization. Larger = less similar. Never used to grant HIGH confidence. */
+  readonly distance: number;
+}
+
+/** Lowercases, strips diacritics and punctuation, collapses whitespace. */
+export function normalizeGameTitle(title: string): string {
+  return title
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // combining diacritical marks left behind by NFKD
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+/** Strips a single trailing parenthetical, e.g. `"Vice City (itch)" -> "Vice City"`. */
+function stripTrailingParenthetical(title: string): string {
+  return title.replace(/\s*\([^)]*\)\s*$/, '').trim();
+}
+
+/**
+ * Classic Levenshtein edit distance between two strings. Used only as a
+ * ranking signal to pick the closest candidate among several IGDB results —
+ * never to grant HIGH confidence, see `scoreTitleMatch`. Iterative two-row
+ * form (no recursion, no full matrix) since titles are short and this may
+ * run over several IGDB candidates per game across 160 games.
+ */
+function levenshteinDistance(a: string, b: string): number {
+  let previousRow: number[] = Array.from({ length: b.length + 1 }, (_, index) => index);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    const currentRow: number[] = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const deletion = (previousRow[j] ?? 0) + 1;
+      const insertion = (currentRow[j - 1] ?? 0) + 1;
+      const substitution = (previousRow[j - 1] ?? 0) + cost;
+      currentRow.push(Math.min(deletion, insertion, substitution));
+    }
+    previousRow = currentRow;
+  }
+
+  return previousRow[b.length] ?? 0;
+}
+
+/**
+ * Scores one IGDB candidate title against the title stored in `games`. See
+ * the section header above for the confidence policy: HIGH only for an
+ * identical normalized title (direct, or after stripping one trailing
+ * parenthetical from either side); everything else is LOW.
+ */
+export function scoreTitleMatch(storedTitle: string, candidateTitle: string): TitleMatchScore {
+  const normalizedStored = normalizeGameTitle(storedTitle);
+  const normalizedCandidate = normalizeGameTitle(candidateTitle);
+  if (normalizedStored === normalizedCandidate) return { confidence: 'high', distance: 0 };
+
+  const strippedStored = normalizeGameTitle(stripTrailingParenthetical(storedTitle));
+  const strippedCandidate = normalizeGameTitle(stripTrailingParenthetical(candidateTitle));
+  if (strippedStored !== '' && strippedStored === strippedCandidate) {
+    return { confidence: 'high', distance: 0 };
+  }
+
+  const distance = levenshteinDistance(normalizedStored, normalizedCandidate);
+  const maxLength = Math.max(normalizedStored.length, normalizedCandidate.length, 1);
+  return { confidence: 'low', distance: distance / maxLength };
+}
+
+export interface BestTitleMatch {
+  readonly suggestion: GameSuggestion;
+  readonly score: TitleMatchScore;
+}
+
+/**
+ * Picks the single best-scoring candidate out of an IGDB search result list.
+ * "Best" is the lowest `distance` (0 = exact); ties keep whichever candidate
+ * IGDB returned first (its own relevance order). Returns `null` for an empty
+ * candidate list — "no match found" is a distinct, separately-reported
+ * outcome from "matched, but low confidence."
+ */
+export function bestTitleMatch(storedTitle: string, candidates: readonly GameSuggestion[]): BestTitleMatch | null {
+  let best: BestTitleMatch | null = null;
+  for (const suggestion of candidates) {
+    const score = scoreTitleMatch(storedTitle, suggestion.title);
+    if (best === null || score.distance < best.score.distance) {
+      best = { suggestion, score };
+    }
+  }
+  return best;
+}
+
+/** The five columns the backfill script is allowed to touch, as currently stored. */
+export interface StoredGameMetadata {
+  readonly coverUrl: string | null;
+  readonly genre: string | null;
+  readonly metacritic: number | null;
+  readonly averagePlaytimeHours: number | null;
+  readonly esrbRating: string | null;
+}
+
+/** Only the columns that should actually be written — see `metadataFieldsToFill`. */
+export interface MetadataFill {
+  readonly coverUrl?: string;
+  readonly genre?: string;
+  readonly metacritic?: number;
+  readonly averagePlaytimeHours?: number;
+  readonly esrbRating?: string;
+}
+
+/**
+ * Which of the five backfillable columns should actually be written for one
+ * game: only a column that is CURRENTLY NULL in the database, and only when
+ * the matched IGDB suggestion has a real (non-null) value for it. Never
+ * includes a column the owner already has a value for, regardless of what
+ * IGDB returns — this is the code-level enforcement of CLAUDE.md's "only
+ * fill columns that are currently NULL" requirement, so the backfill script
+ * itself never has to remember that rule at every call site.
+ *
+ * Built with `if` statements into a mutable local object, not conditional
+ * spreads — `exactOptionalPropertyTypes` loses precision once more than two
+ * or three optional fields are assembled from independent conditions in one
+ * object literal (see CLAUDE.md's gotcha on M7's review filters); this is
+ * the same fix applied here for the same reason. `MetadataFill`'s own fields
+ * are `readonly` (it's a return-value contract), so building it needs a
+ * separate mutable shape, per that same documented pattern.
+ */
+export function metadataFieldsToFill(current: StoredGameMetadata, suggestion: GameSuggestion): MetadataFill {
+  const fill: { -readonly [K in keyof MetadataFill]: MetadataFill[K] } = {};
+  if (current.coverUrl === null && suggestion.coverUrl !== null) fill.coverUrl = suggestion.coverUrl;
+  if (current.genre === null && suggestion.genre !== null) fill.genre = suggestion.genre;
+  if (current.metacritic === null && suggestion.metacritic !== null) fill.metacritic = suggestion.metacritic;
+  if (current.averagePlaytimeHours === null && suggestion.averagePlaytimeHours !== null) {
+    fill.averagePlaytimeHours = suggestion.averagePlaytimeHours;
+  }
+  if (current.esrbRating === null && suggestion.esrbRating !== null) fill.esrbRating = suggestion.esrbRating;
+  return fill;
+}
