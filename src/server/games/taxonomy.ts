@@ -21,10 +21,28 @@ export const PLATFORM_LABELS: Record<GamePlatform, string> = {
   ps5: 'PS5',
   ps4: 'PS4',
   psp: 'PSP',
-  steam: 'Steam',
+  // "Steam / PC" — the owner's library has zero `pc` rows (Steam covers the
+  // whole PC library in practice) and the add/edit dialog no longer offers
+  // `pc` as an option (see PLATFORM_PICKER_OPTIONS below), so this label
+  // absorbs both concepts into the one platform that is actually used. `pc`
+  // stays in the enum/type and keeps its own plain "PC" label below — a
+  // hypothetical existing `pc` row still renders a sensible label rather than
+  // an undefined `Record` lookup; dropping a Postgres enum value needs a
+  // migration and there is no value in it for zero real rows.
+  steam: 'Steam / PC',
   pc: 'PC',
   other: 'Other',
 };
+
+/**
+ * The platform options offered when adding or editing a game — `GAME_PLATFORMS`
+ * minus `pc`, so a new game can't be filed under a category that now
+ * duplicates "Steam / PC" above. This does NOT remove `pc` from the enum, the
+ * type, or `PLATFORM_LABELS`: it only narrows what the picker offers going
+ * forward, leaving any existing `pc` row (and the database column itself)
+ * untouched.
+ */
+export const PLATFORM_PICKER_OPTIONS = GAME_PLATFORMS.filter((platform) => platform !== 'pc');
 
 export const STATUS_LABELS: Record<GameStatus, string> = {
   backlog: 'Backlog',

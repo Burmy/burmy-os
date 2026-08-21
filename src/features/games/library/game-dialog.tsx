@@ -23,9 +23,9 @@ import type { Game } from '@/server/db/games/games';
 import { hours, toHoursInput } from '@/server/games/hours';
 import {
   GAME_OWNERSHIPS,
-  GAME_PLATFORMS,
   GAME_STATUSES,
   PLATFORM_LABELS,
+  PLATFORM_PICKER_OPTIONS,
   STATUS_LABELS,
 } from '@/server/games/taxonomy';
 import type { GameSuggestion } from '@/server/games/metadata';
@@ -268,7 +268,13 @@ export function GameDialog({
                 label="Platform"
                 value={platform}
                 onChange={(value) => setPlatform(value as typeof platform)}
-                options={GAME_PLATFORMS.map((value) => ({ value, label: PLATFORM_LABELS[value] }))}
+                // `pc` is excluded going forward (see PLATFORM_PICKER_OPTIONS),
+                // but a hypothetical EXISTING `pc` game must still show its real
+                // platform when edited rather than a blank Select whose current
+                // value matches no item in the list.
+                options={(platform === 'pc' ? [...PLATFORM_PICKER_OPTIONS, 'pc' as const] : PLATFORM_PICKER_OPTIONS).map(
+                  (value) => ({ value, label: PLATFORM_LABELS[value] }),
+                )}
               />
               <FieldSelect
                 id="status"

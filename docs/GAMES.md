@@ -43,7 +43,7 @@ guess.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `title` | text, not null | |
-| `platform` | enum, not null, default `other` | `ps5 \| ps4 \| psp \| steam \| pc \| other` |
+| `platform` | enum, not null, default `other` | `ps5 \| ps4 \| psp \| steam \| pc \| other`. `pc` is displayed as "PC" but is no longer OFFERED in the add/edit picker — see below |
 | `developer`, `publisher` | text | |
 | `ownership` | enum, nullable | `physical \| digital` |
 | `price_cents` | signed bigint | Same convention as `finance_transactions.amount_cents`. No FK to Finance — see "Out of scope" |
@@ -74,6 +74,17 @@ actually used to type columns. This is a deliberate boundary, not an oversight: 
 maps directly, and importing them from the data-access layer would drag `getDb()`/drizzle into the
 browser bundle along with them. It is the kind of file someone "tidies up" by merging into the DAL —
 don't; the split is what keeps the browser bundle server-code-free.
+
+`PLATFORM_LABELS.steam` reads **"Steam / PC"** — the owner's library has zero `pc` rows in practice
+(Steam covers the whole PC library), and `PLATFORM_PICKER_OPTIONS` (`GAME_PLATFORMS` minus `pc`) is
+what the add/edit dialog's platform picker actually offers, so a new game can never be filed under a
+category that would only duplicate it. `pc` itself is untouched in the enum, the type, and
+`PLATFORM_LABELS` (still plain "PC") — dropping a Postgres enum value needs a migration for zero real
+rows of benefit, and a hypothetical existing `pc` row must still resolve to a real label rather than
+an `undefined` `Record` lookup. The library's filter chips go one step further: a status or platform
+with zero games in the library renders no chip at all (not even an inactive, greyed-out "PC 0") —
+`LibraryView` filters `GAME_STATUSES`/`GAME_PLATFORMS` down to values with a nonzero count before
+mapping them to chips.
 
 ### Hours are one number, stored as tenths — never a float
 

@@ -147,6 +147,34 @@ describe('LibraryView', () => {
     expect(screen.queryByText('Finished Game')).not.toBeInTheDocument();
   });
 
+  it('does not render a platform filter chip for a platform with zero games', () => {
+    render(<LibraryView games={[game({ id: 'a', platform: 'ps5' })]} />);
+
+    expect(screen.getByRole('button', { name: /^all platforms/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^ps5/i })).toBeInTheDocument();
+    // steam, psp, pc, other all have zero games in this library — none of
+    // their chips should exist at all, not just be inactive.
+    expect(screen.queryByRole('button', { name: /^steam/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^psp/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^pc/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^other/i })).not.toBeInTheDocument();
+  });
+
+  it('does not render a status filter chip for a status with zero games', () => {
+    render(<LibraryView games={[game({ id: 'a', status: 'completed' })]} />);
+
+    expect(screen.getByRole('button', { name: /^all\s/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^completed/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^paused/i })).not.toBeInTheDocument();
+  });
+
+  it('labels the steam platform chip "Steam / PC"', () => {
+    render(<LibraryView games={[game({ id: 'a', platform: 'steam' })]} />);
+    expect(screen.getByRole('button', { name: /^steam \/ pc/i })).toBeInTheDocument();
+  });
+
   it('tells the owner the library is empty rather than rendering a blank grid', () => {
     render(<LibraryView games={[]} />);
     expect(screen.getByText(/no games yet/i)).toBeInTheDocument();

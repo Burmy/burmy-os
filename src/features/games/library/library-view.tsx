@@ -112,7 +112,9 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
 
         <div className="flex flex-wrap gap-1">
           <FilterChip label="All" count={games.length} active={status === 'all'} onClick={() => setStatus('all')} />
-          {GAME_STATUSES.map((value) => (
+          {/* A status with zero games in the library is noise, not a real filter —
+              same principle as the platform chips below. */}
+          {GAME_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
             <FilterChip
               key={value}
               label={STATUS_LABELS[value]}
@@ -130,7 +132,10 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
             active={platform === 'all'}
             onClick={() => setPlatform('all')}
           />
-          {GAME_PLATFORMS.map((value) => (
+          {/* Only platforms the owner actually has games on — a zero-count chip
+              like "PC 0" is noise the owner has to read past, not a useful
+              filter (steam absorbs the real PC library; see PLATFORM_LABELS). */}
+          {GAME_PLATFORMS.filter((value) => (platformCounts.get(value) ?? 0) > 0).map((value) => (
             <FilterChip
               key={value}
               label={PLATFORM_LABELS[value]}
