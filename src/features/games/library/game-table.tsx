@@ -1,5 +1,6 @@
 'use client';
 
+import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
 import { StatusBadge } from '@/components/games/status-badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -44,6 +45,7 @@ export function GameTable({
           <TableHead className="text-right">Year</TableHead>
           <TableHead className="text-right">Achievements</TableHead>
           <TableHead>Rating</TableHead>
+          <TableHead>Platinum</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -84,6 +86,19 @@ export function GameTable({
             </TableCell>
             <TableCell>
               <RatingStars rating={game.rating} />
+            </TableCell>
+            <TableCell>
+              {/* PlatinumBadge is icon-only and aria-hidden by design (the
+                  card view folds its meaning into the card's own aria-label
+                  instead) — this sr-only text is the table view's own
+                  equivalent, since a table cell has no such wrapper to fold
+                  it into. */}
+              {game.platinum ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <PlatinumBadge />
+                  <span className="sr-only">Platinum</span>
+                </span>
+              ) : null}
             </TableCell>
           </TableRow>
         ))}

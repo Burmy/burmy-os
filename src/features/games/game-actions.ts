@@ -36,6 +36,13 @@ const gameSchema = z.object({
   coverUrl: z.string().url().max(2000).optional(),
   genre: z.string().trim().max(200).optional(),
   notes: z.string().trim().max(2000).optional(),
+  // The owner's own claim, not third-party data — a real HTML checkbox, whose
+  // presence in FormData (any non-empty value) means "checked." Its ABSENCE
+  // (unchecked) is handled below in `parse()`, not here: `.optional()` alone
+  // would let an omitted key mean "leave unchanged" the way it does for every
+  // text field, which is wrong for a checkbox — see the comment at the
+  // assignment site.
+  platinum: z.coerce.boolean().optional(),
   // Read-only third-party facts filled by the metadata picker only — no
   // hand-editable control exists for these in the dialog.
   metacritic: z.coerce.number().int().min(0).max(100).optional(),
@@ -110,6 +117,7 @@ function parse(formData: FormData, mode: 'create' | 'update'): GameInput {
     coverUrl: text(formData, 'coverUrl'),
     genre: text(formData, 'genre'),
     notes: text(formData, 'notes'),
+    platinum: text(formData, 'platinum'),
     metacritic: text(formData, 'metacritic'),
     averagePlaytimeHours: text(formData, 'averagePlaytimeHours'),
     esrbRating: text(formData, 'esrbRating'),
@@ -119,6 +127,17 @@ function parse(formData: FormData, mode: 'create' | 'update'): GameInput {
     -readonly [K in keyof GameInput]: GameInput[K];
   } = { title: raw.title, platform: raw.platform, status: raw.status };
   const clearing = mode === 'update';
+
+  // Unconditional, in BOTH modes — unlike every field below. An unchecked
+  // checkbox submits no "platinum" key in FormData at all (see game-dialog.tsx),
+  // so there is no "the owner didn't touch this" state to preserve the way
+  // `clearing` distinguishes for text/select fields: every submit reasserts
+  // the owner's current claim, checked or not. Gating this behind `clearing`
+  // the way the fields below are gated would mean a platinum, once set, could
+  // never be turned back off — a later submit with the box unchecked would
+  // omit the key and this function would never assign `false` on create mode,
+  // and CREATE has no `clearing` at all in the pattern below.
+  input.platinum = raw.platinum ?? false;
 
   if (raw.developer !== undefined) input.developer = raw.developer;
   else if (clearing) input.developer = null;

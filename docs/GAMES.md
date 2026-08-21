@@ -53,6 +53,10 @@ guess.
 | `first_played_year` | smallint, nullable | Sparse by design |
 | `achievements_unlocked`, `achievements_total` | smallint, nullable | Counts, not a checklist — see below |
 | `cover_url`, `genre` | text, nullable | Populated by hand or from an IGDB suggestion |
+| `platinum` | boolean, not null, default `false` | The owner's own claim, not derived from achievement counts — see "Platinum" below |
+| `metacritic` | smallint, nullable | IGDB's `aggregated_rating`. Read-only, filled only from a metadata suggestion |
+| `average_playtime_hours` | smallint, nullable | IGDB's `game_time_to_beats.normally`, whole hours. A third-party estimate, not the owner's measured time — deliberately not tenths |
+| `esrb_rating` | text, nullable | Read-only, filled only from a metadata suggestion |
 | `notes` | text, nullable | Free text — carries nuance the schema deliberately doesn't model, e.g. "6h of that was the DLC" |
 
 **Uniqueness is case-insensitive per platform**: `(owner_id, lower(title), platform)`. The same title
@@ -108,6 +112,21 @@ cross-referenced with an actual purchase transaction. See "Out of scope" below.
 `achievements_unlocked` / `achievements_total` are two `smallint` columns, filled in by hand. There is
 no per-achievement child table anywhere in the schema — the source spreadsheet's "Trophies" column was
 always a single number, never a list, and the module doesn't invent structure the data never had.
+
+### Platinum is the owner's own claim, never derived
+
+`platinum` is a plain `boolean`, edited via a checkbox in the add/edit dialog — not computed from
+`achievementsUnlocked === achievementsTotal`. Two reasons: the source spreadsheet only ever recorded
+trophies *earned*, never the total, so a platinum could not be derived for any of the 160 imported
+games even retroactively; and on Steam, 100% achievement completion is not a platinum at all — the
+concept is PlayStation-specific and has no Steam equivalent to derive it from.
+
+The Server Action path (`createGameAction`/`updateGameAction` in `game-actions.ts`) treats this field
+differently from every other optional field `parse()` handles: an HTML checkbox submits **no** key in
+`FormData` at all when unchecked, so `platinum` is written unconditionally on every submit, in both
+create and update, rather than following the create-omits/update-clears-to-null pattern the rest of
+`parse()` uses. Gating it behind that pattern would mean a platinum, once set, could never be turned
+back off from the editor.
 
 ---
 

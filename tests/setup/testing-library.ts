@@ -23,3 +23,25 @@ import { afterEach } from 'vitest';
 afterEach(() => {
   if (typeof document !== 'undefined') cleanup();
 });
+
+/**
+ * jsdom does not implement `ResizeObserver` at all (by design — it has no
+ * real layout engine to observe). Radix's `Checkbox` mounts a hidden native
+ * "bubble input" (so a checked/unchecked state posts through real FormData —
+ * see the Games platinum checkbox) and unconditionally calls
+ * `@radix-ui/react-use-size`'s `useSize`, which constructs a `ResizeObserver`
+ * on mount with no feature-detection. Without this polyfill, EVERY component
+ * test that renders a `<Checkbox>` throws `ReferenceError: ResizeObserver is
+ * not defined` — first caught by `games-library-view.test.tsx` opening the
+ * game editor dialog. The observer's real behavior (reporting size changes)
+ * is never asserted on in this suite, so a no-op stub is sufficient; this is
+ * not testing layout, only that the component tree mounts.
+ */
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserverPolyfill {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  globalThis.ResizeObserver = ResizeObserverPolyfill as unknown as typeof ResizeObserver;
+}

@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, useTransition } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -296,6 +297,23 @@ export function GameDialog({
               />
               <Field id="achievementsUnlocked" label="Achievements earned" defaultValue={game?.achievementsUnlocked ?? ''} placeholder="42" />
               <Field id="achievementsTotal" label="Achievements total" defaultValue={game?.achievementsTotal ?? ''} placeholder="54" />
+              {/*
+               * Radix's Checkbox renders a hidden native input mirroring its
+               * state (`name`/`value` bubble through to real FormData), so an
+               * UNCHECKED box omits the "platinum" key entirely — same as a
+               * plain HTML checkbox. `parse()` in game-actions.ts relies on
+               * exactly that to tell "not earned" apart from "not touched."
+               * Uncontrolled (`defaultChecked`, not `checked`/`onCheckedChange`)
+               * like the other plain `Field`s above, unlike platform/status
+               * (which need controlled state only because Radix's Select does
+               * not post a native form value at all).
+               */}
+              <div className="flex items-center gap-2">
+                <Checkbox id="platinum" name="platinum" value="true" defaultChecked={game?.platinum ?? false} />
+                <Label htmlFor="platinum" className="cursor-pointer font-normal">
+                  Platinum trophy earned
+                </Label>
+              </div>
               <Field id="priceDollars" label="Price paid" defaultValue={game?.priceCents == null ? '' : (game.priceCents / 100).toFixed(2)} placeholder="59.99" />
               <Field id="genre" label="Genre" value={genre} onChange={setGenre} placeholder="Action RPG" />
               <Field id="developer" label="Developer" value={developer} onChange={setDeveloper} />

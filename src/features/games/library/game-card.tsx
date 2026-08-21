@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { Gamepad2 } from 'lucide-react';
 
+import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
 import { StatusBadge } from '@/components/games/status-badge';
 import { cn } from '@/lib/utils';
@@ -36,8 +37,10 @@ export function GameCard({
       // signal (a colored badge) with no other channel for a screen-reader
       // user tabbing the gallery — unlike the table view, which exposes
       // status in its own dedicated "Status" cell. So the name is title plus
-      // status, and nothing else from the card's remaining content.
-      aria-label={`${game.title} — ${STATUS_LABELS[game.status]}`}
+      // status (plus platinum, when earned — the badge itself is
+      // `aria-hidden` and this is its only accessible signal), and nothing
+      // else from the card's remaining content.
+      aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}`}
       onClick={() => onOpen(game)}
       className={cn(
         'group focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left',
@@ -61,6 +64,11 @@ export function GameCard({
         <div className="absolute top-2 left-2">
           <StatusBadge status={game.status} />
         </div>
+        {game.platinum ? (
+          <div className="absolute top-2 right-2">
+            <PlatinumBadge />
+          </div>
+        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-3">
