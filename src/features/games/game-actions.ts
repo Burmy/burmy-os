@@ -36,6 +36,11 @@ const gameSchema = z.object({
   coverUrl: z.string().url().max(2000).optional(),
   genre: z.string().trim().max(200).optional(),
   notes: z.string().trim().max(2000).optional(),
+  // Read-only third-party facts filled by the metadata picker only — no
+  // hand-editable control exists for these in the dialog.
+  metacritic: z.coerce.number().int().min(0).max(100).optional(),
+  averagePlaytimeHours: z.coerce.number().int().min(0).max(1000).optional(),
+  esrbRating: z.string().trim().max(50).optional(),
 });
 
 function toResult(error: unknown): ActionResult {
@@ -105,6 +110,9 @@ function parse(formData: FormData, mode: 'create' | 'update'): GameInput {
     coverUrl: text(formData, 'coverUrl'),
     genre: text(formData, 'genre'),
     notes: text(formData, 'notes'),
+    metacritic: text(formData, 'metacritic'),
+    averagePlaytimeHours: text(formData, 'averagePlaytimeHours'),
+    esrbRating: text(formData, 'esrbRating'),
   });
 
   const input: {
@@ -138,6 +146,15 @@ function parse(formData: FormData, mode: 'create' | 'update'): GameInput {
 
   if (raw.genre !== undefined) input.genre = raw.genre;
   else if (clearing) input.genre = null;
+
+  if (raw.metacritic !== undefined) input.metacritic = raw.metacritic;
+  else if (clearing) input.metacritic = null;
+
+  if (raw.averagePlaytimeHours !== undefined) input.averagePlaytimeHours = raw.averagePlaytimeHours;
+  else if (clearing) input.averagePlaytimeHours = null;
+
+  if (raw.esrbRating !== undefined) input.esrbRating = raw.esrbRating;
+  else if (clearing) input.esrbRating = null;
 
   if (raw.notes !== undefined) input.notes = raw.notes;
   else if (clearing) input.notes = null;

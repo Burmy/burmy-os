@@ -1,8 +1,8 @@
 'use client';
 
 import Image from 'next/image';
-import { Search, Trash2 } from 'lucide-react';
-import { useState, useTransition } from 'react';
+import { Loader2, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
@@ -41,13 +41,25 @@ import { searchGameMetadataAction } from '../metadata-actions';
  */
 const OWNERSHIP_UNSET = 'unset';
 
+const SEARCH_DEBOUNCE_MS = 300;
+const SEARCH_MIN_LENGTH = 3;
+
+type SearchStatus = 'idle' | 'loading' | 'results' | 'empty';
+
 /**
  * Add or edit one game.
  *
- * Metadata lookup is opt-in per game via the Search button rather than firing
- * on every keystroke: it is a third-party network call, the owner often knows
- * the exact title already, and an unprompted autocomplete that silently
- * overwrites a hand-typed developer field is worse than a button.
+ * Metadata lookup is search-as-you-type: debounced 300ms after the last
+ * keystroke, minimum 3 characters, with each new keystroke superseding
+ * whatever request came before it. Picking a result fills cover art, genre,
+ * developer and publisher — but only into a field that is still EMPTY.
+ * `coverUrl`/`genre`/`developer`/`publisher` are the owner's own editable
+ * fields (a hand-typed genre must never be silently replaced by IGDB's), so
+ * once one holds a value — hand-typed, loaded from an existing game, or
+ * filled by an earlier pick — a later pick leaves it alone. `metacritic`,
+ * `averagePlaytimeHours` and `esrbRating` have no hand-editable control at
+ * all (read-only third-party facts), so there is nothing of the owner's to
+ * protect there and they always take the latest pick's value.
  */
 export function GameDialog({
   game,
@@ -65,28 +77,79 @@ export function GameDialog({
   const [genre, setGenre] = useState(game?.genre ?? '');
   const [developer, setDeveloper] = useState(game?.developer ?? '');
   const [publisher, setPublisher] = useState(game?.publisher ?? '');
+  const [metacritic, setMetacritic] = useState<number | null>(game?.metacritic ?? null);
+  const [averagePlaytimeHours, setAveragePlaytimeHours] = useState<number | null>(
+    game?.averagePlaytimeHours ?? null,
+  );
+  const [esrbRating, setEsrbRating] = useState<string | null>(game?.esrbRating ?? null);
   const [title, setTitle] = useState(game?.title ?? '');
   const [suggestions, setSuggestions] = useState<readonly GameSuggestion[]>([]);
+  const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, startTransition] = useTransition();
-  const [searching, startSearch] = useTransition();
+  const [, startSearch] = useTransition();
 
-  function lookUp(): void {
-    startSearch(async () => {
-      const results = await searchGameMetadataAction(title);
-      setSuggestions(results);
-      if (results.length === 0) toast.error('No matches found — fill the details in by hand.');
-    });
-  }
+  // Set right before `setTitle` inside `applySuggestion`, so the debounce
+  // effect below can tell "the title changed because a pick just normalized
+  // it" apart from "the owner typed another character" and skip firing a
+  // redundant search for the former.
+  const suppressNextSearchRef = useRef(false);
+
+  const belowMinLength = title.trim().length < SEARCH_MIN_LENGTH;
+  // Derived at render time rather than cleared with a synchronous setState
+  // at the top of the effect below (that pattern trips
+  // `react-hooks/set-state-in-effect`'s cascading-render check) — a
+  // too-short title has nothing to schedule, so there is no effect-shaped
+  // work here at all, only a display rule.
+  const visibleSuggestions = belowMinLength ? [] : suggestions;
+  const visibleSearchStatus: SearchStatus = belowMinLength ? 'idle' : searchStatus;
+
+  useEffect(() => {
+    if (suppressNextSearchRef.current) {
+      suppressNextSearchRef.current = false;
+      return;
+    }
+
+    if (title.trim().length < SEARCH_MIN_LENGTH) return;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setSearchStatus('loading');
+      startSearch(async () => {
+        const results = await searchGameMetadataAction(title);
+        // Server Actions don't expose their own transport for a real
+        // network-level abort, so this guard — not the AbortController
+        // itself — is what actually stops a stale response (from a request
+        // a newer keystroke already superseded) from overwriting fresher
+        // results. The controller still exists so cancellation has one
+        // mechanism (`controller.abort()`, in the cleanup below), the same
+        // shape it would take against a plain fetch.
+        if (controller.signal.aborted) return;
+        setSuggestions(results);
+        setSearchStatus(results.length === 0 ? 'empty' : 'results');
+      });
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [title, startSearch]);
 
   function applySuggestion(suggestion: GameSuggestion): void {
+    suppressNextSearchRef.current = true;
     setTitle(suggestion.title);
-    if (suggestion.coverUrl !== null) setCoverUrl(suggestion.coverUrl);
-    if (suggestion.genre !== null) setGenre(suggestion.genre);
-    if (suggestion.developer !== null) setDeveloper(suggestion.developer);
-    if (suggestion.publisher !== null) setPublisher(suggestion.publisher);
+    if (coverUrl === '' && suggestion.coverUrl !== null) setCoverUrl(suggestion.coverUrl);
+    if (genre === '' && suggestion.genre !== null) setGenre(suggestion.genre);
+    if (developer === '' && suggestion.developer !== null) setDeveloper(suggestion.developer);
+    if (publisher === '' && suggestion.publisher !== null) setPublisher(suggestion.publisher);
+    // Read-only, never hand-typed — always reflect the latest pick.
+    setMetacritic(suggestion.metacritic);
+    setAveragePlaytimeHours(suggestion.averagePlaytimeHours);
+    setEsrbRating(suggestion.esrbRating);
     setSuggestions([]);
+    setSearchStatus('idle');
   }
 
   function submit(formData: FormData): void {
@@ -97,6 +160,9 @@ export function GameDialog({
     formData.set('status', status);
     formData.set('ownership', ownership);
     formData.set('coverUrl', coverUrl);
+    formData.set('metacritic', metacritic === null ? '' : String(metacritic));
+    formData.set('averagePlaytimeHours', averagePlaytimeHours === null ? '' : String(averagePlaytimeHours));
+    formData.set('esrbRating', esrbRating ?? '');
 
     startTransition(async () => {
       const result = game === null
@@ -140,20 +206,22 @@ export function GameDialog({
           <form action={submit} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
             <div className="space-y-2">
               <Label htmlFor="title">Title</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="title"
-                  name="title"
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  required
-                  autoFocus
-                />
-                <Button type="button" variant="outline" onClick={lookUp} disabled={searching || title.trim().length < 2}>
-                  <Search className="size-4" />
-                  {searching ? 'Searching…' : 'Find art'}
-                </Button>
-              </div>
+              <Input
+                id="title"
+                name="title"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                required
+                autoFocus
+              />
+              {visibleSearchStatus === 'loading' ? (
+                <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                  <Loader2 className="size-3 animate-spin" aria-hidden />
+                  Searching…
+                </p>
+              ) : visibleSearchStatus === 'empty' ? (
+                <p className="text-muted-foreground text-xs">No matches found — fill the details in by hand.</p>
+              ) : null}
               {error === null ? null : (
                 <p role="alert" className="text-destructive text-sm">
                   {error}
@@ -161,9 +229,9 @@ export function GameDialog({
               )}
             </div>
 
-            {suggestions.length === 0 ? null : (
+            {visibleSuggestions.length === 0 ? null : (
               <ul className="grid grid-cols-3 gap-2 rounded-md border p-2 sm:grid-cols-6">
-                {suggestions.map((suggestion) => (
+                {visibleSuggestions.map((suggestion) => (
                   <li key={suggestion.externalId}>
                     <button
                       type="button"
@@ -175,11 +243,22 @@ export function GameDialog({
                           <Image src={suggestion.coverUrl} alt="" fill sizes="120px" className="object-cover" />
                         )}
                       </span>
-                      <span className="line-clamp-2 p-1 text-xs">{suggestion.title}</span>
+                      <span className="line-clamp-2 p-1 text-xs">
+                        {suggestion.title}
+                        {suggestion.releaseYear === null ? '' : ` (${suggestion.releaseYear})`}
+                      </span>
                     </button>
                   </li>
                 ))}
               </ul>
+            )}
+
+            {metacritic === null && averagePlaytimeHours === null && esrbRating === null ? null : (
+              <p className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                {metacritic === null ? null : <span>Metacritic {metacritic}</span>}
+                {averagePlaytimeHours === null ? null : <span>~{averagePlaytimeHours}h to beat</span>}
+                {esrbRating === null ? null : <span>ESRB {esrbRating}</span>}
+              </p>
             )}
 
             <div className="grid gap-4 sm:grid-cols-2">

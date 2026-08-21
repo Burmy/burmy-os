@@ -853,13 +853,14 @@ export const games = pgTable(
      * concept is PlayStation-specific and has no Steam equivalent to derive.
      */
     platinum: boolean('platinum').notNull().default(false),
-    /** Metacritic score 0-100, from RAWG. Nullable — not every game has one. */
+    /** Metacritic-style critic score 0-100, from IGDB's `aggregated_rating`. Nullable — not every game has one. */
     metacritic: smallint('metacritic'),
     /**
-     * RAWG's crowd-averaged hours-to-beat. Deliberately NOT stored in tenths
-     * unlike `hoursTenths`: this is a coarse third-party estimate, not the
-     * owner's own measured time, so it doesn't carry the same precision
-     * contract — don't "fix" this inconsistency by converting it to tenths.
+     * IGDB's `game_time_to_beats.normally`, converted from seconds to whole
+     * hours. Deliberately NOT stored in tenths unlike `hoursTenths`: this is
+     * a coarse third-party estimate, not the owner's own measured time, so
+     * it doesn't carry the same precision contract — don't "fix" this
+     * inconsistency by converting it to tenths.
      */
     averagePlaytimeHours: smallint('average_playtime_hours'),
     esrbRating: text('esrb_rating'),

@@ -310,9 +310,13 @@ These are verified, not folklore. Do not "fix" them back.
   `0.1 + 0.2 !== 0.3` in a module whose headline stat is a lifetime hours total. All conversion
   happens in `src/server/games/hours.ts` and nothing else does hours math — the same containment
   rule `money.ts` has.
-- **`RAWG_API_KEY` is optional and its absence is a normal state, not an error.** Cover-art lookup
-  fails soft and returns `[]` on a missing key, a timeout, a non-200, or malformed JSON. The full
-  test suite must pass with no key present, exactly like the AI-optional rule for Finance.
+- **`IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` are optional and their absence is a normal state, not an
+  error.** Cover-art lookup fails soft and returns `[]` on missing credentials, a Twitch token-fetch
+  failure, a timeout, a non-200, or malformed JSON — a 401 from IGDB refreshes the token and retries
+  the request exactly once, never in a loop. The full test suite must pass with neither var present,
+  exactly like the AI-optional rule for Finance. IGDB replaced RAWG (2026-08-20): RAWG has no portrait
+  cover art anywhere in its data model and its search response silently omits `developers`/
+  `publishers`; see `docs/GAMES.md`, "Cover art — IGDB, and its soft-failure contract."
 
 ---
 
@@ -325,7 +329,7 @@ src/features/finance/     Finance UI
 src/features/games/       Games UI
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
-src/server/db/games/      owner-scoped data access + the one HTTP boundary (rawg.ts)
+src/server/db/games/      owner-scoped data access + the one HTTP boundary (igdb.ts)
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only

@@ -12,9 +12,9 @@ const nextConfig: NextConfig = {
   // Do not advertise the framework version to the internet.
   poweredByHeader: false,
 
-  // RAWG (Games module cover art) serves images from media.rawg.io.
+  // IGDB (Games module cover art) serves images from images.igdb.com.
   images: {
-    remotePatterns: [{ protocol: 'https', hostname: 'media.rawg.io' }],
+    remotePatterns: [{ protocol: 'https', hostname: 'images.igdb.com' }],
   },
 
   // Security headers. The nonce-based CSP is added in src/proxy.ts during M2 —

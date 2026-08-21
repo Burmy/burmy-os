@@ -52,7 +52,7 @@ guess.
 | `hours_tenths` | integer, nullable | Tenths of an hour. 235 = 23.5h. See "Hours" below |
 | `first_played_year` | smallint, nullable | Sparse by design |
 | `achievements_unlocked`, `achievements_total` | smallint, nullable | Counts, not a checklist — see below |
-| `cover_url`, `genre` | text, nullable | Populated by hand or from a RAWG suggestion |
+| `cover_url`, `genre` | text, nullable | Populated by hand or from an IGDB suggestion |
 | `notes` | text, nullable | Free text — carries nuance the schema deliberately doesn't model, e.g. "6h of that was the DLC" |
 
 **Uniqueness is case-insensitive per platform**: `(owner_id, lower(title), platform)`. The same title
@@ -175,50 +175,91 @@ page reads a stored total anywhere.
 
 ---
 
-## Cover art — RAWG, and its soft-failure contract
+## Cover art — IGDB, and its soft-failure contract
 
-### Why RAWG and not IGDB
+### Why IGDB and not RAWG
 
-Both APIs expose the same cover-art-and-genre data for a personal-library use case. RAWG authenticates
-with a single API key in an environment variable; IGDB requires registering a Twitch developer
-application and running an OAuth client-credentials exchange with token refresh. For a single-owner
-app that calls this a few times a month, the OAuth lifecycle is pure operational cost — a second
-credential to provision, rotate and keep alive — with no benefit RAWG's flat API key doesn't already
-provide. RAWG was picked on that basis alone.
+RAWG was the original choice (see git history for the section this replaced), on the reasoning that a
+single static API key beat provisioning a Twitch developer application for OAuth. Real usage against
+the 160-game library exposed two problems serious enough to reverse that decision:
 
-### The one HTTP boundary
+1. **RAWG has no portrait cover art anywhere in its data model.** `background_image` is a 1280x720
+   landscape still. The card frame is `aspect-[3/4]` (portrait), so every cover rendered stretched and
+   badly cropped — confirmed live by testing roughly a dozen crop/resize dimension pairs against
+   `media.rawg.io`, all of which 404 for a portrait output. There is no fix on RAWG's side; its resize
+   CDN only serves a small whitelist of pre-generated landscape-ish sizes.
+2. **RAWG's *search* response silently omits `developers`/`publishers` entirely** — not merely empty,
+   the keys don't exist on that endpoint. The app's one-call design read them anyway and always got
+   `null`, for every real search, from day one.
 
-`src/server/db/games/rawg.ts` (`searchGames`) is the **only** place in the Games module that makes a
-network request. Everything around it stays pure and unit-testable without a network or a fake server:
-`src/server/games/metadata.ts` builds the RAWG query URL and shapes the JSON response into
+IGDB fixes both, and does most of it in one call: `cover.image_id` resolves to genuine portrait art
+(`t_cover_big`, 264x352 — confirmed live by downloading real bytes and parsing JPEG SOF headers, not
+by trusting the URL naming convention), and `involved_companies.company.name` with its own
+`.developer`/`.publisher` boolean flags expands the actual company names inline, no second request
+needed. The OAuth lifecycle RAWG was chosen to avoid turned out to be the smaller cost — see
+`metadata-api-comparison.md` under `.superpowers/sdd/2026-08-20-game-tracker/` for the full comparison
+against SteamGridDB, TheGamesDB, Giant Bomb and MobyGames.
+
+### Two HTTP endpoints, one boundary file
+
+`src/server/db/games/igdb.ts` (`searchGames`) is the **only** place in the Games module that makes a
+network request — now three requests in the worst case, all from this one file: a Twitch
+client-credentials token exchange (cached in module scope for its ~64-day life, refreshed on a 401 in
+case a cached token was invalidated server-side before its stated expiry), a POST to IGDB's `/v4/games`
+for the primary search, and a POST to `/v4/game_time_to_beats` for the average-playtime figure.
+
+The playtime call is *separate*, not a field on the games query, because IGDB's `Game` schema has no
+relation field for it at all — confirmed by fetching `api.igdb.com/v4/igdbapi.proto` live and reading
+the full field list. `game_time_to_beats` is its own endpoint, filtered by `game_id`, unlike `cover` or
+`involved_companies` which genuinely do expand inline. It is deliberately isolated in its own
+try/catch: a failed or slow time-to-beat call only leaves `averagePlaytimeHours` null, and can never
+blank out an already-successful primary search the owner is about to pick from.
+
+Everything around the fetches stays pure and unit-testable without a network or a fake server:
+`src/server/games/metadata.ts` builds both Apicalypse query bodies and shapes both JSON responses into
 `GameSuggestion[]`, entirely defensively (a third-party payload is untrusted shape, not a typed
-contract — a missing or wrong-typed field degrades to `null`, never a thrown error). This split
-mirrors Finance's own discipline of keeping the domain core free of I/O.
+contract — a missing or wrong-typed field degrades to `null`, never a thrown error). This split mirrors
+Finance's own discipline of keeping the domain core free of I/O.
 
-The add/edit form is a manual search-and-pick, not an automatic best-match fill: the owner types a
-title, triggers a lookup, sees the raw RAWG result list, and clicks one to apply it (`applySuggestion`
-in `src/features/games/library/game-dialog.tsx`). An earlier draft of this module also carried
-`scoreMatch`/`pickBestMatch` — asymmetric token-overlap scoring meant to auto-rank RAWG results against
-the owner's typed title, for a bulk auto-match flow that was descoped before it shipped. Nothing in the
-live form ever called either function, so both were deleted (final-review fix wave) rather than kept as
-code with no production caller — see CLAUDE.md's rule against speculative abstractions. Git history has
-the implementation if a future auto-suggest pass wants the starting point.
+### Search-as-you-type, with a non-clobbering fill rule
 
-### `RAWG_API_KEY` is optional, and its absence is a normal state
+The add/edit form searches as the owner types — debounced 300ms, minimum 3 characters, each keystroke
+superseding whatever request came before it — rather than the earlier RAWG-era design's explicit
+"Find art" button. Picking a result (`applySuggestion` in
+`src/features/games/library/game-dialog.tsx`) fills `coverUrl`, `genre`, `developer` and `publisher`
+**only into a field that is still empty**: those four are the owner's own hand-editable fields (loaded
+from an existing game, typed by hand, or filled by an earlier pick), so a suggestion is never allowed
+to silently replace something already there. `metacritic`, `averagePlaytimeHours` and `esrbRating` have
+no hand-editable control at all — they are read-only third-party facts displayed for information —
+so there is nothing of the owner's to protect and they always take the latest pick's value.
+
+An earlier draft of this module also carried `scoreMatch`/`pickBestMatch` — asymmetric token-overlap
+scoring meant to auto-rank results against the owner's typed title, for a bulk auto-match flow that was
+descoped before it shipped. Nothing in the live form ever called either function, so both were deleted
+(final-review fix wave) rather than kept as code with no production caller — see CLAUDE.md's rule
+against speculative abstractions. Git history has the implementation if a future auto-suggest pass
+wants the starting point.
+
+### `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` are optional, and their absence is a normal state
 
 Cover-art lookup **fails soft** in every case:
 
 ```
-no RAWG_API_KEY configured   -> []   (checked first, before even validating the query)
-empty/whitespace query       -> []
-request timeout (5s)         -> []
-non-2xx response              -> []
-malformed/unexpected JSON    -> []   (toSuggestions degrades field-by-field rather than throwing)
+no IGDB_CLIENT_ID / IGDB_CLIENT_SECRET configured -> []   (checked first, before even validating the query)
+empty/whitespace query                            -> []
+Twitch token request fails (network, timeout,
+  non-2xx, malformed JSON)                         -> []
+/games request fails (network, timeout, non-2xx,
+  malformed JSON)                                  -> []
+/games request 401s                                -> refreshes the token and retries ONCE, then
+                                                        falls back to [] if that also fails
+/game_time_to_beats request fails                  -> suggestions still return, averagePlaytimeHours null
 ```
 
-There is no error state a missing key can produce — the add/edit form always works, cover art is
-simply absent, and the owner fills the field in by hand exactly as before RAWG existed. This mirrors
-the AI-optional rule in Finance: **the full test suite must pass with no `RAWG_API_KEY` present.**
+There is no error state missing credentials can produce — the add/edit form always works, cover art
+and its accompanying fields are simply absent, and the owner fills everything in by hand exactly as
+before IGDB existed. This mirrors the AI-optional rule in Finance: **the full test suite must pass with
+no `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` present.**
 
 ---
 
