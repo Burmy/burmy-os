@@ -37,6 +37,7 @@ export interface GameStatRow {
   readonly achievementsTotal: number | null;
   readonly platinum: boolean;
   readonly metacritic: number | null;
+  readonly priceCents: number | null;
 }
 
 export interface YearlyBreakdownRow {
@@ -58,6 +59,24 @@ export interface LibrarySummary {
   readonly averageRating: number | null;
   /** Completed / (completed + paused_dropped), 0-100. Null when nothing has been started. */
   readonly completionRatePercent: number | null;
+  /** Count of games with the owner's own `platinum` flag set. */
+  readonly platinumCount: number;
+  /** Mean `hoursTenths` over games that HAVE logged hours. Null when nothing has any hours logged — an unplayed backlog entry is excluded, not counted as a zero. */
+  readonly averageHoursTenthsPerGame: number | null;
+  /** Mean `metacritic` over games that have one. Null when none do. */
+  readonly averageMetacritic: number | null;
+}
+
+export interface FinancialSummary {
+  /** Sum of `priceCents` over games with a price recorded. Missing prices contribute nothing, never zero. */
+  readonly totalSpendCents: number;
+  /** Mean price over games that HAVE a price recorded. Null when nothing does. */
+  readonly averagePriceCents: number | null;
+  /** `totalSpendCents` / total hours played (not tenths). Null when nothing has any hours logged — there is no rate to report, not a rate of zero. */
+  readonly costPerHourCents: number | null;
+  readonly backlogCount: number;
+  /** Sum of `priceCents` across backlog-status games only — the money sitting unplayed. Missing prices contribute nothing. */
+  readonly backlogValueCents: number;
 }
 
 export interface DistributionSlice {
@@ -118,6 +137,12 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
   const dropped = rows.filter((row) => row.status === 'paused_dropped').length;
   const started = completed + dropped;
 
+  // Excluded from their averages entirely, not counted as a zero — the same
+  // rule `averageRating` already follows: a game with no hours logged or no
+  // Metacritic score is missing data, not a real zero to pull the mean down.
+  const withHours = rows.filter((row) => row.hoursTenths !== null);
+  const withMetacritic = rows.filter((row) => row.metacritic !== null);
+
   return {
     totalGames: rows.length,
     totalHoursTenths: rows.reduce((total, row) => total + (row.hoursTenths ?? 0), 0),
@@ -129,6 +154,43 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
     // Over STARTED games only: a 40-game backlog you never touched should not
     // read as a 5% completion rate.
     completionRatePercent: started === 0 ? null : (completed / started) * 100,
+    platinumCount: rows.filter((row) => row.platinum).length,
+    averageHoursTenthsPerGame:
+      withHours.length === 0
+        ? null
+        : withHours.reduce((sum, row) => sum + (row.hoursTenths ?? 0), 0) / withHours.length,
+    averageMetacritic:
+      withMetacritic.length === 0
+        ? null
+        : withMetacritic.reduce((sum, row) => sum + (row.metacritic ?? 0), 0) / withMetacritic.length,
+  };
+}
+
+/**
+ * Money: what the library cost, what a game costs on average, what an hour of
+ * play cost, and how much is sitting unplayed in the backlog. Every average
+ * here is over games that HAVE the relevant value, exactly like
+ * `buildLibrarySummary`'s `averageRating` — a game with no price recorded is
+ * missing data, not a free game.
+ */
+export function buildFinancialSummary(rows: readonly GameStatRow[]): FinancialSummary {
+  const priced = rows.filter((row) => row.priceCents !== null);
+  const totalSpendCents = priced.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+
+  // Whole hours, not tenths — "cost per hour" is a dollars-per-hour rate, and
+  // dividing by tenths-of-an-hour would silently report a figure ten times
+  // too small.
+  const totalHours = rows.reduce((sum, row) => sum + (row.hoursTenths ?? 0), 0) / 10;
+
+  const backlog = rows.filter((row) => row.status === 'backlog');
+  const backlogValueCents = backlog.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+
+  return {
+    totalSpendCents,
+    averagePriceCents: priced.length === 0 ? null : totalSpendCents / priced.length,
+    costPerHourCents: totalHours === 0 ? null : totalSpendCents / totalHours,
+    backlogCount: backlog.length,
+    backlogValueCents,
   };
 }
 

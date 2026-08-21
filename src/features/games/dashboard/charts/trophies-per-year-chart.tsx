@@ -3,21 +3,22 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import type { YearlyBreakdownRow } from '@/server/games/stats';
-import { TOOLTIP_STYLES, computeChartDomain, formatAxisHours } from '../chart-utils';
+import { TOOLTIP_STYLES, computeChartDomain } from '../chart-utils';
 
 /**
- * A line, not a bar — see GamesPerYearChart for why (the owner's original
- * spreadsheet kept this as one of three line charts vs. year, and a
- * continuous axis is a better fit for a line than disconnected bars).
- * `type="linear"`, matching Finance's own trend charts.
+ * Trophies (achievements unlocked) per year — the third of the owner's three
+ * original spreadsheet line charts (Games/Hours/Trophies vs. Year), and
+ * previously missing from the dashboard entirely. `YearlyBreakdownRow.achievements`
+ * already sums `achievementsUnlocked` per year in `buildYearlyBreakdown`, so
+ * this chart needs no new server-side aggregation.
  */
-export function HoursPerYearChart({
+export function TrophiesPerYearChart({
   rows,
 }: {
   readonly rows: readonly YearlyBreakdownRow[];
 }): React.ReactElement {
   if (rows.length === 0) {
-    return <p className="text-muted-foreground py-12 text-center text-sm">No years with play time yet.</p>;
+    return <p className="text-muted-foreground py-12 text-center text-sm">No years with achievements yet.</p>;
   }
 
   // Oldest-first reads correctly on a time axis, even though the table below
@@ -30,19 +31,19 @@ export function HoursPerYearChart({
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
         <XAxis dataKey="year" tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }} tickLine={false} axisLine={false} />
         <YAxis
-          tickFormatter={formatAxisHours}
-          domain={computeChartDomain(data.map((row) => row.hoursTenths))}
+          domain={computeChartDomain(data.map((row) => row.achievements))}
+          allowDecimals={false}
           tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={40}
         />
-        <Tooltip formatter={(value) => [formatAxisHours(Number(value)), 'Played']} {...TOOLTIP_STYLES} />
+        <Tooltip formatter={(value) => [String(value), 'Trophies']} {...TOOLTIP_STYLES} />
         <Line
           type="linear"
-          dataKey="hoursTenths"
-          name="Hours"
-          stroke="var(--color-chart-cat-1)"
+          dataKey="achievements"
+          name="Trophies"
+          stroke="var(--color-chart-cat-3)"
           strokeWidth={2}
           dot={{ r: 3 }}
         />

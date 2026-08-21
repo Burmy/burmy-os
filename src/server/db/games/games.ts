@@ -195,6 +195,7 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
       achievementsTotal: gamesTable.achievementsTotal,
       platinum: gamesTable.platinum,
       metacritic: gamesTable.metacritic,
+      priceCents: gamesTable.priceCents,
     })
     .from(gamesTable)
     .where(eq(gamesTable.ownerId, ownerId));

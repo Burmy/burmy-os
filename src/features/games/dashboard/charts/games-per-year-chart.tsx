@@ -1,10 +1,18 @@
 'use client';
 
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import type { YearlyBreakdownRow } from '@/server/games/stats';
 import { TOOLTIP_STYLES, computeChartDomain } from '../chart-utils';
 
+/**
+ * A line, not a bar — the owner's original spreadsheet kept this as one of
+ * three line charts (Games/Hours/Trophies vs Year), and a continuous year
+ * axis reads as a trend on a line in a way a set of disconnected bars does
+ * not. `type="linear"` (straight segments), matching Finance's own trend
+ * charts: a smoothed curve through real year-over-year counts would imply a
+ * gradual ramp between points that never happened.
+ */
 export function GamesPerYearChart({
   rows,
 }: {
@@ -20,19 +28,27 @@ export function GamesPerYearChart({
 
   return (
     <ResponsiveContainer width="100%" height={240}>
-      <BarChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
+      <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
         <XAxis dataKey="year" tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }} tickLine={false} axisLine={false} />
         <YAxis
           domain={computeChartDomain(data.map((row) => row.gameCount))}
+          allowDecimals={false}
           tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={40}
         />
         <Tooltip formatter={(value) => [String(value), 'Games']} {...TOOLTIP_STYLES} />
-        <Bar dataKey="gameCount" fill="var(--color-chart-cat-2)" radius={[3, 3, 0, 0]} maxBarSize={40} />
-      </BarChart>
+        <Line
+          type="linear"
+          dataKey="gameCount"
+          name="Games"
+          stroke="var(--color-chart-cat-2)"
+          strokeWidth={2}
+          dot={{ r: 3 }}
+        />
+      </LineChart>
     </ResponsiveContainer>
   );
 }

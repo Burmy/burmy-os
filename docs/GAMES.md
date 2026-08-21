@@ -179,12 +179,20 @@ failure mode this module makes structurally impossible — every number the Game
 recomputed from the current `games` rows on every render, so there is no second copy of any total that
 could ever fall out of sync with the first.
 
-The stats layer exposes four pure functions, all operating on `GameStatRow[]` (a narrower projection
-of `Game` — no `notes`, `coverUrl` or `priceCents`, since nothing downstream needs them):
+The stats layer exposes five pure functions, all operating on `GameStatRow[]` (a narrower projection
+of `Game` — no `notes` or `coverUrl`, since nothing downstream needs them; `priceCents` **is**
+included, for the money figures below):
 
 - **`buildLibrarySummary`** — total games, total hours, backlog/playing/completed counts, average
-  rating (mean of rated games only — unrated games don't pull the average toward zero), and the
-  started-games-only completion rate above.
+  rating (mean of rated games only — unrated games don't pull the average toward zero), the
+  started-games-only completion rate above, platinum count, average hours per game (mean over games
+  that HAVE hours logged, not counting an unplayed backlog entry as a zero), and average Metacritic
+  (mean over games that have one).
+- **`buildFinancialSummary`** — total spend, average price per game (mean over games with a price
+  recorded), cost per hour played (total spend ÷ total WHOLE hours, not tenths), backlog count, and
+  the money sitting unplayed in the backlog (`priceCents` summed across `backlog`-status games only).
+  Every average here follows the same "exclude, don't zero-fill" rule as `averageRating` above, and
+  every ratio guards its own zero denominator to return `null` rather than `NaN` or `Infinity`.
 - **`buildYearlyBreakdown`** — one row per `firstPlayedYear` present in the data, newest first, each
   carrying its own game count, hours, achievements, and the hours delta from the previous year present
   (`null` for the earliest year — there is nothing to compare it to). A game with no
@@ -198,10 +206,20 @@ of `Game` — no `notes`, `coverUrl` or `priceCents`, since nothing downstream n
   their games, and the year with the most hours played, each computed over played games only
   (`hoursTenths > 0`).
 
-The dashboard (`GamesDashboard`, `/games/stats`) renders five stat cards, a Yearly Breakdown table, six
-charts (hours per year, games per year, platform / ownership / genre distribution, rating
-distribution), and a three-item Highlights row from exactly these four functions — nothing in that
-page reads a stored total anywhere.
+`src/server/games/money.ts` is the Games-side sibling of `finance/money.ts`'s formatting half — a
+single pure `formatPriceCents` — used only for display of the money figures above. It is NOT imported
+from Finance (Games never imports Finance code, full stop); it exists because `priceCents` uses the
+same signed-cents convention independently, as already documented under "Price is independent of
+Finance" above.
+
+The dashboard (`GamesDashboard`, `/games/stats`) groups its stat cards into three rows — **Library**
+(games, hours, backlog, completion rate), **Ratings & achievements** (average rating, average
+Metacritic, platinum count, average hours per game), and **Money** (total spend, average price,
+cost per hour, backlog value) — followed by the Yearly Breakdown table, a **Trends** row of three line
+charts (games / hours / trophies per year — a continuous year axis reads as a trend on a line the way
+disconnected bars don't; matches the owner's original spreadsheet, which kept exactly these three as
+line charts), a **Breakdown** row of four charts (platform / ownership / genre distribution, rating
+distribution), and the three-item Highlights row — nothing on that page reads a stored total anywhere.
 
 ---
 

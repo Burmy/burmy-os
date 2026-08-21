@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type GameStatRow,
   buildDistribution,
+  buildFinancialSummary,
   buildLibrarySummary,
   buildYearlyBreakdown,
   findCallouts,
@@ -25,6 +26,7 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
     achievementsTotal: 42,
     platinum: false,
     metacritic: null,
+    priceCents: 5999,
     ...overrides,
   };
 }
@@ -103,6 +105,118 @@ describe('buildLibrarySummary', () => {
 
   it('has no completion rate when nothing has been started', () => {
     expect(buildLibrarySummary([game({ status: 'backlog' })]).completionRatePercent).toBeNull();
+  });
+
+  it('counts platinums by the owner-set flag, not by achievement completion', () => {
+    const summary = buildLibrarySummary([
+      game({ id: 'a', platinum: true }),
+      game({ id: 'b', platinum: true }),
+      // Full clear, but never flagged platinum — Steam has no platinum
+      // equivalent, so this must NOT be inferred from achievement counts.
+      game({ id: 'c', platinum: false, achievementsUnlocked: 30, achievementsTotal: 30 }),
+    ]);
+    expect(summary.platinumCount).toBe(2);
+  });
+
+  it('has zero platinums, not null, for an empty or platinum-free library', () => {
+    expect(buildLibrarySummary([]).platinumCount).toBe(0);
+    expect(buildLibrarySummary([game({ platinum: false })]).platinumCount).toBe(0);
+  });
+
+  it('averages hours over games that HAVE logged hours, excluding unlogged ones rather than counting them as zero', () => {
+    const summary = buildLibrarySummary([
+      game({ id: 'a', hoursTenths: 1000 }),
+      game({ id: 'b', hoursTenths: 500 }),
+      game({ id: 'c', hoursTenths: null }),
+    ]);
+    // (1000 + 500) / 2 — the unlogged game does not deflate the mean.
+    expect(summary.averageHoursTenthsPerGame).toBe(750);
+  });
+
+  it('has no average hours per game when nothing has hours logged, rather than NaN', () => {
+    const summary = buildLibrarySummary([game({ hoursTenths: null })]);
+    expect(summary.averageHoursTenthsPerGame).toBeNull();
+    expect(Number.isNaN(summary.averageHoursTenthsPerGame)).toBe(false);
+  });
+
+  it('averages Metacritic over games that have one, excluding the rest', () => {
+    const summary = buildLibrarySummary([
+      game({ id: 'a', metacritic: 90 }),
+      game({ id: 'b', metacritic: 70 }),
+      game({ id: 'c', metacritic: null }),
+    ]);
+    expect(summary.averageMetacritic).toBe(80);
+  });
+
+  it('has no average Metacritic when nothing has one, rather than NaN', () => {
+    expect(buildLibrarySummary([game({ metacritic: null })]).averageMetacritic).toBeNull();
+  });
+
+  it('has no averages at all for an empty library, and no divide-by-zero NaN anywhere', () => {
+    const summary = buildLibrarySummary([]);
+    expect(summary.totalGames).toBe(0);
+    expect(summary.averageRating).toBeNull();
+    expect(summary.averageHoursTenthsPerGame).toBeNull();
+    expect(summary.averageMetacritic).toBeNull();
+    expect(summary.completionRatePercent).toBeNull();
+    for (const value of Object.values(summary)) {
+      expect(typeof value === 'number' ? Number.isNaN(value) : false).toBe(false);
+    }
+  });
+});
+
+describe('buildFinancialSummary', () => {
+  it('sums price only across games that have one recorded', () => {
+    const financial = buildFinancialSummary([
+      game({ id: 'a', priceCents: 5999 }),
+      game({ id: 'b', priceCents: 2999 }),
+      game({ id: 'c', priceCents: null }),
+    ]);
+    expect(financial.totalSpendCents).toBe(8998);
+  });
+
+  it('averages price over games that have one, excluding games with no price recorded', () => {
+    const financial = buildFinancialSummary([
+      game({ id: 'a', priceCents: 6000 }),
+      game({ id: 'b', priceCents: 4000 }),
+      game({ id: 'c', priceCents: null }),
+    ]);
+    // (6000 + 4000) / 2 — the priceless game does not pull the average toward zero.
+    expect(financial.averagePriceCents).toBe(5000);
+  });
+
+  it('has no average price for a library where nothing has a price recorded', () => {
+    expect(buildFinancialSummary([game({ priceCents: null })]).averagePriceCents).toBeNull();
+  });
+
+  it('computes cost per hour as total spend divided by WHOLE hours, not tenths', () => {
+    // $60 spent, 10 hours played (100 tenths) -> $6/hour, not $0.60.
+    const financial = buildFinancialSummary([game({ priceCents: 6000, hoursTenths: 100 })]);
+    expect(financial.costPerHourCents).toBe(600);
+  });
+
+  it('has no cost per hour when nothing has any hours logged, rather than a divide-by-zero NaN or Infinity', () => {
+    const financial = buildFinancialSummary([game({ priceCents: 6000, hoursTenths: null })]);
+    expect(financial.costPerHourCents).toBeNull();
+  });
+
+  it('reports backlog count and the money sitting unplayed in it, separately from the rest of the library', () => {
+    const financial = buildFinancialSummary([
+      game({ id: 'a', status: 'backlog', priceCents: 3000 }),
+      game({ id: 'b', status: 'backlog', priceCents: 2000 }),
+      game({ id: 'c', status: 'completed', priceCents: 9999 }),
+    ]);
+    expect(financial.backlogCount).toBe(2);
+    expect(financial.backlogValueCents).toBe(5000);
+  });
+
+  it('has zero totals, not null or NaN, for an empty library', () => {
+    const financial = buildFinancialSummary([]);
+    expect(financial.totalSpendCents).toBe(0);
+    expect(financial.backlogCount).toBe(0);
+    expect(financial.backlogValueCents).toBe(0);
+    expect(financial.averagePriceCents).toBeNull();
+    expect(financial.costPerHourCents).toBeNull();
   });
 });
 
