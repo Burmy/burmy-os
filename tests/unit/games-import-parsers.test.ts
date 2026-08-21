@@ -9,12 +9,14 @@ import {
   findHeaderRowIndex,
   guessPlatform,
   isLocalDatabaseUrl,
+  normalizeTitle,
   parseFirstYear,
   parseHoursTenths,
   parseInteger,
   parsePriceCents,
   parseStarRating,
   realignRowFields,
+  resolvePlatform,
   splitCsvLine,
   splitCsvRecords,
 } from '../../scripts/import-game-log.mjs';
@@ -324,6 +326,58 @@ describe('guessPlatform', () => {
     first('-', '-', '-', '-'); // enters retro on the first assigner
     const second = guessPlatform();
     expect(second('Digital', '10', '2024', '5')).toBe('ps5');
+  });
+});
+
+describe('normalizeTitle', () => {
+  it('trims leading and trailing whitespace', () => {
+    expect(normalizeTitle('  Starfall Chronicles  ')).toBe('Starfall Chronicles');
+  });
+
+  it('collapses internal whitespace runs to a single space', () => {
+    expect(normalizeTitle('Nova   Interactive:  Origins')).toBe('Nova Interactive: Origins');
+  });
+
+  it('is a no-op on an already-clean title', () => {
+    expect(normalizeTitle('Aurora Descent')).toBe('Aurora Descent');
+  });
+});
+
+describe('resolvePlatform', () => {
+  it('returns the guessed platform unchanged when no map is supplied', () => {
+    expect(resolvePlatform(null, 'Aurora Descent', 'ps5')).toBe('ps5');
+  });
+
+  it('returns the guessed platform unchanged when the map does not cover this title', () => {
+    const map = { 'Nightfall Requiem': 'ps4' };
+    expect(resolvePlatform(map, 'Aurora Descent', 'ps5')).toBe('ps5');
+  });
+
+  it('prefers the map over the section guess when the title is covered', () => {
+    // The whole reason this function exists: guessPlatform's section walk
+    // says 'ps5' for every modern-PlayStation-section row, with no ps4/ps5
+    // split — the recovered map is what actually knows which one is right.
+    const map = { 'Aurora Descent': 'ps4' };
+    expect(resolvePlatform(map, 'Aurora Descent', 'ps5')).toBe('ps4');
+  });
+
+  it('matches map and title after normalizing whitespace on both sides', () => {
+    // Mirrors the real map's own artefacts: a trailing-space title recovered
+    // from the .xlsx export, compared against a clean CSV title.
+    const map = { 'Aurora   Descent  ': 'ps4' };
+    expect(resolvePlatform(map, '  Aurora Descent', 'ps5')).toBe('ps4');
+  });
+
+  it('is case-sensitive, matching the map/database convention exactly', () => {
+    // games' own uniqueness is case-insensitive per platform, but
+    // resolvePlatform intentionally is not — see its doc comment: an exact,
+    // case-sensitive match is a deliberate design choice this test locks in.
+    const map = { 'aurora descent': 'ps4' };
+    expect(resolvePlatform(map, 'Aurora Descent', 'ps5')).toBe('ps5');
+  });
+
+  it('falls back to the guess when the map is an empty object', () => {
+    expect(resolvePlatform({}, 'Aurora Descent', 'steam')).toBe('steam');
   });
 });
 

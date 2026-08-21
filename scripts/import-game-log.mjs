@@ -35,6 +35,22 @@
  * inside a quoted field. Ratings are 5-glyph star strings, not integers. And
  * the sheet has no Platform column at all — the owner decided platform by
  * SECTION of the sheet instead (see `guessPlatform` below).
+ *
+ * OPTIONAL PLATFORM MAP (third CLI argument)
+ *
+ * `guessPlatform`'s section-position guess turned out to be wrong for the
+ * ps4/ps5 split (it collapsed every modern PlayStation title into `ps5`,
+ * with no split at all) — because the CSV export cannot carry the sheet's
+ * REAL platform signal, the row's cell background colour, which is destroyed
+ * on export same as everything else colour-coded in the sheet. The owner
+ * recovered a confirmed title->platform map from the sheet's `.xlsx` export
+ * separately (see scripts/fix-game-platforms.mjs, which applies that same
+ * map to rows already imported). This script accepts that map as an
+ * OPTIONAL third argument so a future re-import doesn't have to repeat the
+ * same correction after the fact: a title present in the map wins outright;
+ * a title absent from it falls back to `guessPlatform`'s section logic
+ * exactly as before. Omit the argument and behaviour is unchanged. See
+ * `resolvePlatform` below.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -373,6 +389,45 @@ export function guessPlatform() {
 }
 
 /**
+ * Collapses whitespace runs and trims the ends. The recovered platform map
+ * (see scripts/fix-game-platforms.mjs, which defines the identical helper
+ * for the same reason) is generated separately from the CSV and can carry
+ * stray spacing — e.g. a trailing-space title — that the CSV's own title
+ * text does not; comparing the two without this would under-match real,
+ * correct pairs for a reason that has nothing to do with the games being
+ * different. Duplicated rather than imported: see the note above
+ * `LOCAL_HOSTNAMES` on why every script here stays self-contained.
+ */
+export function normalizeTitle(title) {
+  return title.trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Resolves one row's final platform: a matching entry in the recovered
+ * platform map wins outright, because it is CONFIRMED data (recovered from
+ * the sheet's own colour legend); `guessedPlatform` — the section-walk's own
+ * answer for this row, from `guessPlatform` — is only a fallback for a title
+ * the map doesn't cover. `platformMap` is optional; when it's `null` (the
+ * argument was never supplied), this always returns `guessedPlatform`,
+ * i.e. behaviour identical to before this map existed.
+ *
+ * Takes the already-resolved `guessedPlatform` rather than calling
+ * `guessPlatform`'s assigner itself, because that assigner is STATEFUL and
+ * must observe every row in file order to track which section it's in — the
+ * caller runs it unconditionally, for every row, whether or not the map ends
+ * up overriding its answer, so the section walk never desyncs.
+ */
+export function resolvePlatform(platformMap, title, guessedPlatform) {
+  if (!platformMap) return guessedPlatform;
+
+  const normalized = normalizeTitle(title);
+  for (const [mapTitle, platform] of Object.entries(platformMap)) {
+    if (normalizeTitle(mapTitle) === normalized) return platform;
+  }
+  return guessedPlatform;
+}
+
+/**
  * Whether a Postgres connection string points at a local database.
  *
  * `new URL()` parses a `postgres://`/`postgresql://` connection string
@@ -393,10 +448,16 @@ export function isLocalDatabaseUrl(url) {
 }
 
 async function main() {
-  const [, , csvPath, ownerEmail] = process.argv;
+  const [, , csvPath, ownerEmail, platformMapPath] = process.argv;
 
   if (!csvPath || !ownerEmail) {
-    console.error('Usage: node scripts/import-game-log.mjs <path-to-csv> <owner-email>');
+    console.error(
+      'Usage: node scripts/import-game-log.mjs <path-to-csv> <owner-email> [path-to-platform-map.json]',
+    );
+    console.error(
+      'The optional third argument overrides guessPlatform\'s section-position guess with confirmed data ' +
+        'recovered from the sheet\'s .xlsx export — see the header comment for why the CSV alone cannot carry it.',
+    );
     process.exit(1);
   }
 
@@ -430,6 +491,9 @@ async function main() {
       process.exitCode = 1;
       return;
     }
+
+    /** @type {Record<string, string> | null} */
+    const platformMap = platformMapPath ? JSON.parse(await readFile(platformMapPath, 'utf8')) : null;
 
     const raw = await readFile(csvPath, 'utf8');
     const records = splitCsvRecords(raw).filter((record) => record.trim() !== '');
@@ -483,7 +547,12 @@ async function main() {
       const hoursTenths = parseHoursTenths(hoursText);
       const parsedRating = parseStarRating(ratingText);
       const ratingValue = parsedRating !== null && parsedRating >= 1 && parsedRating <= 5 ? parsedRating : null;
-      const platform = assignPlatform(ownershipText, hoursText, yearText, trophiesText);
+      // Always run the section-walk assigner, whether or not the platform
+      // map ends up overriding its answer for THIS row — it is stateful and
+      // must observe every row in file order or later rows' section
+      // boundaries desync. See `resolvePlatform`'s own doc comment.
+      const guessedPlatform = assignPlatform(ownershipText, hoursText, yearText, trophiesText);
+      const platform = resolvePlatform(platformMap, title, guessedPlatform);
 
       const result = await sql`
         insert into games (
