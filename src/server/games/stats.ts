@@ -35,6 +35,8 @@ export interface GameStatRow {
   readonly firstPlayedYear: number | null;
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
+  readonly platinum: boolean;
+  readonly metacritic: number | null;
 }
 
 export interface YearlyBreakdownRow {

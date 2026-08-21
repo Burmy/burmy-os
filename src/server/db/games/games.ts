@@ -36,6 +36,10 @@ export interface Game {
   readonly coverUrl: string | null;
   readonly genre: string | null;
   readonly notes: string | null;
+  readonly platinum: boolean;
+  readonly metacritic: number | null;
+  readonly averagePlaytimeHours: number | null;
+  readonly esrbRating: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -57,6 +61,10 @@ export interface GameInput {
   readonly coverUrl?: string | null;
   readonly genre?: string | null;
   readonly notes?: string | null;
+  readonly platinum?: boolean;
+  readonly metacritic?: number | null;
+  readonly averagePlaytimeHours?: number | null;
+  readonly esrbRating?: string | null;
 }
 
 function rowToGame(row: typeof gamesTable.$inferSelect): Game {
@@ -77,6 +85,10 @@ function rowToGame(row: typeof gamesTable.$inferSelect): Game {
     coverUrl: row.coverUrl,
     genre: row.genre,
     notes: row.notes,
+    platinum: row.platinum,
+    metacritic: row.metacritic,
+    averagePlaytimeHours: row.averagePlaytimeHours,
+    esrbRating: row.esrbRating,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -181,6 +193,8 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
       firstPlayedYear: gamesTable.firstPlayedYear,
       achievementsUnlocked: gamesTable.achievementsUnlocked,
       achievementsTotal: gamesTable.achievementsTotal,
+      platinum: gamesTable.platinum,
+      metacritic: gamesTable.metacritic,
     })
     .from(gamesTable)
     .where(eq(gamesTable.ownerId, ownerId));

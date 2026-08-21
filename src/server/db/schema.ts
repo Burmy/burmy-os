@@ -844,6 +844,25 @@ export const games = pgTable(
     coverUrl: text('cover_url'),
     genre: text('genre'),
     notes: text('notes'),
+    /**
+     * Whether the owner earned the platinum trophy. Stored as a flag, NOT
+     * derived from `achievementsUnlocked === achievementsTotal`, for two
+     * reasons: the source spreadsheet only ever recorded trophies EARNED,
+     * never the total, so it cannot be derived for any of the 160 imported
+     * games; and on Steam, 100% achievements is not a platinum at all — the
+     * concept is PlayStation-specific and has no Steam equivalent to derive.
+     */
+    platinum: boolean('platinum').notNull().default(false),
+    /** Metacritic score 0-100, from RAWG. Nullable — not every game has one. */
+    metacritic: smallint('metacritic'),
+    /**
+     * RAWG's crowd-averaged hours-to-beat. Deliberately NOT stored in tenths
+     * unlike `hoursTenths`: this is a coarse third-party estimate, not the
+     * owner's own measured time, so it doesn't carry the same precision
+     * contract — don't "fix" this inconsistency by converting it to tenths.
+     */
+    averagePlaytimeHours: smallint('average_playtime_hours'),
+    esrbRating: text('esrb_rating'),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

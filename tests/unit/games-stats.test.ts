@@ -23,6 +23,8 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
     firstPlayedYear: 2022,
     achievementsUnlocked: 42,
     achievementsTotal: 42,
+    platinum: false,
+    metacritic: null,
     ...overrides,
   };
 }
