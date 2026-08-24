@@ -5,7 +5,7 @@ import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
 import { DuplicateGameError, GameNotFoundError } from '@/server/db/games/errors';
-import { type Game, type GameInput, createGame, deleteGame, updateGame } from '@/server/db/games/games';
+import { type Game, type GameInput, createGame, deleteGame, getGame, updateGame } from '@/server/db/games/games';
 import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
 import { findDuplicateYear, validateSplit } from '@/server/games/play-years';
@@ -76,6 +76,22 @@ const playYearsSchema = z
     }),
   )
   .max(30);
+
+/**
+ * A disabled Hours/Achievements field in game-dialog.tsx is a UI affordance,
+ * not a security boundary — devtools can re-enable it, and even an honest
+ * submission omits a disabled field from FormData entirely (native form
+ * behavior), which would otherwise read as "the owner cleared this box" and
+ * null it out. Either way, for a Steam-linked game these three columns are
+ * dropped from the write outright so the existing (Steam-owned) values are
+ * left exactly as they are. `commitSyncRun` (src/server/db/games/sync.ts)
+ * writes these same columns directly and never goes through this action, so
+ * this stripping can never conflict with a sync in progress.
+ */
+function stripSteamOwnedFields(input: GameInput): GameInput {
+  const { hoursTenths: _hoursTenths, achievementsUnlocked: _achievementsUnlocked, achievementsTotal: _achievementsTotal, ...rest } = input;
+  return rest;
+}
 
 function toResult(error: unknown): ActionResult {
   if (error instanceof DuplicateGameError) {
@@ -312,19 +328,40 @@ export async function updateGameAction(id: string, formData: FormData): Promise<
     return toResult(error);
   }
 
+  // Fetched before either check below, because a Steam-linked game changes
+  // both what gets written (stripSteamOwnedFields) and what the split has to
+  // add up to (the game's own current total, not whatever — or nothing — the
+  // form submitted for a disabled field).
+  let gameId: string;
+  let existing: Game;
+  try {
+    gameId = idSchema.parse(id);
+    existing = await getGame(owner.userId, gameId);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  const steamOwned = existing.steamAppid !== null;
+  const input = steamOwned ? stripSteamOwnedFields(parsed.input) : parsed.input;
+
   const duplicateYear = findDuplicateYear(parsed.playYears);
   if (duplicateYear !== null) {
     return fail(`Year ${duplicateYear} appears more than once in the split.`);
   }
 
-  const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
+  // Steam knows the total; only the owner knows which year it happened in
+  // (see game-dialog.tsx) — so the split still has to reconcile against a
+  // total, just the EXISTING Steam-owned one rather than whatever this
+  // update's own (stripped) input carries.
+  const totalTenthsForSplit = steamOwned ? (existing.hoursTenths ?? 0) : (input.hoursTenths ?? 0);
+  const validation = validateSplit(totalTenthsForSplit, parsed.playYears);
   if (!validation.ok) {
     return fail('The year-by-year split must add up to the total hours.');
   }
 
   let saved: Game;
   try {
-    saved = await updateGame(owner.userId, idSchema.parse(id), parsed.input);
+    saved = await updateGame(owner.userId, gameId, input);
   } catch (error) {
     return toResult(error);
   }

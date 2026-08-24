@@ -104,6 +104,11 @@ export function GameCard({
         <span className="text-muted-foreground text-xs">
           {PLATFORM_LABELS[game.platform]}
           {game.firstPlayedYear === null ? '' : ` · ${game.firstPlayedYear}`}
+          {/* Provenance, not platform — a `steam` PLATFORM game can still be
+              unlinked (no sync match yet), and this is specifically "does
+              Steam own this game's hours/achievements," the same signal
+              game-dialog.tsx uses to disable those fields. */}
+          {game.steamAppid === null ? '' : ' · Steam'}
         </span>
         <div className="mt-auto flex items-center justify-between pt-2">
           <RatingStars rating={game.rating} />

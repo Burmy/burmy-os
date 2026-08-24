@@ -293,3 +293,96 @@ describe('game actions — play-year split validation', () => {
     expect(unchanged.playYears).toEqual([{ year: 2022, hoursTenths: 490 }]);
   });
 });
+
+/**
+ * Task 5: for a game linked to a Steam app, Steam owns its hours and
+ * achievement counts — game-dialog.tsx renders those fields disabled, but a
+ * disabled input is a UI affordance, not a security boundary (devtools can
+ * re-enable it), so `updateGameAction` must independently ignore whatever
+ * the form actually submitted for them. This is the server-side half of the
+ * fix; `tests/unit/games-game-dialog.test.tsx`'s "GameDialog Steam
+ * provenance" suite covers the UI half.
+ */
+describe('updateGameAction — Steam-owned fields', () => {
+  it('ignores a submitted hours value for a Steam-linked game', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Hades',
+      platform: 'steam',
+      steamAppid: 367520,
+      hoursTenths: 500,
+    });
+
+    const result = await actions.updateGameAction(created.id, baseFormData({ hours: '999' }));
+
+    expect(result.ok).toBe(true);
+    const updated = await games.getGame(ownerId, created.id);
+    expect(updated.hoursTenths).toBe(500);
+  });
+
+  it('ignores submitted achievement values for a Steam-linked game', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Hades',
+      platform: 'steam',
+      steamAppid: 367520,
+      achievementsUnlocked: 10,
+      achievementsTotal: 33,
+    });
+
+    const result = await actions.updateGameAction(
+      created.id,
+      baseFormData({ achievementsUnlocked: '99', achievementsTotal: '100' }),
+    );
+
+    expect(result.ok).toBe(true);
+    const updated = await games.getGame(ownerId, created.id);
+    expect(updated.achievementsUnlocked).toBe(10);
+    expect(updated.achievementsTotal).toBe(33);
+  });
+
+  it('still accepts a submitted hours value for a game with no Steam link', async () => {
+    // Proves the stripping is conditional on `steamAppid`, not a blanket
+    // rule that would make Hours uneditable for every game.
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Ratchet & Clank: Rift Apart',
+      platform: 'ps5',
+      hoursTenths: 100,
+    });
+
+    const result = await actions.updateGameAction(created.id, baseFormData({ hours: '25' }));
+
+    expect(result.ok).toBe(true);
+    const updated = await games.getGame(ownerId, created.id);
+    expect(updated.hoursTenths).toBe(250);
+  });
+
+  it('keeps a Steam-linked game with a play-year split saveable — the split still validates against the existing (unstripped) total', async () => {
+    // Regression guard for the companion fix this task required: if the
+    // split's total were taken from the (now-stripped) submitted `hours`
+    // field instead of the game's own current total, this save would fail
+    // validation on every edit of a Steam-linked game that has a split.
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Hades',
+      platform: 'steam',
+      steamAppid: 367520,
+      hoursTenths: 490,
+    });
+    await playYearsDb.replacePlayYears(ownerId, created.id, [{ year: 2024, hoursTenths: 490 }]);
+
+    const result = await actions.updateGameAction(
+      created.id,
+      baseFormData({
+        rating: '4',
+        playYears: JSON.stringify([{ year: '2024', hours: '49' }]),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    const updated = await games.getGame(ownerId, created.id);
+    expect(updated.hoursTenths).toBe(490);
+    expect(updated.playYears).toEqual([{ year: 2024, hoursTenths: 490 }]);
+  });
+});

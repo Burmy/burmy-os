@@ -303,3 +303,58 @@ describe('GameDialog play-year split — row-eligibility consistency', () => {
     expect(submittedPlayYears.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Task 5: for a game linked to a Steam app, Steam owns its hours and
+ * achievement counts, so those fields render read-only and say where the
+ * number came from — this is the UI half of the fix for "I am confused what
+ * is from Steam and what is from my manual entry." The server-side half
+ * (a disabled input is a UI affordance, not a security boundary) lives in
+ * `tests/integration/games-actions.test.ts`.
+ */
+describe('GameDialog Steam provenance', () => {
+  it('renders hours read-only for a Steam-linked game', () => {
+    render(<GameDialog game={game({ steamAppid: 367520 })} open onOpenChange={() => {}} />);
+    expect(screen.getByLabelText('Hours played')).toBeDisabled();
+  });
+
+  it('labels the field with its source', () => {
+    render(<GameDialog game={game({ steamAppid: 367520 })} open onOpenChange={() => {}} />);
+    // One "From Steam" note each for Hours, Achievements earned and
+    // Achievements total — see the "keeps achievement counts read-only"
+    // test below for the disabled assertion on those same three fields.
+    expect(screen.getAllByText(/from steam/i).length).toBeGreaterThan(0);
+  });
+
+  it('keeps hours editable for a game with no Steam link', () => {
+    render(<GameDialog game={game({ steamAppid: null })} open onOpenChange={() => {}} />);
+    expect(screen.getByLabelText('Hours played')).not.toBeDisabled();
+  });
+
+  it('keeps achievement counts read-only for a Steam-linked game', () => {
+    render(<GameDialog game={game({ steamAppid: 367520 })} open onOpenChange={() => {}} />);
+    expect(screen.getByLabelText('Achievements earned')).toBeDisabled();
+    expect(screen.getByLabelText('Achievements total')).toBeDisabled();
+  });
+
+  it('keeps rating, status and notes editable for a Steam-linked game', () => {
+    render(<GameDialog game={game({ steamAppid: 367520 })} open onOpenChange={() => {}} />);
+    expect(screen.getByLabelText('Rating (1-5)')).not.toBeDisabled();
+    // `status` is a Radix `Select` — its accessible control is the trigger
+    // button (`role="combobox"`), labelled via FieldSelect's `htmlFor`.
+    expect(screen.getByLabelText('Status')).not.toBeDisabled();
+    expect(screen.getByLabelText('Notes')).not.toBeDisabled();
+  });
+
+  it('keeps the play-year split editable even when the total is Steam-owned', () => {
+    // Steam knows the total; only the owner knows which year it happened in.
+    render(
+      <GameDialog
+        game={game({ steamAppid: 367520, hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    expect(screen.getByLabelText('Year')).not.toBeDisabled();
+  });
+});

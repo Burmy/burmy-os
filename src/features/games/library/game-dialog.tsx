@@ -106,6 +106,15 @@ export function GameDialog({
     (game?.playYears ?? []).map((row) => ({ year: String(row.year), hours: toHoursInput(hours(row.hoursTenths)) })),
   );
   const [showSplit, setShowSplit] = useState((game?.playYears ?? []).length > 0);
+  // A linked game has its total hours and achievement counts written by
+  // Steam sync (see `commitSyncRun` in src/server/db/games/sync.ts), so this
+  // form must not let the owner type over them — the Hours/Achievements
+  // `Field`s below render disabled + a "From Steam" note when this is true.
+  // Disabling is a UI affordance only; `updateGameAction` independently
+  // drops these fields from the write regardless of what the form submits.
+  // The play-year split stays fully editable either way — Steam knows the
+  // total, only the owner knows which year it happened in.
+  const steamOwned = game?.steamAppid !== null && game?.steamAppid !== undefined;
   const [suggestions, setSuggestions] = useState<readonly GameSuggestion[]>([]);
   const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -348,6 +357,8 @@ export function GameDialog({
                 value={hoursFieldValue}
                 onChange={setHoursFieldValue}
                 placeholder="23.5"
+                disabled={steamOwned}
+                hint={steamOwned ? 'From Steam' : null}
               />
               <div className="sm:col-span-2">
                 {showSplit ? (
@@ -374,8 +385,22 @@ export function GameDialog({
                   ...GAME_OWNERSHIPS.map((value) => ({ value, label: value === 'physical' ? 'Physical' : 'Digital' })),
                 ]}
               />
-              <Field id="achievementsUnlocked" label="Achievements earned" defaultValue={game?.achievementsUnlocked ?? ''} placeholder="42" />
-              <Field id="achievementsTotal" label="Achievements total" defaultValue={game?.achievementsTotal ?? ''} placeholder="54" />
+              <Field
+                id="achievementsUnlocked"
+                label="Achievements earned"
+                defaultValue={game?.achievementsUnlocked ?? ''}
+                placeholder="42"
+                disabled={steamOwned}
+                hint={steamOwned ? 'From Steam' : null}
+              />
+              <Field
+                id="achievementsTotal"
+                label="Achievements total"
+                defaultValue={game?.achievementsTotal ?? ''}
+                placeholder="54"
+                disabled={steamOwned}
+                hint={steamOwned ? 'From Steam' : null}
+              />
               {/*
                * Radix's Checkbox renders a hidden native input mirroring its
                * state (`name`/`value` bubble through to real FormData), so an
@@ -447,6 +472,8 @@ function Field({
   value,
   onChange,
   placeholder,
+  disabled,
+  hint,
 }: {
   readonly id: string;
   readonly label: string;
@@ -454,6 +481,16 @@ function Field({
   readonly value?: string;
   readonly onChange?: (value: string) => void;
   readonly placeholder?: string;
+  readonly disabled?: boolean;
+  /**
+   * A short provenance note rendered beside the input — e.g. "From Steam" for
+   * a field a linked game's sync run owns. `string | null` rather than the
+   * usual `string | undefined` so callers can pass the field's live
+   * "do I have a hint right now" state directly (`hint={cond ? 'x' : null}`)
+   * without an extra conditional spread just to dodge
+   * `exactOptionalPropertyTypes`.
+   */
+  readonly hint?: string | null;
 }): React.ReactElement {
   return (
     <div className="space-y-2">
@@ -463,7 +500,9 @@ function Field({
         name={id}
         {...(value === undefined ? { defaultValue } : { value, onChange: (e: React.ChangeEvent<HTMLInputElement>) => onChange?.(e.target.value) })}
         {...(placeholder === undefined ? {} : { placeholder })}
+        disabled={disabled}
       />
+      {hint == null ? null : <p className="text-muted-foreground text-xs">{hint}</p>}
     </div>
   );
 }

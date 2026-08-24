@@ -165,7 +165,11 @@ describe('LibraryView', () => {
   it('does not render a status filter chip for a status with zero games', () => {
     render(<LibraryView games={[game({ id: 'a', status: 'completed' })]} />);
 
-    expect(screen.getByRole('button', { name: /^all\s/i })).toBeInTheDocument();
+    // `\d` right after "all" (no space) is what makes this the STATUS
+    // group's own "All" chip specifically — "All platforms"/"All sources"
+    // both also start with "all" but with a space, not a digit, so this
+    // stays unambiguous as more "All ___" chip groups are added.
+    expect(screen.getByRole('button', { name: /^all\d/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^completed/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
@@ -175,6 +179,42 @@ describe('LibraryView', () => {
   it('labels the steam platform chip "Steam / PC"', () => {
     render(<LibraryView games={[game({ id: 'a', platform: 'steam' })]} />);
     expect(screen.getByRole('button', { name: /^steam \/ pc/i })).toBeInTheDocument();
+  });
+
+  /**
+   * Task 5: the Source facet distinguishes "Steam owns this game's hours"
+   * from "the owner entered it by hand" — `steamAppid !== null`, not the
+   * `platform` field (see the matching provenance note on `game-card.tsx`
+   * and `game-dialog.tsx`'s `steamOwned`).
+   */
+  it('filters by source', async () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', title: 'Linked Game', steamAppid: 367520 }),
+          game({ id: 'b', title: 'Hand-entered Game', steamAppid: null }),
+        ]}
+      />,
+    );
+
+    // `\d` right after "steam" (no space, see the "All" chip's own comment
+    // above) picks the Source chip specifically, not the platform group's
+    // "Steam / PC" — neither game here uses the `steam` platform, so that
+    // chip wouldn't render anyway, but the digit anchor keeps this correct
+    // even in a library that has both.
+    await userEvent.click(screen.getByRole('button', { name: /^steam\d/i }));
+
+    expect(screen.getByText('Linked Game')).toBeInTheDocument();
+    expect(screen.queryByText('Hand-entered Game')).not.toBeInTheDocument();
+  });
+
+  it('does not render a source filter chip when every game shares one source', () => {
+    render(<LibraryView games={[game({ id: 'a', steamAppid: null })]} />);
+
+    expect(screen.getByRole('button', { name: /^all sources/i })).toBeInTheDocument();
+    // Every game here is manual — the "Steam" chip would be a dead 0 count.
+    expect(screen.queryByRole('button', { name: /^steam\d/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^manual/i })).toBeInTheDocument();
   });
 
   it('tells the owner the library is empty rather than rendering a blank grid', () => {

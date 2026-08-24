@@ -16,6 +16,10 @@ import { GameTable } from './game-table';
 type ViewMode = 'gallery' | 'table';
 type StatusFilter = GameStatus | 'all';
 type PlatformFilter = GamePlatform | 'all';
+// Provenance, not platform — `game.steamAppid !== null` is the same signal
+// game-dialog.tsx uses to render Hours/Achievements read-only, independent
+// of the `platform` field (a `steam` platform game can still be unlinked).
+type SourceFilter = 'all' | 'steam' | 'manual';
 
 /**
  * The library screen. Owns view mode, status filter, platform filter, and
@@ -27,6 +31,7 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [platform, setPlatform] = useState<PlatformFilter>('all');
+  const [source, setSource] = useState<SourceFilter>('all');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Game | null>(null);
   const [creating, setCreating] = useState(false);
@@ -36,6 +41,8 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
     return games.filter((game) => {
       if (status !== 'all' && game.status !== status) return false;
       if (platform !== 'all' && game.platform !== platform) return false;
+      if (source === 'steam' && game.steamAppid === null) return false;
+      if (source === 'manual' && game.steamAppid !== null) return false;
       if (needle === '') return true;
       return (
         game.title.toLowerCase().includes(needle) ||
@@ -43,7 +50,7 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
         (game.publisher ?? '').toLowerCase().includes(needle)
       );
     });
-  }, [games, status, platform, search]);
+  }, [games, status, platform, source, search]);
 
   const counts = useMemo(() => {
     const byStatus = new Map<GameStatus, number>();
@@ -55,6 +62,18 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
     const byPlatform = new Map<GamePlatform, number>();
     for (const game of games) byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
     return byPlatform;
+  }, [games]);
+
+  // Same provenance signal as game-dialog.tsx's `steamOwned` and
+  // game-card.tsx's source mark — `steamAppid !== null`, not `platform`.
+  const sourceCounts = useMemo(() => {
+    let steam = 0;
+    let manual = 0;
+    for (const game of games) {
+      if (game.steamAppid === null) manual += 1;
+      else steam += 1;
+    }
+    return { steam, manual };
   }, [games]);
 
   return (
@@ -152,6 +171,35 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
                 onClick={() => setPlatform(value)}
               />
             ))}
+          </div>
+
+          <div className="flex flex-wrap gap-1">
+            <FilterChip
+              label="All sources"
+              count={games.length}
+              active={source === 'all'}
+              onClick={() => setSource('all')}
+            />
+            {/* Same zero-count-hides-the-chip rule as status/platform above —
+                a library with no synced games yet shouldn't show a dead
+                "Steam 0" chip, and one with no manual entries shouldn't show
+                a dead "Manual 0" chip. */}
+            {sourceCounts.steam === 0 ? null : (
+              <FilterChip
+                label="Steam"
+                count={sourceCounts.steam}
+                active={source === 'steam'}
+                onClick={() => setSource('steam')}
+              />
+            )}
+            {sourceCounts.manual === 0 ? null : (
+              <FilterChip
+                label="Manual"
+                count={sourceCounts.manual}
+                active={source === 'manual'}
+                onClick={() => setSource('manual')}
+              />
+            )}
           </div>
         </div>
       </div>
