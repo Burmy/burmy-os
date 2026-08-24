@@ -4,6 +4,7 @@ import {
   type AttributableGame,
   type PlayYearRow,
   attributeHours,
+  findDuplicateYear,
   validateSplit,
 } from '@/server/games/play-years';
 
@@ -124,5 +125,29 @@ describe('validateSplit', () => {
 
   it('treats an empty split as valid — no split means no constraint', () => {
     expect(validateSplit(490, []).ok).toBe(true);
+  });
+});
+
+describe('findDuplicateYear', () => {
+  it('returns null when every year is unique', () => {
+    expect(findDuplicateYear([{ year: 2024 }, { year: 2025 }])).toBeNull();
+  });
+
+  it('returns the repeated year', () => {
+    expect(findDuplicateYear([{ year: 2024 }, { year: 2025 }, { year: 2024 }])).toBe(2024);
+  });
+
+  it('returns null for an empty split', () => {
+    expect(findDuplicateYear([])).toBeNull();
+  });
+
+  it('returns null for a single row', () => {
+    expect(findDuplicateYear([{ year: 2024 }])).toBeNull();
+  });
+
+  it('finds the repeat regardless of how many other unique years surround it', () => {
+    expect(
+      findDuplicateYear([{ year: 2019 }, { year: 2020 }, { year: 2021 }, { year: 2020 }, { year: 2022 }]),
+    ).toBe(2020);
   });
 });

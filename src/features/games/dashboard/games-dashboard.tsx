@@ -29,7 +29,7 @@ export function GamesDashboard({
   const summary = buildLibrarySummary(rows);
   const financial = buildFinancialSummary(rows);
   const yearly = buildYearlyBreakdown(rows, playYears);
-  const callouts = findCallouts(rows);
+  const callouts = findCallouts(rows, yearly.rows);
 
   const platforms = buildDistribution(rows, (row) => row.platform, (key) => PLATFORM_LABELS[key as GamePlatform]);
   const ownership = buildDistribution(rows, (row) => row.ownership, (key) => (key === 'physical' ? 'Physical' : 'Digital'));

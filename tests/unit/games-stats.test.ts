@@ -303,34 +303,74 @@ describe('buildDistribution', () => {
 
 describe('findCallouts', () => {
   it('finds the longest game by hours', () => {
-    const callouts = findCallouts([
-      game({ id: 'a', title: 'Short', hoursTenths: 100 }),
-      game({ id: 'b', title: 'Long', hoursTenths: 1700 }),
-    ]);
+    const callouts = findCallouts(
+      [game({ id: 'a', title: 'Short', hoursTenths: 100 }), game({ id: 'b', title: 'Long', hoursTenths: 1700 })],
+      [],
+    );
     expect(callouts.longestGame?.title).toBe('Long');
   });
 
   it('finds the most-played developer by summed hours, not by game count', () => {
     // Two short FromSoftware games vs one very long Rockstar game.
-    const callouts = findCallouts([
-      game({ id: 'a', developer: 'FromSoftware, Inc.', hoursTenths: 100 }),
-      game({ id: 'b', developer: 'FromSoftware, Inc.', hoursTenths: 100 }),
-      game({ id: 'c', developer: 'Rockstar Games', hoursTenths: 1700 }),
-    ]);
+    const callouts = findCallouts(
+      [
+        game({ id: 'a', developer: 'FromSoftware, Inc.', hoursTenths: 100 }),
+        game({ id: 'b', developer: 'FromSoftware, Inc.', hoursTenths: 100 }),
+        game({ id: 'c', developer: 'Rockstar Games', hoursTenths: 1700 }),
+      ],
+      [],
+    );
     expect(callouts.topDeveloper?.name).toBe('Rockstar Games');
     expect(callouts.topDeveloper?.hoursTenths).toBe(1700);
   });
 
-  it('finds the best year by hours played', () => {
-    const callouts = findCallouts([
+  /**
+   * `bestYear` no longer derives its own year->hours map from `firstPlayedYear`
+   * — it picks the max out of the already-computed `YearlyBreakdownRow[]`, the
+   * same rows `buildYearlyBreakdown` hands the Year-by-year table. Building
+   * `yearlyRows` via the real function here (rather than a hand-written
+   * fixture) is what actually proves the two agree.
+   */
+  it('finds the best year from the already-computed yearly breakdown', () => {
+    const rows = [
       game({ id: 'a', firstPlayedYear: 2022, hoursTenths: 4640 }),
       game({ id: 'b', firstPlayedYear: 2023, hoursTenths: 4380 }),
-    ]);
+    ];
+    const { rows: yearlyRows } = buildYearlyBreakdown(rows, []);
+
+    const callouts = findCallouts(rows, yearlyRows);
     expect(callouts.bestYear?.year).toBe(2022);
+    expect(callouts.bestYear?.hoursTenths).toBe(4640);
+  });
+
+  /**
+   * Regression for the bug the Task 4 review caught: this callout used to
+   * credit a split game's FULL total to its `firstPlayedYear`, disagreeing
+   * with the Year-by-year table (built from `attributeHours`) for the exact
+   * same library — the card said "2024, 591.7h" while the table said "2024,
+   * 579.7h". With `bestYear` now reading off the SAME breakdown rows the
+   * table renders, a play-year split moves this callout's numbers exactly
+   * the way it moves the table's.
+   */
+  it('reflects a play-year split rather than crediting the full total to the start year', () => {
+    const rows = [
+      game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490 }),
+      game({ id: 'other', firstPlayedYear: 2023, hoursTenths: 400 }),
+    ];
+    const playYears = [
+      { gameId: 'hk', year: 2024, hoursTenths: 370 },
+      { gameId: 'hk', year: 2025, hoursTenths: 120 },
+    ];
+    const { rows: yearlyRows } = buildYearlyBreakdown(rows, playYears);
+
+    const callouts = findCallouts(rows, yearlyRows);
+    // 2024 now holds only 370h once the split is applied, so 2023's flat
+    // 400h wins — the bug this test guards against would have said 2024/490h.
+    expect(callouts.bestYear).toEqual({ year: 2023, hoursTenths: 400 });
   });
 
   it('returns nulls rather than throwing on an empty library', () => {
-    const callouts = findCallouts([]);
+    const callouts = findCallouts([], []);
     expect(callouts.longestGame).toBeNull();
     expect(callouts.topDeveloper).toBeNull();
     expect(callouts.bestYear).toBeNull();

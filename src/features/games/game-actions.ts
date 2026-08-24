@@ -8,7 +8,7 @@ import { DuplicateGameError, GameNotFoundError } from '@/server/db/games/errors'
 import { type Game, type GameInput, createGame, deleteGame, updateGame } from '@/server/db/games/games';
 import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
-import { validateSplit } from '@/server/games/play-years';
+import { findDuplicateYear, validateSplit } from '@/server/games/play-years';
 import { GAME_OWNERSHIPS, GAME_PLATFORMS, GAME_STATUSES } from '@/server/games/taxonomy';
 import { type ActionResult, fail, ok } from './action-result';
 
@@ -242,6 +242,11 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
     return toResult(error);
   }
 
+  const duplicateYear = findDuplicateYear(parsed.playYears);
+  if (duplicateYear !== null) {
+    return fail(`Year ${duplicateYear} appears more than once in the split.`);
+  }
+
   const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
   if (!validation.ok) {
     return fail('The year-by-year split must add up to the total hours.');
@@ -254,7 +259,20 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
     return toResult(error);
   }
 
-  await replacePlayYears(owner.userId, saved.id, parsed.playYears);
+  // Deliberately two separate writes, not one transaction. The checks above
+  // (duplicate year, sum mismatch) remove the only reachable way
+  // `replacePlayYears` could fail in normal operation — real atomicity would
+  // mean widening `createGame`/`updateGame` to accept play years directly and
+  // updating every caller, just to close a window that now requires an actual
+  // mid-request database fault (a race, a dropped connection) to hit at all.
+  // If it DOES throw, the game row has already been committed; the catch
+  // below turns that into a field error instead of an unhandled crash — it is
+  // defense-in-depth, not a rollback.
+  try {
+    await replacePlayYears(owner.userId, saved.id, parsed.playYears);
+  } catch {
+    return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
+  }
 
   // `'layout'` covers both tab routes (`/games/library`, `/games/stats`) in
   // one call. `/games` itself is a pure `redirect('/games/library')` with no
@@ -275,6 +293,11 @@ export async function updateGameAction(id: string, formData: FormData): Promise<
     return toResult(error);
   }
 
+  const duplicateYear = findDuplicateYear(parsed.playYears);
+  if (duplicateYear !== null) {
+    return fail(`Year ${duplicateYear} appears more than once in the split.`);
+  }
+
   const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
   if (!validation.ok) {
     return fail('The year-by-year split must add up to the total hours.');
@@ -287,7 +310,13 @@ export async function updateGameAction(id: string, formData: FormData): Promise<
     return toResult(error);
   }
 
-  await replacePlayYears(owner.userId, saved.id, parsed.playYears);
+  // See the matching comment in createGameAction — deliberately not atomic
+  // with the write above, and for the same reason.
+  try {
+    await replacePlayYears(owner.userId, saved.id, parsed.playYears);
+  } catch {
+    return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
+  }
 
   revalidatePath('/games', 'layout');
   return ok();

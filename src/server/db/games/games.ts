@@ -172,7 +172,21 @@ export async function getGame(ownerId: string, id: string): Promise<Game> {
   const row = rows[0];
   if (!row) throw new GameNotFoundError();
   const playYears = await listPlayYearsForGame(ownerId, row.id);
-  return rowToGame(row, playYears);
+  return rowToGame(row, stripGameId(playYears));
+}
+
+/**
+ * `listPlayYearsForGame` returns the full `PlayYearRow` shape (it also
+ * carries `gameId`, useful to `listPlayYears`' bulk caller in `listGames`).
+ * `Game.playYears` is declared narrower — `{ year, hoursTenths }` only, since
+ * every entry already belongs to the one game it hangs off — so this strips
+ * the redundant `gameId` rather than let it leak through as an unlisted
+ * extra property on every single-game fetch.
+ */
+function stripGameId(
+  rows: readonly { readonly year: number; readonly hoursTenths: number }[],
+): { readonly year: number; readonly hoursTenths: number }[] {
+  return rows.map((row) => ({ year: row.year, hoursTenths: row.hoursTenths }));
 }
 
 export async function createGame(ownerId: string, input: GameInput): Promise<Game> {
@@ -209,7 +223,7 @@ export async function updateGame(ownerId: string, id: string, input: GameInput):
     // is unchanged by it, so reflect its actual current state rather than
     // reporting an empty split on a game that has one.
     const playYears = await listPlayYearsForGame(ownerId, row.id);
-    return rowToGame(row, playYears);
+    return rowToGame(row, stripGameId(playYears));
   } catch (error) {
     if (isUniqueViolation(error)) throw new DuplicateGameError(input.title);
     throw error;

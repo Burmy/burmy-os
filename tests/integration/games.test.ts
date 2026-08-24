@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { harness, resetDatabase } from './harness';
 
@@ -14,15 +14,18 @@ import { harness, resetDatabase } from './harness';
 
 type Games = typeof import('@/server/db/games/games');
 type Errors = typeof import('@/server/db/games/errors');
+type PlayYearsDb = typeof import('@/server/db/games/play-years');
 
 let games: Games;
 let errors: Errors;
+let playYearsDb: PlayYearsDb;
 
 beforeAll(async () => {
   await harness();
-  [games, errors] = await Promise.all([
+  [games, errors, playYearsDb] = await Promise.all([
     import('@/server/db/games/games'),
     import('@/server/db/games/errors'),
+    import('@/server/db/games/play-years'),
   ]);
 });
 
@@ -230,6 +233,48 @@ describe('listGames', () => {
     const result = await games.listGames(owner);
 
     expect(result.map((g) => g.id)).toEqual([earlierAlphabetically.id, laterAlphabetically.id]);
+  });
+
+  /**
+   * Regression coverage for the N+1 the Task 4 brief explicitly called out:
+   * `listGames` must fetch every owner's play-year splits with ONE call to
+   * `listPlayYears`, grouping in memory, rather than one `listPlayYearsForGame`
+   * call per row. Spying on both DAL functions proves which code path
+   * actually ran, not just that the final result happens to look right — a
+   * correct-looking result could still hide an N+1 if the test only checked
+   * the returned data.
+   */
+  it("fetches every game's play-year split with ONE listPlayYears call, not one per game", async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const withSplit = await games.createGame(owner, { title: 'Hollow Knight', platform: 'steam', hoursTenths: 490 });
+    const otherSplit = await games.createGame(owner, { title: 'Lies of P', platform: 'ps5', hoursTenths: 300 });
+    const noSplit = await games.createGame(owner, { title: 'Returnal', platform: 'ps5', hoursTenths: 200 });
+
+    await playYearsDb.replacePlayYears(owner, withSplit.id, [
+      { year: 2024, hoursTenths: 370 },
+      { year: 2025, hoursTenths: 120 },
+    ]);
+    await playYearsDb.replacePlayYears(owner, otherSplit.id, [{ year: 2023, hoursTenths: 300 }]);
+    // noSplit deliberately has no game_play_years rows at all.
+
+    const listSpy = vi.spyOn(playYearsDb, 'listPlayYears');
+    const perGameSpy = vi.spyOn(playYearsDb, 'listPlayYearsForGame');
+
+    const result = await games.listGames(owner);
+
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    expect(perGameSpy).not.toHaveBeenCalled();
+
+    const byId = new Map(result.map((g) => [g.id, g]));
+    expect(byId.get(withSplit.id)?.playYears).toEqual([
+      { year: 2024, hoursTenths: 370 },
+      { year: 2025, hoursTenths: 120 },
+    ]);
+    expect(byId.get(otherSplit.id)?.playYears).toEqual([{ year: 2023, hoursTenths: 300 }]);
+    expect(byId.get(noSplit.id)?.playYears).toEqual([]);
+
+    listSpy.mockRestore();
+    perGameSpy.mockRestore();
   });
 });
 

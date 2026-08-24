@@ -126,3 +126,26 @@ export function validateSplit(
   const differenceTenths = totalTenths - splitTenths;
   return { ok: differenceTenths === 0, splitTenths, totalTenths, differenceTenths };
 }
+
+/**
+ * The first year that appears more than once in a split, or `null` when every
+ * year is unique.
+ *
+ * `game_play_years_game_year_idx` — the database's own unique index on
+ * `(game_id, year)` — would catch this too, but only after `replacePlayYears`
+ * has already deleted the old split and attempted to insert the new one, and
+ * only after the game's OWN fields may already have been committed by a
+ * separate, earlier statement (`createGame`/`updateGame` run first — see the
+ * call site in `game-actions.ts`). Rejecting the duplicate here, before
+ * either write is attempted, is what keeps a mismatched split from ever
+ * reaching the database at all, instead of relying on a unique-violation to
+ * refuse it after the fact.
+ */
+export function findDuplicateYear(rows: readonly { readonly year: number }[]): number | null {
+  const seen = new Set<number>();
+  for (const row of rows) {
+    if (seen.has(row.year)) return row.year;
+    seen.add(row.year);
+  }
+  return null;
+}

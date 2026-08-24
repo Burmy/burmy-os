@@ -33,15 +33,18 @@ vi.mock('next/cache', () => ({
 
 type GameActions = typeof import('@/features/games/game-actions');
 type Games = typeof import('@/server/db/games/games');
+type PlayYearsDb = typeof import('@/server/db/games/play-years');
 
 let actions: GameActions;
 let games: Games;
+let playYearsDb: PlayYearsDb;
 
 beforeAll(async () => {
   await harness();
-  [actions, games] = await Promise.all([
+  [actions, games, playYearsDb] = await Promise.all([
     import('@/features/games/game-actions'),
     import('@/server/db/games/games'),
+    import('@/server/db/games/play-years'),
   ]);
 });
 
@@ -133,5 +136,160 @@ describe('updateGameAction — platinum can be turned back OFF', () => {
     expect(result.ok).toBe(true);
     const updated = await games.getGame(ownerId, created.id);
     expect(updated.platinum).toBe(true);
+  });
+});
+
+/**
+ * The play-year split, end to end through the Server Action path — not just
+ * `replacePlayYears` itself (that is `tests/integration/games-play-years.test.ts`'s
+ * job) but the whole `parse() -> validate -> write game -> write split` chain
+ * in `game-actions.ts`.
+ */
+describe('createGameAction — play-year split', () => {
+  it('persists a split that sums to the total and reads it back through both listGames and getGame', async () => {
+    const ownerId = await provisionOwner();
+
+    const result = await actions.createGameAction(
+      baseFormData({
+        hours: '49',
+        playYears: JSON.stringify([
+          { year: '2024', hours: '37' },
+          { year: '2025', hours: '12' },
+        ]),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+
+    const [listed] = await games.listGames(ownerId);
+    expect(listed?.playYears).toEqual([
+      { year: 2024, hoursTenths: 370 },
+      { year: 2025, hoursTenths: 120 },
+    ]);
+
+    const fetched = await games.getGame(ownerId, listed!.id);
+    expect(fetched.playYears).toEqual([
+      { year: 2024, hoursTenths: 370 },
+      { year: 2025, hoursTenths: 120 },
+    ]);
+  });
+});
+
+describe('updateGameAction — play-year split', () => {
+  it('replaces the previous split rather than appending to it', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Ratchet & Clank: Rift Apart',
+      platform: 'ps5',
+      hoursTenths: 490,
+    });
+    await playYearsDb.replacePlayYears(ownerId, created.id, [{ year: 2022, hoursTenths: 490 }]);
+
+    const result = await actions.updateGameAction(
+      created.id,
+      baseFormData({
+        hours: '49',
+        playYears: JSON.stringify([
+          { year: '2024', hours: '37' },
+          { year: '2025', hours: '12' },
+        ]),
+      }),
+    );
+
+    expect(result.ok).toBe(true);
+    const updated = await games.getGame(ownerId, created.id);
+    expect(updated.playYears).toEqual([
+      { year: 2024, hoursTenths: 370 },
+      { year: 2025, hoursTenths: 120 },
+    ]);
+  });
+});
+
+describe('game actions — play-year split validation', () => {
+  it('rejects a split that does not sum to the total and writes nothing at all', async () => {
+    const ownerId = await provisionOwner();
+
+    const result = await actions.createGameAction(
+      baseFormData({
+        hours: '49',
+        playYears: JSON.stringify([
+          { year: '2024', hours: '30' },
+          { year: '2025', hours: '12' },
+        ]),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(await games.listGames(ownerId)).toEqual([]);
+  });
+
+  /**
+   * Regression test for the CRITICAL finding in the Task 4 review:
+   * `validateSplit` only checks the SUM, never year uniqueness, so a split
+   * like 2024/20 + 2024/17 + 2025/12 (sum = 49, matching the total) used to
+   * sail past validation and only fail once `replacePlayYears` hit
+   * `game_play_years_game_year_idx` — a throw that `toResult()` could not
+   * route (not a `DuplicateGameError`/`GameNotFoundError`/`z.ZodError`) and
+   * that nothing caught, surfacing as an unhandled fault instead of a field
+   * error. Before `findDuplicateYear` + the early rejection in
+   * `game-actions.ts`, `await actions.createGameAction(...)` below would
+   * REJECT rather than resolve to `{ ok: false }`, failing this test at the
+   * very first assertion.
+   */
+  it('rejects duplicate years in a split and writes nothing, rather than crashing on the unique index', async () => {
+    const ownerId = await provisionOwner();
+
+    const result = await actions.createGameAction(
+      baseFormData({
+        hours: '49',
+        playYears: JSON.stringify([
+          { year: '2024', hours: '20' },
+          { year: '2024', hours: '17' },
+          { year: '2025', hours: '12' },
+        ]),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain('2024');
+    // No orphan game row left behind despite the split failing.
+    expect(await games.listGames(ownerId)).toEqual([]);
+  });
+
+  /**
+   * The other half of the same regression: on UPDATE, `updateGame()` commits
+   * the game's new field values BEFORE `replacePlayYears` runs, so an
+   * unhandled crash there used to leave the game row with its NEW values
+   * while `game_play_years` kept the OLD split — real inconsistent state.
+   * With the duplicate check running before either write, neither the game
+   * row nor the split should change at all.
+   */
+  it('rejects duplicate years on update without changing the game row or the existing split', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Ratchet & Clank: Rift Apart',
+      platform: 'ps5',
+      hoursTenths: 490,
+      rating: 3,
+    });
+    await playYearsDb.replacePlayYears(ownerId, created.id, [{ year: 2022, hoursTenths: 490 }]);
+
+    const result = await actions.updateGameAction(
+      created.id,
+      baseFormData({
+        hours: '49',
+        rating: '5',
+        playYears: JSON.stringify([
+          { year: '2024', hours: '20' },
+          { year: '2024', hours: '17' },
+          { year: '2025', hours: '12' },
+        ]),
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    const unchanged = await games.getGame(ownerId, created.id);
+    expect(unchanged.rating).toBe(3);
+    expect(unchanged.playYears).toEqual([{ year: 2022, hoursTenths: 490 }]);
   });
 });

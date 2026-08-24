@@ -260,7 +260,22 @@ export function buildDistribution(
     .sort((a, b) => b.count - a.count);
 }
 
-export function findCallouts(rows: readonly GameStatRow[]): Callouts {
+/**
+ * `longestGame` and `topDeveloper` aggregate TOTAL hours per game/developer —
+ * not year-scoped, so they read straight off `rows`. `bestYear` IS
+ * year-scoped, and used to build its own `yearHours` map keyed on
+ * `firstPlayedYear`, crediting a game's FULL total to a single year — the
+ * same thing `buildYearlyBreakdown` used to do before play-year splits
+ * existed, and exactly the bug this whole feature fixes everywhere else. That
+ * left two disagreeing implementations: this callout said "2024, 591.7h"
+ * while the Year-by-year table (built from `attributeHours`) said "2024,
+ * 579.7h" for the very same library. Rather than reimplementing attribution
+ * a second time here, `bestYear` now takes the already-computed
+ * `YearlyBreakdownRow[]` — the same rows the table renders — and just picks
+ * the max by `hoursTenths`. One attribution implementation, not two kept in
+ * sync by hand.
+ */
+export function findCallouts(rows: readonly GameStatRow[], yearlyRows: readonly YearlyBreakdownRow[]): Callouts {
   const played = rows.filter((row) => (row.hoursTenths ?? 0) > 0);
 
   const longest = played.reduce<GameStatRow | null>(
@@ -275,17 +290,15 @@ export function findCallouts(rows: readonly GameStatRow[]): Callouts {
   }
   const topDeveloperEntry = [...developerHours.entries()].sort((a, b) => b[1] - a[1])[0];
 
-  const yearHours = new Map<number, number>();
-  for (const row of played) {
-    if (row.firstPlayedYear === null) continue;
-    yearHours.set(row.firstPlayedYear, (yearHours.get(row.firstPlayedYear) ?? 0) + (row.hoursTenths ?? 0));
-  }
-  const bestYearEntry = [...yearHours.entries()].sort((a, b) => b[1] - a[1])[0];
+  const bestYearRow = yearlyRows.reduce<YearlyBreakdownRow | null>(
+    (best, row) => (best === null || row.hoursTenths > best.hoursTenths ? row : best),
+    null,
+  );
 
   return {
     longestGame: longest === null ? null : { title: longest.title, hoursTenths: longest.hoursTenths ?? 0 },
     topDeveloper:
       topDeveloperEntry === undefined ? null : { name: topDeveloperEntry[0], hoursTenths: topDeveloperEntry[1] },
-    bestYear: bestYearEntry === undefined ? null : { year: bestYearEntry[0], hoursTenths: bestYearEntry[1] },
+    bestYear: bestYearRow === null ? null : { year: bestYearRow.year, hoursTenths: bestYearRow.hoursTenths },
   };
 }
