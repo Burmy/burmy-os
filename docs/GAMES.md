@@ -361,15 +361,34 @@ account is not this feature's goal.
 ### Credentials and the dry-run contract
 
 `STEAM_API_KEY`/`STEAM_ID` are optional at the module level, matching IGDB's own contract:
-`src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing credentials, a
-network error, a timeout, a non-200, or malformed JSON, and the full test suite passes with neither
-present. The owner's Steam profile "Game details" privacy must be set to Public, or the API silently
-returns an empty games list — there is no error response to tell "wrong credentials" apart from "private
-profile," which is why the script's report calls this out explicitly when zero games come back.
+`src/server/db/games/steam-client.ts` never throws on missing credentials, a network error, a timeout, a
+non-200, or malformed JSON, and the full test suite passes with neither present. Unlike IGDB, that
+soft-failure contract is not a flat "always `[]`": `fetchOwnedGames` returns `null` when the request
+itself failed, distinct from `[]` for a successful response that genuinely carries zero games (a private
+"Game details" profile, or an account that really owns nothing — Steam's response shape doesn't
+distinguish those two; see `toOwnedGames`). The owner's Steam profile "Game details" privacy must be set
+to Public, or the API silently returns an empty games list — there is no error response to tell "wrong
+credentials" apart from "private profile," which is why the script's report calls this out explicitly
+when zero games come back with no fetch error.
 
-The script itself is a stricter, CLI-level gate on top of that soft-failure contract: it exits early
-with an error if either var is unset, since there is nothing useful a sync run can do without them —
-the same shape `backfill-game-metadata.mjs` already uses for `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`.
+`STEAM_ID` accepts either form of Steam's own profile URL — `/profiles/{steamid64}` or
+`/id/{vanityname}` — since an owner copying their own profile URL has no way to know `GetOwnedGames`
+requires the 17-digit numeric SteamID64. A value that is exactly 17 digits (`isSteamId64` in
+`src/server/games/steam.ts`) is used as-is; anything else is treated as a vanity name and resolved to a
+SteamID64 via `ISteamUser/ResolveVanityURL/v1` before the sync runs, printing what it resolved to so the
+owner can confirm it worked. If the name doesn't resolve (Steam's `success: 42`), the script aborts with
+a message pointing at where to find a real SteamID64, rather than sending a malformed id into
+`GetOwnedGames`.
+
+The script itself is a stricter, CLI-level gate on top of the client's soft-failure contract in two
+ways: it exits early with an error if either var is unset (the same shape `backfill-game-metadata.mjs`
+already uses for `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`), and — unlike the app-side client — it
+**aborts with a non-zero exit and writes no report at all** if the owned-games request itself fails
+after credentials are present (bad SteamID64, network error, non-2xx, malformed JSON). Silently
+continuing with an empty snapshot would match every Steam-platform library row against nothing and print
+a confident but meaningless "0 matched, N unmatched" summary — indistinguishable, at a glance, from a
+real report saying the owner's whole library is unrecognized by Steam. A script whose only job is
+reporting a diff must never produce that report from a request that never actually succeeded.
 
 **The script defaults to a dry run.** No database write happens without the explicit `--apply` flag —
 non-negotiable, since this touches data the owner entered by hand. A dry run (or an applied run) always

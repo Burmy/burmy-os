@@ -80,6 +80,59 @@ export function buildAchievementsUrl(apiKey: string, steamId: string, appid: num
   return `${BASE_URL}/ISteamUserStats/GetPlayerAchievements/v1/?${params.toString()}`;
 }
 
+/**
+ * `ISteamUser/ResolveVanityURL/v1` — resolves a Steam "vanity URL" name (the
+ * `<name>` in `steamcommunity.com/id/<name>`) to a SteamID64. Only needed
+ * when `STEAM_ID` isn't already the 17-digit numeric id — see `isSteamId64`
+ * below, which decides that.
+ *
+ * This exists because a Steam profile URL comes in one of two shapes —
+ * `/profiles/{steamid64}` or `/id/{vanityname}` — and an owner copying their
+ * own profile URL into `STEAM_ID` has no way to know `GetOwnedGames`
+ * requires the former. Resolving the latter to the former here is what lets
+ * `STEAM_ID` accept whichever the owner actually has.
+ */
+export function buildResolveVanityUrl(apiKey: string, vanityUrl: string): string {
+  const params = new URLSearchParams({ key: apiKey, vanityurl: vanityUrl });
+  return `${BASE_URL}/ISteamUser/ResolveVanityURL/v1/?${params.toString()}`;
+}
+
+/**
+ * A SteamID64 is always exactly 17 digits (Steam's documented format — every
+ * real id starts `7656119...`, but the length check alone is enough to tell
+ * it apart from a vanity name, which Steam disallows from being all-digit
+ * at that length). This is the one place that distinction is decided, so
+ * the sync script asks this rather than re-deriving the rule.
+ */
+const STEAM_ID64_PATTERN = /^\d{17}$/;
+
+export function isSteamId64(value: string): boolean {
+  return STEAM_ID64_PATTERN.test(value);
+}
+
+export interface ResolvedVanityUrl {
+  readonly steamId: string;
+}
+
+/**
+ * Shapes a `ResolveVanityURL` JSON response. `{"response":{"steamid":"...",
+ * "success":1}}` is a match; `success: 42` is Steam's documented code for a
+ * vanity name that resolved to no profile at all. Both a non-1 success code
+ * and a malformed/missing payload collapse to `null` here — the caller only
+ * ever needs "did this resolve, and to what," never Steam's specific error
+ * code, so unlike `toAchievementCounts` there is no separate "malformed vs.
+ * legitimately not found" distinction to preserve.
+ */
+export function toResolvedVanityUrl(payload: unknown): ResolvedVanityUrl | null {
+  const response = asRecord(asRecord(payload)?.response);
+  if (response === null || response.success !== 1) return null;
+
+  const steamId = response.steamid;
+  if (typeof steamId !== 'string' || steamId === '') return null;
+
+  return { steamId };
+}
+
 export interface OwnedSteamGame {
   readonly appid: number;
   readonly name: string;

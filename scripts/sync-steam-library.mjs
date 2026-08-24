@@ -48,6 +48,23 @@
  *   - Matching is scoped to `platform = 'steam'` library rows only. Nothing
  *     about a PS5/PS4/PSP title should ever be compared against a Steam
  *     appid.
+ *   - `STEAM_ID` accepts either a SteamID64 (the 17-digit numeric id
+ *     `GetOwnedGames` actually requires) or a vanity name (the `<name>` in
+ *     `steamcommunity.com/id/<name>`) — a vanity name is resolved to a
+ *     SteamID64 via `ResolveVanityURL` before anything else runs, and what
+ *     it resolved to is printed so the owner can confirm it worked. See
+ *     `isSteamId64`/`buildResolveVanityUrl`/`toResolvedVanityUrl` in
+ *     src/server/games/steam.ts.
+ *   - If the owned-games fetch itself FAILS (bad SteamID64, network error,
+ *     non-2xx, malformed JSON), the script ABORTS with a non-zero exit
+ *     instead of producing a report — "the request failed" and "this
+ *     account owns zero games" are different facts, and a report built from
+ *     an empty snapshot after a failed request would report every single
+ *     library row as unmatched, which is a confident, meaningless lie, not
+ *     a diff. This is stricter than `steam-client.ts`'s own soft-failure
+ *     contract (`[]`/`null`, never throws) on purpose — that contract is
+ *     right for the app, where cover art must never break a page; it is
+ *     wrong for a script whose entire job is reporting a diff.
  *
  * Usage:
  *   node --env-file-if-exists=.env scripts/sync-steam-library.mjs <owner-email> \
@@ -109,9 +126,12 @@ import { minutesToHoursTenths } from '../src/server/games/hours.ts';
 import {
   buildAchievementsUrl,
   buildOwnedGamesUrl,
+  buildResolveVanityUrl,
+  isSteamId64,
   steamSyncFieldsToFill,
   toAchievementCounts,
   toOwnedGames,
+  toResolvedVanityUrl,
 } from '../src/server/games/steam.ts';
 
 // Same set import-game-log.mjs, fix-game-platforms.mjs and
@@ -187,6 +207,54 @@ async function throttle() {
   const waitMs = Math.max(0, nextRequestAt - now);
   nextRequestAt = Math.max(now, nextRequestAt) + MIN_INTERVAL_MS;
   if (waitMs > 0) await sleep(waitMs);
+}
+
+/**
+ * Resolves `STEAM_ID` to a real SteamID64. A 17-digit value is used as-is,
+ * no request made — see `isSteamId64`. Anything else is treated as a vanity
+ * name (the `<name>` in `steamcommunity.com/id/<name>`) and resolved via
+ * `ISteamUser/ResolveVanityURL/v1`.
+ *
+ * THROWS on both "the resolution request itself failed" and "the name
+ * didn't resolve to any profile" (Steam's `success: 42`) — same
+ * throw-on-failure reasoning as `fetchOwnedGamesList`/`fetchAchievements`
+ * below: this script's whole job is a diff report, and silently falling
+ * back to the raw (wrong) value would send a malformed SteamID64 straight
+ * into `GetOwnedGames`, producing exactly the "0 owned games, 47 unmatched"
+ * false report this fix exists to prevent.
+ */
+async function resolveSteamId(rawSteamId, apiKey) {
+  if (isSteamId64(rawSteamId)) return rawSteamId;
+
+  await throttle();
+  let response;
+  try {
+    response = await fetch(buildResolveVanityUrl(apiKey, rawSteamId), { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch (error) {
+    throw new Error(
+      `resolving vanity name "${rawSteamId}" failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+    );
+  }
+  if (!response.ok) throw new Error(`resolving vanity name "${rawSteamId}" failed: HTTP ${response.status}`);
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`resolving vanity name "${rawSteamId}" failed: malformed JSON response`);
+  }
+
+  const resolved = toResolvedVanityUrl(payload);
+  if (resolved === null) {
+    throw new Error(
+      `Steam could not resolve "${rawSteamId}" as a vanity name (steamcommunity.com/id/${rawSteamId}). ` +
+        'STEAM_ID accepts either your SteamID64 (the 17-digit id) or that vanity name. To find your ' +
+        'SteamID64: open your Steam profile in a browser — if the URL already reads ' +
+        '/profiles/<17 digits>, that number is it; otherwise look it up at https://steamid.io by pasting ' +
+        'in your profile URL.',
+    );
+  }
+  return resolved.steamId;
 }
 
 /**
@@ -481,11 +549,23 @@ async function main() {
   }
 
   const apiKey = process.env.STEAM_API_KEY;
-  const steamId = process.env.STEAM_ID;
-  if (!apiKey || !steamId) {
+  const rawSteamId = process.env.STEAM_ID;
+  if (!apiKey || !rawSteamId) {
     console.error('STEAM_API_KEY / STEAM_ID are not set. Nothing can be fetched without them.');
-    console.error('Get an API key at https://steamcommunity.com/dev/apikey and your SteamID64 from your profile URL.');
+    console.error('Get an API key at https://steamcommunity.com/dev/apikey. STEAM_ID accepts either your');
+    console.error('SteamID64 (17 digits) or the vanity name from steamcommunity.com/id/<name>.');
     process.exit(1);
+  }
+
+  let steamId;
+  try {
+    steamId = await resolveSteamId(rawSteamId, apiKey);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : 'unknown error');
+    process.exit(1);
+  }
+  if (steamId !== rawSteamId) {
+    console.log(`Resolved STEAM_ID vanity name "${rawSteamId}" to SteamID64 ${steamId}.`);
   }
 
   const reportPath = reportPathArg ?? DEFAULT_REPORT_PATH;
@@ -516,15 +596,23 @@ async function main() {
     }
 
     console.log(`Fetching the Steam owned-games list for SteamID ${steamId}...`);
-    let ownedGames = [];
-    let ownedGamesFetchError;
+    let ownedGames;
     try {
       ownedGames = await fetchOwnedGamesList(apiKey, steamId);
     } catch (error) {
-      ownedGamesFetchError = error instanceof Error ? error.message : 'unknown error';
+      const ownedGamesFetchError = error instanceof Error ? error.message : 'unknown error';
       console.error(`Failed to fetch the Steam owned-games list: ${ownedGamesFetchError}`);
+      console.error(
+        'Aborting — a failed request is not the same as "this Steam account owns zero games." ' +
+          'Continuing would match every Steam-platform library row against an empty snapshot and print ' +
+          'a confident but meaningless "0 matched" summary. Fix the underlying issue (check ' +
+          'STEAM_API_KEY/STEAM_ID and network access) and re-run; no report was written.',
+      );
+      process.exitCode = 1;
+      return;
     }
-    if (ownedGamesFetchError === undefined && ownedGames.length === 0) {
+
+    if (ownedGames.length === 0) {
       console.log(
         'Steam returned 0 owned games. This usually means STEAM_API_KEY/STEAM_ID are wrong, or the ' +
           'account\'s "Game details" privacy is not set to Public.',
@@ -640,10 +728,11 @@ async function main() {
       }
     }
 
+    // ownedGamesFetchError is never passed here — a fetch failure already
+    // returned early above, before this point is ever reached.
     const reportText = buildReport({
       results,
       steamOnlyGames,
-      ownedGamesFetchError,
       ownedGamesCount: ownedGames.length,
       apply,
       overwriteHours,

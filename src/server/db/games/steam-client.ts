@@ -18,14 +18,24 @@
  * simply the right shape for any third-party integration in this codebase.
  *
  *   missing STEAM_API_KEY or STEAM_ID -> [] / null (checked first)
- *   network error, timeout            -> [] / null
- *   non-2xx response                  -> [] / null
- *   malformed / unparsable JSON       -> [] / null
+ *   network error, timeout            -> null / null
+ *   non-2xx response                  -> null / null
+ *   malformed / unparsable JSON       -> null / null
+ *   request succeeded, 0 games/no data -> [] / null
  *
- * Never throws. The caller (the sync script) decides how to report a soft
- * failure — e.g. "0 games returned" is exactly what a private Steam profile
- * looks like from here, and the script's own report is what tells the owner
- * to check their "Game details" privacy setting.
+ * Never throws — but `fetchOwnedGames` is NOT a flat "always []" contract:
+ * the request itself failing (network error, timeout, non-2xx, malformed
+ * JSON) returns `null`, distinct from a SUCCESSFUL response that genuinely
+ * carries zero games (a private "Game details" profile, or an account that
+ * really owns nothing — Steam's response shape doesn't distinguish those
+ * two, see `toOwnedGames`). That distinction matters to a caller whose job
+ * is reporting a diff: "the request failed" and "this account owns zero
+ * games" are different facts, and collapsing them into the same `[]` reads
+ * as a confident, wrong report of "0 games" when the true story is "we
+ * don't know." `fetchAchievementCounts` has no such split — every one of
+ * its failure modes, including a real game with zero defined achievements,
+ * already collapses to `null` by design (see `toAchievementCounts`), and
+ * the sync script never needed to tell those apart.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -65,17 +75,22 @@ async function getJson(url: string): Promise<unknown> {
 }
 
 /**
- * The owner's full Steam library. Returns `[]` on missing credentials, any
- * request failure, or a private "Game details" profile — see the module
- * header; this function makes no attempt to tell those apart, since Steam's
- * own response doesn't either.
+ * The owner's full Steam library. Returns `[]` on missing credentials
+ * (a normal, unconfigured state — no request was even attempted) or on a
+ * successful response that genuinely carries zero games (a private "Game
+ * details" profile, or an account that really owns nothing — Steam's own
+ * response shape doesn't distinguish those two, see `toOwnedGames`).
+ * Returns `null` when the REQUEST ITSELF failed — network error, timeout,
+ * non-2xx, or malformed JSON — so a caller that needs to tell "no data
+ * because the request failed" apart from "no data because there are zero
+ * games" can. See the module header.
  */
-export async function fetchOwnedGames(): Promise<OwnedSteamGame[]> {
+export async function fetchOwnedGames(): Promise<OwnedSteamGame[] | null> {
   const creds = credentials();
   if (creds === null) return [];
 
   const payload = await getJson(buildOwnedGamesUrl(creds.apiKey, creds.steamId));
-  return payload === null ? [] : toOwnedGames(payload);
+  return payload === null ? null : toOwnedGames(payload);
 }
 
 /**

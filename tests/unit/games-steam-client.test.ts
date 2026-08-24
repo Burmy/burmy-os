@@ -5,9 +5,13 @@ import { fetchAchievementCounts, fetchOwnedGames } from '@/server/db/games/steam
 /**
  * `fetchOwnedGames`/`fetchAchievementCounts` must fail SOFT in every case —
  * missing credentials, a network error, a timeout, a non-200, or a malformed
- * body all resolve to `[]`/`null`, never a thrown error. Same contract as
- * `games-igdb.test.ts` against `igdb.ts`, and for the same reason: the full
- * test suite must pass with `STEAM_API_KEY`/`STEAM_ID` unset.
+ * body never throw. Same contract as `games-igdb.test.ts` against `igdb.ts`,
+ * and for the same reason: the full test suite must pass with
+ * `STEAM_API_KEY`/`STEAM_ID` unset. Unlike `igdb.ts`, `fetchOwnedGames`'s
+ * soft failure is NOT always `[]`: a request failure (network error,
+ * timeout, non-200, malformed JSON) resolves to `null`, distinguishable
+ * from a successful response that genuinely carries zero games (`[]`) —
+ * see the assertions below and `steam-client.ts`'s module header.
  *
  * `restoreMocks: true` (vitest.config.ts) resets `vi.fn()` call state between
  * tests but does NOT undo `vi.stubEnv`/`vi.stubGlobal` — unwound explicitly
@@ -70,8 +74,8 @@ describe('fetchOwnedGames — missing configuration', () => {
   });
 });
 
-describe('fetchOwnedGames — request failures', () => {
-  it('returns [] on a network error', async () => {
+describe('fetchOwnedGames — request failures return null, distinct from a genuine zero-games response', () => {
+  it('returns null on a network error', async () => {
     stubCredentials();
     vi.stubGlobal(
       'fetch',
@@ -80,10 +84,10 @@ describe('fetchOwnedGames — request failures', () => {
       }),
     );
 
-    expect(await fetchOwnedGames()).toEqual([]);
+    expect(await fetchOwnedGames()).toBeNull();
   });
 
-  it('returns [] on a timeout-shaped rejection', async () => {
+  it('returns null on a timeout-shaped rejection', async () => {
     stubCredentials();
     vi.stubGlobal(
       'fetch',
@@ -92,21 +96,21 @@ describe('fetchOwnedGames — request failures', () => {
       }),
     );
 
-    expect(await fetchOwnedGames()).toEqual([]);
+    expect(await fetchOwnedGames()).toBeNull();
   });
 
-  it('returns [] on a non-200 response', async () => {
+  it('returns null on a non-200 response', async () => {
     stubCredentials();
     vi.stubGlobal('fetch', vi.fn(async () => fakeJsonResponse(403, { error: 'forbidden' })));
 
-    expect(await fetchOwnedGames()).toEqual([]);
+    expect(await fetchOwnedGames()).toBeNull();
   });
 
-  it('returns [] when the response body fails to parse as JSON', async () => {
+  it('returns null when the response body fails to parse as JSON', async () => {
     stubCredentials();
     vi.stubGlobal('fetch', vi.fn(async () => fakeBrokenJsonResponse(200)));
 
-    expect(await fetchOwnedGames()).toEqual([]);
+    expect(await fetchOwnedGames()).toBeNull();
   });
 });
 
@@ -125,7 +129,7 @@ describe('fetchOwnedGames — success path', () => {
     expect(await fetchOwnedGames()).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 120 }]);
   });
 
-  it('returns [] for a private-profile shaped response, same as a request failure', async () => {
+  it('returns [] for a private-profile shaped response — a successful request, unlike an actual failure', async () => {
     stubCredentials();
     vi.stubGlobal('fetch', vi.fn(async () => fakeJsonResponse(200, { response: {} })));
 

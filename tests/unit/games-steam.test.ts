@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildAchievementsUrl,
   buildOwnedGamesUrl,
+  buildResolveVanityUrl,
+  isSteamId64,
   steamSyncFieldsToFill,
   toAchievementCounts,
   toOwnedGames,
+  toResolvedVanityUrl,
 } from '@/server/games/steam';
 
 describe('buildOwnedGamesUrl', () => {
@@ -26,6 +29,59 @@ describe('buildAchievementsUrl', () => {
     expect(url).toContain('appid=1091500');
     expect(url).toContain('key=KEY123');
     expect(url).toContain('steamid=76561198000000000');
+  });
+});
+
+describe('buildResolveVanityUrl', () => {
+  it('targets ISteamUser/ResolveVanityURL/v1 with the key and vanityurl', () => {
+    const url = buildResolveVanityUrl('KEY123', 'burmyyy');
+    expect(url).toContain('https://api.steampowered.com/ISteamUser/ResolveVanityURL/v1/?');
+    expect(url).toContain('key=KEY123');
+    expect(url).toContain('vanityurl=burmyyy');
+  });
+});
+
+describe('isSteamId64', () => {
+  it('accepts a 17-digit numeric string', () => {
+    expect(isSteamId64('76561198263587821')).toBe(true);
+  });
+
+  it('rejects a vanity name', () => {
+    expect(isSteamId64('burmyyy')).toBe(false);
+  });
+
+  it('rejects a numeric string of the wrong length', () => {
+    expect(isSteamId64('7656119826358782')).toBe(false); // 16 digits
+    expect(isSteamId64('765611982635878212')).toBe(false); // 18 digits
+  });
+
+  it('rejects an empty string', () => {
+    expect(isSteamId64('')).toBe(false);
+  });
+});
+
+describe('toResolvedVanityUrl', () => {
+  it('resolves a successful response to its steamid', () => {
+    const payload = { response: { steamid: '76561198263587821', success: 1 } };
+    expect(toResolvedVanityUrl(payload)).toEqual({ steamId: '76561198263587821' });
+  });
+
+  it('returns null for success: 42 — Steam\'s documented "no match" code', () => {
+    const payload = { response: { success: 42, message: 'No match' } };
+    expect(toResolvedVanityUrl(payload)).toBeNull();
+  });
+
+  it('returns null for a missing response key, null, or a non-object payload', () => {
+    expect(toResolvedVanityUrl({})).toBeNull();
+    expect(toResolvedVanityUrl(null)).toBeNull();
+    expect(toResolvedVanityUrl('not an object')).toBeNull();
+    expect(toResolvedVanityUrl(undefined)).toBeNull();
+  });
+
+  it('returns null when success is 1 but steamid is missing or not a string', () => {
+    expect(toResolvedVanityUrl({ response: { success: 1 } })).toBeNull();
+    expect(toResolvedVanityUrl({ response: { success: 1, steamid: 12345 } })).toBeNull();
+    expect(toResolvedVanityUrl({ response: { success: 1, steamid: '' } })).toBeNull();
   });
 });
 
