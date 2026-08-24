@@ -110,6 +110,38 @@ describe('play-year data access', () => {
     await playYears.replacePlayYears(mine, theirGame, [{ year: 2024, hoursTenths: 370 }]);
 
     expect(await playYears.listPlayYearsForGame(theirs, theirGame)).toEqual([]);
+
+    // The assertion above alone is vacuous: a buggy write that skipped the
+    // ownership check but still inserted using the CALLER's ownerId (`mine`)
+    // would land as { ownerId: mine, gameId: theirGame } — invisible to a
+    // query scoped to `theirs`, but a real row would still exist. Count rows
+    // for this game_id directly, with no owner filter at all, to prove no
+    // write happened under ANY owner.
+    const { sql } = await harness();
+    const rows = await sql`select count(*)::int as count from game_play_years where game_id = ${theirGame}`;
+    expect(rows[0]?.count).toBe(0);
+  });
+
+  it('rolls back the whole replacement when the new rows violate the unique index', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Hollow Knight');
+
+    await playYears.replacePlayYears(owner, gameId, [{ year: 2024, hoursTenths: 370 }]);
+
+    // Two rows sharing a year violate game_play_years_game_year_idx. The
+    // implementation deletes the old split before inserting the new one; the
+    // whole call must be wrapped in a transaction so this failure cannot
+    // leave the game with the old rows deleted and nothing inserted.
+    await expect(
+      playYears.replacePlayYears(owner, gameId, [
+        { year: 2025, hoursTenths: 100 },
+        { year: 2025, hoursTenths: 50 },
+      ]),
+    ).rejects.toThrow();
+
+    expect(await playYears.listPlayYearsForGame(owner, gameId)).toEqual([
+      { gameId, year: 2024, hoursTenths: 370 },
+    ]);
   });
 
   it('cascades away when its game is deleted', async () => {
