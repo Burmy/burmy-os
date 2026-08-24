@@ -96,7 +96,7 @@ const HIGH_MATCH = {
   platform: 'ps5',
   match: {
     suggestion: { title: 'Quest of Legends' },
-    score: { confidence: 'high', distance: 0 },
+    score: { confidence: 'high', similarity: 1 },
   },
   fill: { genre: 'RPG' },
 };
@@ -107,7 +107,7 @@ const LOW_MATCH = {
   platform: 'psp',
   match: {
     suggestion: { title: 'Quest of Legends HD Remastered' },
-    score: { confidence: 'low', distance: 0.32 },
+    score: { confidence: 'low', similarity: 0.68 },
   },
   fill: { genre: 'RPG' },
 };

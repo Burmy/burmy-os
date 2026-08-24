@@ -426,46 +426,65 @@ export function buildReport({
   }
 
   lines.push(SECTION_RULE);
-  lines.push('NEEDS YOUR REVIEW — low confidence, unmatched, or a stored value differs from Steam');
+  lines.push('NEEDS YOUR REVIEW — low confidence, no match, or a stored value differs from Steam');
   lines.push(SECTION_RULE);
   lines.push('');
   if (newLow.length === 0 && unmatched.length === 0 && withDiffs.length === 0) {
     lines.push('(none)');
     lines.push('');
   } else {
-    for (const r of newLow) {
-      lines.push(`[LOW CONFIDENCE]  "${r.title}"`);
-      lines.push(`  Closest Steam title: "${r.matchedSteamName}" (edit-distance score ${r.score.toFixed(2)}) — never auto-applied.`);
+    // Three distinct, separately-labeled sub-groups — deliberately NOT
+    // interleaved — so "there is a real candidate, just not a confident one"
+    // (LOW CONFIDENCE) is never mistaken for "no plausible candidate exists
+    // at all" (NO MATCH). See bestTitleMatchAmong's SIMILARITY_FLOOR in
+    // src/server/games/metadata.ts for how that boundary is decided.
+    if (newLow.length > 0) {
+      lines.push('--- LOW CONFIDENCE — a candidate exists, but the match is uncertain; never auto-applied ---');
       lines.push('');
-    }
-    for (const r of unmatched) {
-      lines.push(`[NO MATCH]        "${r.title}"`);
-      lines.push('  No Steam-owned game title came close enough to compare.');
-      lines.push('');
-    }
-    for (const r of withDiffs) {
-      lines.push(`[DIFFERS]         "${r.title}"`);
-      if (r.diffs.achievementsUnlocked !== undefined) {
+      for (const r of newLow) {
+        lines.push(`[LOW CONFIDENCE]  "${r.title}"`);
         lines.push(
-          `  achievements_unlocked: stored ${r.diffs.achievementsUnlocked.stored}, Steam reports ${r.diffs.achievementsUnlocked.steam} — not overwritten (no overwrite flag exists for this column).`,
+          `  Closest Steam title: "${r.matchedSteamName}" (title similarity ${r.score.toFixed(2)}, 1.00 = identical, higher is better) — never auto-applied.`,
         );
+        lines.push('');
       }
-      if (r.diffs.achievementsTotal !== undefined) {
-        lines.push(
-          `  achievements_total: stored ${r.diffs.achievementsTotal.stored}, Steam reports ${r.diffs.achievementsTotal.steam} — not overwritten (no overwrite flag exists for this column).`,
-        );
-      }
-      if (r.diffs.hoursTenths !== undefined) {
-        const stored = displayHours(r.diffs.hoursTenths.stored);
-        const steam = displayHours(r.diffs.hoursTenths.steam);
-        const disposition = !overwriteHours
-          ? 'pass --overwrite-hours (with --apply) to overwrite'
-          : apply
-            ? 'OVERWRITTEN this run'
-            : 'would be overwritten with --apply';
-        lines.push(`  hours_tenths: stored ${stored}, Steam reports ${steam} — ${disposition}.`);
-      }
+    }
+    if (unmatched.length > 0) {
+      lines.push('--- NO MATCH — Steam does not appear to own this game ---');
       lines.push('');
+      for (const r of unmatched) {
+        lines.push(`[NO MATCH]        "${r.title}"`);
+        lines.push('  Steam does not appear to own this game — no owned title was similar enough to compare.');
+        lines.push('');
+      }
+    }
+    if (withDiffs.length > 0) {
+      lines.push('--- DIFFERS — a stored value disagrees with what Steam reports ---');
+      lines.push('');
+      for (const r of withDiffs) {
+        lines.push(`[DIFFERS]         "${r.title}"`);
+        if (r.diffs.achievementsUnlocked !== undefined) {
+          lines.push(
+            `  achievements_unlocked: stored ${r.diffs.achievementsUnlocked.stored}, Steam reports ${r.diffs.achievementsUnlocked.steam} — not overwritten (no overwrite flag exists for this column).`,
+          );
+        }
+        if (r.diffs.achievementsTotal !== undefined) {
+          lines.push(
+            `  achievements_total: stored ${r.diffs.achievementsTotal.stored}, Steam reports ${r.diffs.achievementsTotal.steam} — not overwritten (no overwrite flag exists for this column).`,
+          );
+        }
+        if (r.diffs.hoursTenths !== undefined) {
+          const stored = displayHours(r.diffs.hoursTenths.stored);
+          const steam = displayHours(r.diffs.hoursTenths.steam);
+          const disposition = !overwriteHours
+            ? 'pass --overwrite-hours (with --apply) to overwrite'
+            : apply
+              ? 'OVERWRITTEN this run'
+              : 'would be overwritten with --apply';
+          lines.push(`  hours_tenths: stored ${stored}, Steam reports ${steam} — ${disposition}.`);
+        }
+        lines.push('');
+      }
     }
   }
 
@@ -657,12 +676,12 @@ async function main() {
           matchKind = 'high';
           resolvedAppid = match.candidate.appid;
           matchedSteamName = match.candidate.name;
-          score = match.score.distance;
+          score = match.score.similarity;
           claimedAppids.add(resolvedAppid);
         } else {
           matchKind = 'low';
           matchedSteamName = match.candidate.name;
-          score = match.score.distance;
+          score = match.score.similarity;
         }
       }
 

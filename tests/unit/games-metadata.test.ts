@@ -188,7 +188,7 @@ describe('normalizeGameTitle', () => {
 
 describe('scoreTitleMatch', () => {
   it('is HIGH confidence for an identical title', () => {
-    expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends')).toEqual({ confidence: 'high', distance: 0 });
+    expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends')).toEqual({ confidence: 'high', similarity: 1 });
   });
 
   it('is HIGH confidence when only case, punctuation, or spacing differs', () => {
@@ -216,10 +216,96 @@ describe('scoreTitleMatch', () => {
     expect(score.confidence).toBe('low');
   });
 
-  it('is LOW confidence with a large distance for an unrelated title', () => {
+  it('is LOW confidence with a low similarity for an unrelated title', () => {
     const score = scoreTitleMatch('Quest of Legends', 'Farming Simulator');
     expect(score.confidence).toBe('low');
-    expect(score.distance).toBeGreaterThan(0.5);
+    expect(score.similarity).toBeLessThan(0.5);
+  });
+});
+
+/**
+ * Problem 2 from the real Steam sync dry run: genuine matches the pre-fix
+ * matcher missed entirely. Every title below is a REAL title from the
+ * owner's real Steam library sync (see the task's own report and
+ * .superpowers/sdd/2026-08-20-game-tracker/steam-sync-report.md) — game
+ * titles, not personal data, so they are fine to use verbatim here.
+ */
+describe('scoreTitleMatch — token containment', () => {
+  it('is HIGH confidence when the stored title is contained in the Steam title as a droppable subtitle', () => {
+    // "Idle Slayer" (stored) vs. Steam's actual listing "Idle Slayer –
+    // Incremental RPG" — the remainder is a genre tagline, not a
+    // distinguishing suffix.
+    const score = scoreTitleMatch('Idle Slayer', 'Idle Slayer – Incremental RPG');
+    expect(score.confidence).toBe('high');
+  });
+
+  it('is HIGH confidence when the Steam title is contained in the stored title as a droppable subtitle', () => {
+    // "Tap Ninja - Idle game" (stored) vs. Steam's actual listing "Tap
+    // Ninja" — same pattern, other direction.
+    const score = scoreTitleMatch('Tap Ninja - Idle game', 'Tap Ninja');
+    expect(score.confidence).toBe('high');
+  });
+
+  it('never promotes containment to HIGH when the remainder is a trailing number — "Portal" must not match "Portal 2"', () => {
+    const score = scoreTitleMatch('Portal', 'Portal 2');
+    expect(score.confidence).toBe('low');
+  });
+
+  it('never promotes containment to HIGH when the remainder is a trailing number — "Half-Life" must not match "Half-Life 2"', () => {
+    const score = scoreTitleMatch('Half-Life', 'Half-Life 2');
+    expect(score.confidence).toBe('low');
+  });
+
+  it('never promotes containment to HIGH when the remainder is a trailing roman numeral', () => {
+    // Invented title — no roman numerals appear in the owner's real library.
+    const score = scoreTitleMatch('Quest of Legends', 'Quest of Legends II');
+    expect(score.confidence).toBe('low');
+  });
+
+  it('never promotes containment to HIGH when the remainder is an edition/remaster marker, even without a trailing number', () => {
+    // Regression guard: containment must not reopen the pre-existing "an HD
+    // remaster must never silently match the original release" policy
+    // exercised above under `scoreTitleMatch`.
+    const score = scoreTitleMatch('Quest of Legends', 'Quest of Legends HD Remastered');
+    expect(score.confidence).toBe('low');
+  });
+
+  it('never promotes containment to HIGH across a colon-separated sub-entry, even when every token of the shorter title is present', () => {
+    // Real false positive found while implementing this: "Half-Life 2" is
+    // literally token-contained in "Half-Life 2: Episode One" with a
+    // non-numeric remainder ("episode one"), but Steam does not own Episode
+    // One — it is a separate product from Half-Life 2, and the colon is
+    // what distinguishes it from a droppable dash-subtitle like "Idle Slayer
+    // – Incremental RPG".
+    expect(scoreTitleMatch('Half-Life 2', 'Half-Life 2: Episode One').confidence).toBe('low');
+    expect(scoreTitleMatch('Half-Life 2', 'Half-Life 2: Episode Two').confidence).toBe('low');
+    expect(scoreTitleMatch('Half-Life 2', 'Half-Life 2: Lost Coast').confidence).toBe('low');
+    expect(scoreTitleMatch('Portal 2', 'Portal Stories: Mel').confidence).toBe('low');
+  });
+
+  it('never promotes containment to HIGH for a single generic word, even when it is a literal prefix', () => {
+    const score = scoreTitleMatch('War', 'War Thunder');
+    expect(score.confidence).toBe('low');
+  });
+});
+
+describe('scoreTitleMatch — abbreviations', () => {
+  it('is HIGH confidence for "Game of the Year" vs. "GOTY"', () => {
+    const score = scoreTitleMatch('Borderlands Game of the Year', 'Borderlands GOTY');
+    expect(score.confidence).toBe('high');
+  });
+
+  it('is HIGH confidence for "Game of the Year Enhanced" vs. "GOTY Enhanced"', () => {
+    const score = scoreTitleMatch('Borderlands Game of the Year Enhanced', 'Borderlands GOTY Enhanced');
+    expect(score.confidence).toBe('high');
+  });
+
+  it('does not cross-match the abbreviated title against the wrong edition', () => {
+    // "Borderlands Game of the Year" must match plain "Borderlands GOTY",
+    // not the Enhanced one — exercised at the bestTitleMatchAmong level
+    // below where both are real candidates in the same list.
+    const score = scoreTitleMatch('Borderlands Game of the Year', 'Borderlands GOTY Enhanced');
+    expect(score.confidence).toBe('low');
   });
 });
 
@@ -304,6 +390,72 @@ describe('bestTitleMatchAmong', () => {
     const match = bestTitleMatchAmong('Grand Theft Auto Vice City HD', candidates, titleOf);
     expect(match?.candidate.appid).toBe(1);
     expect(match?.score.confidence).toBe('low');
+  });
+});
+
+/**
+ * Problem 1 from the real Steam sync dry run: `bestTitleMatchAmong` used to
+ * always return SOMETHING while `candidates` was non-empty, so a title Steam
+ * genuinely does not own still came back as a LOW-confidence match against
+ * an unrelated closest neighbour. `SIMILARITY_FLOOR` fixes that. Every title
+ * (both stored and Steam-owned) below is REAL, taken directly from the
+ * owner's real 47-row Steam library sync dry run — see the task's own
+ * report and .superpowers/sdd/2026-08-20-game-tracker/steam-sync-report.md.
+ * `candidates` below is a representative slice of the 38 real Steam-owned
+ * titles from that run — enough to exercise every family (Half-Life,
+ * Portal, Borderlands, Slay the Spire) where a wrong match risked attaching
+ * the wrong achievements to the wrong library row.
+ */
+describe('bestTitleMatchAmong — similarity floor (no match at all)', () => {
+  const realSteamLibrary = [
+    'Portal',
+    'Portal 2',
+    'Half-Life',
+    'Half-Life 2',
+    'Half-Life 2: Deathmatch',
+    'Half-Life: Blue Shift',
+    'Half-Life: Source',
+    'Half-Life Deathmatch: Source',
+    'Half-Life: Opposing Force',
+    'Team Fortress Classic',
+    'Slay the Spire',
+    'Slay the Spire 2',
+    'Borderlands GOTY',
+    'Borderlands GOTY Enhanced',
+    'Idle Slayer – Incremental RPG',
+    'Tap Ninja',
+    'Metro Exodus',
+    'Metro 2033 Redux',
+    'Metro: Last Light Redux',
+  ] as const;
+  const titleOf = (title: string): string => title;
+
+  it.each([
+    'Bloody Roar 2',
+    'Grand Theft Auto: San Andreas',
+    'Grand Theft Auto: Vice City (itch)',
+    'Pocket Tanks',
+    'Twisted Metal 2',
+    'Half-Life 2: Episode One',
+    'Half-Life 2: Episode Two',
+    'Half-Life 2: Lost Coast',
+    'Team Fortress 2',
+    'Portal Reloaded',
+    'Portal Stories: Mel',
+    'The Perfect Tower II',
+  ])('reports "%s" as no match at all — Steam does not own it', (storedTitle) => {
+    expect(bestTitleMatchAmong(storedTitle, realSteamLibrary, titleOf)).toBeNull();
+  });
+
+  it.each([
+    ['Borderlands Game of the Year', 'Borderlands GOTY'],
+    ['Borderlands Game of the Year Enhanced', 'Borderlands GOTY Enhanced'],
+    ['Idle Slayer', 'Idle Slayer – Incremental RPG'],
+    ['Tap Ninja - Idle game', 'Tap Ninja'],
+  ])('still reports "%s" as a HIGH match against "%s", never swallowed by the floor', (storedTitle, expectedSteamTitle) => {
+    const match = bestTitleMatchAmong(storedTitle, realSteamLibrary, titleOf);
+    expect(match?.score.confidence).toBe('high');
+    expect(match?.candidate).toBe(expectedSteamTitle);
   });
 });
 

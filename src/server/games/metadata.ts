@@ -232,35 +232,83 @@ export function withPlaytime(
 
 /**
  * ─────────────────────────────────────────────────────────────────────────────
- * MATCHING A STORED TITLE AGAINST AN IGDB SEARCH RESULT
+ * MATCHING A STORED TITLE AGAINST AN IGDB/STEAM SEARCH RESULT
  *
- * Used by `scripts/backfill-game-metadata.mjs`, the one-off script that fills
- * cover art/genre/metacritic/playtime/ESRB for games already sitting in the
- * library. Kept here rather than inline in the script because title matching
- * against a third-party catalog is genuinely error-prone — an HD remaster can
- * match a PSP original, a numbered sequel can match its predecessor — and
- * getting the confidence classification right is worth a real, unit-tested
- * function, not inline script logic nobody exercises against a fixture.
+ * Used by `scripts/backfill-game-metadata.mjs` (IGDB) and
+ * `scripts/sync-steam-library.mjs` (Steam). Kept here rather than duplicated
+ * in each script because title matching against a third-party catalog is
+ * genuinely error-prone — an HD remaster can match a PSP original, a
+ * numbered sequel can match its predecessor, an episodic spin-off can match
+ * its base game — and getting the confidence classification right is worth a
+ * real, unit-tested function, not inline script logic nobody exercises
+ * against a fixture.
  *
- * The policy is deliberately conservative: HIGH confidence requires the
- * normalized titles to be IDENTICAL, either directly or after stripping a
- * single trailing parenthetical from either side (the owner's own data has
- * store-suffix artifacts like "(itch)" — see fix-game-platforms.mjs's
- * identical `stripTrailingParenthetical`, duplicated there for the same
- * reason every script in this repo stays self-contained). Anything else — a
- * close-but-not-exact title, a remaster/edition suffix, a roman-numeral-vs-
- * digit mismatch, a colon-subtitle difference — is LOW confidence and is
- * never auto-applied by the backfill script. The edit-distance ratio below
- * exists only so the script can pick the single best candidate out of
- * several IGDB search results to show the owner; it never promotes a fuzzy
- * match to HIGH, no matter how small the distance.
+ * HIGH confidence is granted for four things, checked in this order, and
+ * NOTHING else:
+ *
+ *   1. Normalized titles are IDENTICAL.
+ *   2. Identical after stripping a single trailing parenthetical from either
+ *      side (the owner's own data has store-suffix artifacts like "(itch)" —
+ *      see fix-game-platforms.mjs's identical `stripTrailingParenthetical`,
+ *      duplicated there for the same reason every script in this repo stays
+ *      self-contained).
+ *   3. Identical after collapsing a known ABBREVIATION (`TITLE_ABBREVIATIONS`
+ *      below, e.g. "Game of the Year" <-> "GOTY") — a tiny, explicit,
+ *      commented list. General acronym inference is deliberately NOT
+ *      attempted; a false abbreviation expansion would be exactly the kind
+ *      of wrong-game match this whole function exists to prevent.
+ *   4. TOKEN CONTAINMENT: every token of the shorter (post-abbreviation)
+ *      title appears in the longer one, and the leftover ("remainder")
+ *      tokens read as a droppable subtitle, not a distinguishing one — e.g.
+ *      "Idle Slayer" vs. "Idle Slayer – Incremental RPG", "Tap Ninja" vs.
+ *      "Tap Ninja - Idle game". Four guards keep this conservative
+ *      (`isTokenContainmentMatch`):
+ *        - the shorter title must carry at least two tokens — a single
+ *          generic word ("Doom") is too common to treat as "contained";
+ *        - a remainder token that is a number or roman numeral is a
+ *          DISTINGUISHING token, never droppable — "Portal" must never match
+ *          "Portal 2", nor "Half-Life" match "Half-Life 2";
+ *        - a remainder token naming a known edition/remaster variant
+ *          (`EDITION_MARKER_WORDS`: "hd", "remastered", …) is likewise never
+ *          droppable — this is the pre-existing "an HD remaster must never
+ *          silently match the original release" policy, preserved verbatim;
+ *        - a colon in EITHER raw title disables containment entirely. In
+ *          this app's real library, a colon overwhelmingly introduces a
+ *          separately-titled sub-entry ("Half-Life 2: Episode One", "Portal
+ *          Stories: Mel", "Metro: Last Light Redux" are each their own real
+ *          Steam product) where a dash/en-dash instead overwhelmingly
+ *          introduces a droppable storefront genre tagline ("Idle Slayer -
+ *          Incremental RPG"). Verified empirically against the owner's real
+ *          47-row Steam library dry run: without this guard, "Half-Life 2:
+ *          Episode One" (which Steam does NOT own) falsely token-contained
+ *          "Half-Life 2" (which Steam DOES own) and would have attached
+ *          Half-Life 2's achievements to the wrong library row.
+ *
+ * Everything else is LOW confidence, ranked by a Levenshtein-based
+ * `similarity` (see `TitleMatchScore`) — close-but-not-exact, a remaster/
+ * edition suffix, a roman-numeral-vs-digit mismatch, a colon-subtitle
+ * difference. LOW is never auto-applied by either script.
+ *
+ * `bestTitleMatchAmong` additionally enforces `SIMILARITY_FLOOR`: even the
+ * single best LOW candidate is discarded entirely ("no match found", not
+ * "low confidence, here's the closest guess") once its similarity falls
+ * below the floor — see that constant for the empirical evidence behind the
+ * chosen value.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
 export interface TitleMatchScore {
   readonly confidence: 'high' | 'low';
-  /** 0 = identical after normalization. Larger = less similar. Never used to grant HIGH confidence. */
-  readonly distance: number;
+  /**
+   * 1 = identical (or treated-as-equivalent) titles. 0 = maximally
+   * different. HIGHER IS BETTER — deliberately a similarity, not a distance,
+   * so nothing reading a report has to remember which direction is good (an
+   * earlier `distance` field had exactly that ambiguity: a report printed
+   * "0.62" for a bad match and "0.43" for a good one, i.e. lower was better,
+   * while the field's own name suggested the opposite). Never used on its
+   * own to grant HIGH confidence — see `scoreTitleMatch`.
+   */
+  readonly similarity: number;
 }
 
 /** Lowercases, strips diacritics and punctuation, collapses whitespace. */
@@ -305,25 +353,134 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 /**
- * Scores one IGDB candidate title against the title stored in `games`. See
- * the section header above for the confidence policy: HIGH only for an
- * identical normalized title (direct, or after stripping one trailing
- * parenthetical from either side); everything else is LOW.
+ * A tiny, explicit, commented list of known title abbreviations — the one
+ * form of "these mean the same thing" this module allows itself. General
+ * acronym inference is deliberately NOT attempted: it is too easy to invent
+ * a false positive between two unrelated games that happen to share
+ * initials. Applied as a long-form -> short-form collapse so both sides of a
+ * comparison land on the same canonical text regardless of which form either
+ * title happens to use. Every `long` entry must already be lowercase,
+ * alnum-and-space-only text (the shape `normalizeGameTitle` produces), since
+ * it is matched with a plain word-boundary regex, not re-normalized.
+ */
+const TITLE_ABBREVIATIONS: ReadonlyArray<readonly [long: string, short: string]> = [
+  // "Borderlands Game of the Year" <-> "Borderlands GOTY" (and "... GOTY Enhanced").
+  ['game of the year', 'goty'],
+];
+
+/** Collapses every known long-form phrase in `normalized` to its short form — see `TITLE_ABBREVIATIONS`. */
+function collapseAbbreviations(normalized: string): string {
+  let result = normalized;
+  for (const [long, short] of TITLE_ABBREVIATIONS) {
+    result = result.replace(new RegExp(`\\b${long}\\b`, 'g'), short);
+  }
+  return result;
+}
+
+/**
+ * Remainder tokens that mark a genuinely different edition/version of the
+ * SAME base title — never a droppable descriptor. This is what keeps token
+ * containment (`isTokenContainmentMatch` below) from reintroducing the exact
+ * risk this module has always guarded against: "an HD remaster can match a
+ * PSP original." Small and explicit on purpose, same philosophy as
+ * `TITLE_ABBREVIATIONS`.
+ */
+const EDITION_MARKER_WORDS = new Set([
+  'hd',
+  'remaster',
+  'remastered',
+  'remake',
+  'definitive',
+  'anniversary',
+  'deluxe',
+  'goty',
+  'redux',
+  'enhanced',
+  'complete',
+  'ultimate',
+]);
+
+/**
+ * Roman numerals actually used for game sequels, up to XII. Deliberately NOT
+ * full roman-numeral parsing — a general pattern like `/^m*(cm|cd|d?c*)…$/`
+ * also matches ordinary English words such as "mix", which would make an
+ * unrelated remainder token wrongly "distinguishing" or (worse) wrongly
+ * droppable.
+ */
+const ROMAN_NUMERAL_TOKENS = new Set(['ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii']);
+
+/**
+ * A trailing number or roman numeral distinguishes a sequel/entry from its
+ * predecessor and must never be treated as a droppable descriptor — see the
+ * containment guards in `isTokenContainmentMatch`.
+ */
+function isDistinguishingToken(token: string): boolean {
+  return /^\d+$/.test(token) || ROMAN_NUMERAL_TOKENS.has(token);
+}
+
+/**
+ * Token containment: is the shorter of the two (space-tokenized) titles
+ * fully contained, token-for-token, in the longer one, with a remainder that
+ * reads as a droppable descriptor rather than a distinguishing suffix? See
+ * the "MATCHING…" header above for the full policy and the real false
+ * positive (Half-Life 2 / Half-Life 2: Episode One) that motivated the colon
+ * guard. `rawStored`/`rawCandidate` are the ORIGINAL, un-normalized titles —
+ * normalization strips the colon this function needs to see.
+ */
+function isTokenContainmentMatch(
+  rawStored: string,
+  rawCandidate: string,
+  normalizedStored: string,
+  normalizedCandidate: string,
+): boolean {
+  if (rawStored.includes(':') || rawCandidate.includes(':')) return false;
+
+  const storedTokens = normalizedStored.split(' ').filter(Boolean);
+  const candidateTokens = normalizedCandidate.split(' ').filter(Boolean);
+  if (storedTokens.length === 0 || candidateTokens.length === 0) return false;
+
+  const [shorter, longer] =
+    storedTokens.length <= candidateTokens.length ? [storedTokens, candidateTokens] : [candidateTokens, storedTokens];
+  // A single generic word ("Doom", "War") is too common to safely treat as
+  // "contained" in anything that happens to start with it.
+  if (shorter.length < 2) return false;
+
+  const longerSet = new Set(longer);
+  if (!shorter.every((token) => longerSet.has(token))) return false;
+
+  const shorterSet = new Set(shorter);
+  const remainder = longer.filter((token) => !shorterSet.has(token));
+  return !remainder.some((token) => isDistinguishingToken(token) || EDITION_MARKER_WORDS.has(token));
+}
+
+/**
+ * Scores one candidate title against the title stored in `games`. See the
+ * section header above for the full confidence policy.
  */
 export function scoreTitleMatch(storedTitle: string, candidateTitle: string): TitleMatchScore {
   const normalizedStored = normalizeGameTitle(storedTitle);
   const normalizedCandidate = normalizeGameTitle(candidateTitle);
-  if (normalizedStored === normalizedCandidate) return { confidence: 'high', distance: 0 };
+  if (normalizedStored === normalizedCandidate) return { confidence: 'high', similarity: 1 };
 
   const strippedStored = normalizeGameTitle(stripTrailingParenthetical(storedTitle));
   const strippedCandidate = normalizeGameTitle(stripTrailingParenthetical(candidateTitle));
   if (strippedStored !== '' && strippedStored === strippedCandidate) {
-    return { confidence: 'high', distance: 0 };
+    return { confidence: 'high', similarity: 1 };
+  }
+
+  const abbreviatedStored = collapseAbbreviations(strippedStored || normalizedStored);
+  const abbreviatedCandidate = collapseAbbreviations(strippedCandidate || normalizedCandidate);
+  if (abbreviatedStored !== '' && abbreviatedStored === abbreviatedCandidate) {
+    return { confidence: 'high', similarity: 0.95 };
+  }
+
+  if (isTokenContainmentMatch(storedTitle, candidateTitle, abbreviatedStored, abbreviatedCandidate)) {
+    return { confidence: 'high', similarity: 0.9 };
   }
 
   const distance = levenshteinDistance(normalizedStored, normalizedCandidate);
   const maxLength = Math.max(normalizedStored.length, normalizedCandidate.length, 1);
-  return { confidence: 'low', distance: distance / maxLength };
+  return { confidence: 'low', similarity: 1 - distance / maxLength };
 }
 
 export interface BestTitleMatch {
@@ -337,12 +494,42 @@ export interface BestMatchAmong<T> {
 }
 
 /**
+ * The similarity floor below which even the single best candidate is
+ * discarded entirely — "no match found," not "low confidence, here's the
+ * closest guess." Without this, `bestTitleMatchAmong` always returns
+ * SOMETHING as long as `candidates` is non-empty, which is exactly Problem 1
+ * from the real Steam sync dry run: titles Steam genuinely does not own
+ * (e.g. "Bloody Roar 2", "Grand Theft Auto: San Andreas", "Pocket Tanks")
+ * were reported as LOW-confidence matches against an unrelated closest
+ * neighbour ("Portal 2", "Slay the Spire", "Portal").
+ *
+ * Chosen empirically against the owner's real 47-row Steam library dry run
+ * (`.superpowers/sdd/2026-08-20-game-tracker/steam-sync-report.md`'s
+ * predecessor run), not picked a priori. Every one of the 16 titles that
+ * scored LOW under the pre-floor scoring resolves, under the current
+ * `scoreTitleMatch` policy, to either HIGH (via abbreviation/containment —
+ * genuine matches like "Idle Slayer" / "Tap Ninja") or a plain-edit-distance
+ * fallback that Steam genuinely does not own. The highest similarity among
+ * that second group is "Team Fortress 2" vs. the real, but WRONG, Steam-owned
+ * "Team Fortress Classic" — 0.67 (both titles share the "Team Fortress"
+ * prefix, but Steam does not own Team Fortress 2 on this account). 0.70 is
+ * the smallest round number above that observed worst case, so it excludes
+ * every genuine non-match in the real data while never being reached for a
+ * genuine one — every genuine match clears HIGH confidence (similarity >=
+ * 0.90) via one of `scoreTitleMatch`'s four HIGH paths, never by relying on
+ * this floor.
+ */
+const SIMILARITY_FLOOR = 0.7;
+
+/**
  * Generic form of `bestTitleMatch` below: picks the single best-scoring
  * candidate out of ANY list, given a way to read a comparable title off each
- * one. "Best" is the lowest `distance` (0 = exact); ties keep whichever
+ * one. "Best" is the highest `similarity` (1 = exact); ties keep whichever
  * candidate came first in `candidates` (the source API's own relevance
- * order). Returns `null` for an empty candidate list — "no match found" is a
- * distinct, separately-reported outcome from "matched, but low confidence."
+ * order). Returns `null` for an empty candidate list, OR when the single
+ * best candidate's similarity falls below `SIMILARITY_FLOOR` — "no match
+ * found" is a distinct, separately-reported outcome from "matched, but low
+ * confidence."
  *
  * Exists here — not duplicated as a second copy of this loop in
  * `src/server/games/steam.ts` — because `steam.ts` is deliberately a LEAF
@@ -364,10 +551,11 @@ export function bestTitleMatchAmong<T>(
   let best: BestMatchAmong<T> | null = null;
   for (const candidate of candidates) {
     const score = scoreTitleMatch(storedTitle, titleOf(candidate));
-    if (best === null || score.distance < best.score.distance) {
+    if (best === null || score.similarity > best.score.similarity) {
       best = { candidate, score };
     }
   }
+  if (best !== null && best.score.similarity < SIMILARITY_FLOOR) return null;
   return best;
 }
 

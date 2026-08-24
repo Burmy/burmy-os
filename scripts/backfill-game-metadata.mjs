@@ -30,7 +30,8 @@
  * So: this script NEVER writes to the database unless invoked with the
  * explicit `--apply` flag, and even then it only ever applies a HIGH
  * confidence match (see `scoreTitleMatch` in src/server/games/metadata.ts for
- * the exact policy — identical title after normalization, full stop). Every
+ * the exact policy — identical after normalization, a known abbreviation
+ * collapse, or a guarded token-containment match; never a fuzzy guess). Every
  * LOW confidence match and every "no match found" is written to the report
  * for the owner to read and decide on by hand; the script never guesses on
  * their behalf.
@@ -333,7 +334,9 @@ export function buildReport({ results, apply, appliedCount, highCount, lowCount,
     }
     for (const r of low) {
       lines.push(`[LOW CONFIDENCE]  "${r.title}" (${r.platform})`);
-      lines.push(`  Matched IGDB title: "${r.match.suggestion.title}" (edit-distance score ${r.match.score.distance.toFixed(2)})`);
+      lines.push(
+        `  Matched IGDB title: "${r.match.suggestion.title}" (title similarity ${r.match.score.similarity.toFixed(2)}, 1.00 = identical, higher is better)`,
+      );
       lines.push(`  Would fill: ${formatFillList(r.fill)}`);
       lines.push('');
     }

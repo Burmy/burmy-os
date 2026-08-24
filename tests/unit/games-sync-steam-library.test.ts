@@ -273,4 +273,21 @@ describe('buildReport', () => {
     const report = buildReport({ ...baseArgs, results: [], ownedGamesCount: 0 });
     expect(report).toContain('Steam returned 0 owned games');
   });
+
+  it('labels a NO MATCH row plainly as "Steam does not appear to own this game", distinct from LOW CONFIDENCE', () => {
+    const report = buildReport({ ...baseArgs, results: [NEW_LOW, UNMATCHED] });
+    expect(report).toContain('Steam does not appear to own this game');
+
+    // Distinct, separately-labeled sub-groups, not interleaved.
+    const lowHeaderIndex = report.indexOf('LOW CONFIDENCE — a candidate exists');
+    const noMatchHeaderIndex = report.indexOf('NO MATCH — Steam does not appear to own this game');
+    expect(lowHeaderIndex).toBeGreaterThanOrEqual(0);
+    expect(noMatchHeaderIndex).toBeGreaterThan(lowHeaderIndex);
+  });
+
+  it('reports the LOW CONFIDENCE similarity as a plain, unambiguous "title similarity" figure', () => {
+    const report = buildReport({ ...baseArgs, results: [NEW_LOW] });
+    expect(report).toContain('title similarity 0.32');
+    expect(report).not.toContain('edit-distance');
+  });
 });
