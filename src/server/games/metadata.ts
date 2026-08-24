@@ -331,22 +331,54 @@ export interface BestTitleMatch {
   readonly score: TitleMatchScore;
 }
 
+export interface BestMatchAmong<T> {
+  readonly candidate: T;
+  readonly score: TitleMatchScore;
+}
+
 /**
- * Picks the single best-scoring candidate out of an IGDB search result list.
- * "Best" is the lowest `distance` (0 = exact); ties keep whichever candidate
- * IGDB returned first (its own relevance order). Returns `null` for an empty
- * candidate list — "no match found" is a distinct, separately-reported
- * outcome from "matched, but low confidence."
+ * Generic form of `bestTitleMatch` below: picks the single best-scoring
+ * candidate out of ANY list, given a way to read a comparable title off each
+ * one. "Best" is the lowest `distance` (0 = exact); ties keep whichever
+ * candidate came first in `candidates` (the source API's own relevance
+ * order). Returns `null` for an empty candidate list — "no match found" is a
+ * distinct, separately-reported outcome from "matched, but low confidence."
+ *
+ * Exists here — not duplicated as a second copy of this loop in
+ * `src/server/games/steam.ts` — because `steam.ts` is deliberately a LEAF
+ * module (no imports of its own): `scripts/sync-steam-library.mjs` needs to
+ * `node`-import it directly the same way `scripts/backfill-game-metadata.mjs`
+ * already does for this file (see that script's header for why a directly
+ * `node`-imported `.ts` file can only safely import OTHER extensionless
+ * relative `.ts` files if the whole chain stays leaf-to-leaf — Node's native
+ * ESM resolver requires an explicit, resolvable extension at every hop, and
+ * a bare relative specifier like `./metadata` has none). `bestTitleMatch`
+ * itself is kept below as a thin, IGDB-shaped wrapper so its existing
+ * callers and tests are untouched.
  */
-export function bestTitleMatch(storedTitle: string, candidates: readonly GameSuggestion[]): BestTitleMatch | null {
-  let best: BestTitleMatch | null = null;
-  for (const suggestion of candidates) {
-    const score = scoreTitleMatch(storedTitle, suggestion.title);
+export function bestTitleMatchAmong<T>(
+  storedTitle: string,
+  candidates: readonly T[],
+  titleOf: (candidate: T) => string,
+): BestMatchAmong<T> | null {
+  let best: BestMatchAmong<T> | null = null;
+  for (const candidate of candidates) {
+    const score = scoreTitleMatch(storedTitle, titleOf(candidate));
     if (best === null || score.distance < best.score.distance) {
-      best = { suggestion, score };
+      best = { candidate, score };
     }
   }
   return best;
+}
+
+/**
+ * Picks the single best-scoring candidate out of an IGDB search result list.
+ * Thin wrapper over `bestTitleMatchAmong` — see that function for the actual
+ * policy (lowest distance wins, `null` for an empty list).
+ */
+export function bestTitleMatch(storedTitle: string, candidates: readonly GameSuggestion[]): BestTitleMatch | null {
+  const match = bestTitleMatchAmong(storedTitle, candidates, (candidate) => candidate.title);
+  return match === null ? null : { suggestion: match.candidate, score: match.score };
 }
 
 /** The five columns the backfill script is allowed to touch, as currently stored. */

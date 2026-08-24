@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   bestTitleMatch,
+  bestTitleMatchAmong,
   buildSearchQuery,
   buildTimeToBeatQuery,
   coverUrl,
@@ -260,6 +261,48 @@ describe('bestTitleMatch', () => {
     ];
     const match = bestTitleMatch('Quest of Legends', candidates);
     expect(match?.suggestion.externalId).toBe('21');
+    expect(match?.score.confidence).toBe('low');
+  });
+});
+
+describe('bestTitleMatchAmong', () => {
+  // Exercises the generic form `bestTitleMatch` itself wraps, against a
+  // shape that has nothing to do with GameSuggestion — the whole reason it
+  // exists is so a candidate shape like a Steam-owned game (`{ appid, name,
+  // playtimeMinutes }`, no `title` field at all) never has to be coerced
+  // into a fake GameSuggestion just to reuse the scoring policy. See
+  // src/server/games/steam.ts's header for why the Steam sync uses this
+  // directly instead of a duplicate loop.
+  interface SteamLikeCandidate {
+    readonly appid: number;
+    readonly name: string;
+  }
+
+  const candidates: SteamLikeCandidate[] = [
+    { appid: 1, name: 'Grand Theft Auto: Vice City' },
+    { appid: 2, name: 'Grand Theft Auto: San Andreas' },
+  ];
+  const titleOf = (candidate: SteamLikeCandidate): string => candidate.name;
+
+  it('returns null for an empty candidate list', () => {
+    expect(bestTitleMatchAmong('Anything', [], titleOf)).toBeNull();
+  });
+
+  it('finds an identical-after-normalization title as HIGH confidence', () => {
+    const match = bestTitleMatchAmong('grand theft auto vice city', candidates, titleOf);
+    expect(match?.candidate.appid).toBe(1);
+    expect(match?.score.confidence).toBe('high');
+  });
+
+  it('matches after stripping a trailing parenthetical from the stored title', () => {
+    const match = bestTitleMatchAmong('Grand Theft Auto: Vice City (itch)', candidates, titleOf);
+    expect(match?.candidate.appid).toBe(1);
+    expect(match?.score.confidence).toBe('high');
+  });
+
+  it('reports LOW confidence for a close-but-not-identical title, never auto-promoted to high', () => {
+    const match = bestTitleMatchAmong('Grand Theft Auto Vice City HD', candidates, titleOf);
+    expect(match?.candidate.appid).toBe(1);
     expect(match?.score.confidence).toBe('low');
   });
 });

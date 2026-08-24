@@ -1,6 +1,6 @@
 /**
- * Steam Web API — URL building and response shaping for the Steam library
- * sync (`scripts/sync-steam-library.mjs`).
+ * Steam Web API — URL building, response shaping, and the fill-decision
+ * policy for the Steam library sync (`scripts/sync-steam-library.mjs`).
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHY STEAM, NOT PSN, GOT BUILT FIRST
@@ -18,17 +18,25 @@
  * `src/server/db/games/steam-client.ts`, mirroring the IGDB split
  * (`src/server/games/metadata.ts` / `src/server/db/games/igdb.ts`) so this
  * logic stays testable without a network or a fake server.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DELIBERATELY A LEAF MODULE — NO IMPORTS OF ITS OWN
+ *
+ * `scripts/sync-steam-library.mjs` needs to `node`-import this file
+ * directly, the same way `scripts/backfill-game-metadata.mjs` already
+ * `node`-imports `metadata.ts` — see that script's header for the full
+ * reasoning. The short version: Node's native TypeScript support resolves a
+ * plain `node script.ts` entrypoint fine, but its ESM resolver still
+ * requires an explicit, resolvable specifier for every relative import in
+ * the chain (verified directly: an extensionless `./metadata` import fails
+ * with `ERR_MODULE_NOT_FOUND` under a bare `node` invocation, where the same
+ * import resolves fine under Next's bundler or `tsc`). The only import this
+ * module would otherwise want — `metadata.ts`'s title-matching helpers — is
+ * why `bestTitleMatchAmong` was added to `metadata.ts` itself instead of
+ * imported from here: that keeps BOTH files leaf modules, and the sync
+ * script imports each of them directly for what it needs.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-
-// Relative import, not the `@/` alias — matches `stats.ts`'s sibling import
-// of `taxonomy.ts`. This is also load-bearing for
-// `scripts/sync-steam-library.mjs`, which needs to import this module
-// directly via a bare `node` invocation (see that script's header for why);
-// a bare `node` invocation resolves an ordinary relative import between two
-// alias-free `.ts` files natively, but cannot resolve `@/...` path aliases
-// without a bundler or tsconfig-paths loader.
-import { normalizeGameTitle, scoreTitleMatch, type TitleMatchScore } from './metadata';
 
 const BASE_URL = 'https://api.steampowered.com';
 
@@ -161,42 +169,63 @@ export function toAchievementCounts(payload: unknown): AchievementCounts | null 
   return { unlocked, total: achievements.length };
 }
 
-export interface SteamTitleMatch {
-  readonly game: OwnedSteamGame;
-  readonly score: TitleMatchScore;
+/** The four columns the sync script is allowed to touch, as currently stored. */
+export interface StoredSteamSyncFields {
+  readonly steamAppid: number | null;
+  readonly achievementsUnlocked: number | null;
+  readonly achievementsTotal: number | null;
+  readonly hoursTenths: number | null;
+}
+
+/** Only the columns that should actually be written by default — see `steamSyncFieldsToFill`. */
+export interface SteamSyncFill {
+  readonly steamAppid?: number;
+  readonly achievementsUnlocked?: number;
+  readonly achievementsTotal?: number;
+  readonly hoursTenths?: number;
 }
 
 /**
- * Picks the best-scoring Steam-owned game for one stored library title.
+ * Which of the four syncable columns should be filled for one game, given a
+ * resolved Steam appid (existing or freshly HIGH-confidence matched — the
+ * caller decides that, not this function) and what Steam returned for
+ * achievements/playtime: only a column that is CURRENTLY NULL, and only when
+ * the corresponding Steam-sourced value is available.
  *
- * Reuses `normalizeGameTitle`/`scoreTitleMatch` from `metadata.ts` rather
- * than a second copy of the normalization/confidence policy — HIGH means the
- * normalized titles are identical (directly, or after stripping one trailing
- * parenthetical from either side, e.g. the owner's own "Grand Theft Auto:
- * Vice City (itch)"), exactly the policy `scripts/backfill-game-metadata.mjs`
- * already applies against IGDB. `metadata.ts`'s own `bestTitleMatch` isn't
- * reused directly because it is typed against `GameSuggestion` (IGDB's
- * result shape, with cover art/genre/etc. that a Steam-owned-game entry has
- * no equivalent for) — shoehorning `OwnedSteamGame` into that interface would
- * be more misleading than this small, separately-typed loop over the same
- * underlying `scoreTitleMatch`.
+ * This is the code-level enforcement of "fill by default only where the
+ * stored value is NULL" — the same role `metadata.ts`'s own
+ * `metadataFieldsToFill` plays for the IGDB backfill, so the sync script
+ * never has to remember the null-only rule at every call site.
  *
- * Returns `null` for an empty candidate list — "no Steam game to compare
- * against" is a distinct, separately-reported outcome from "compared, but
- * low confidence."
+ * A column where the CURRENT value is non-null and DIFFERS from Steam's is
+ * deliberately left OUT of this function's result — that is a difference to
+ * report, never a silent overwrite. Overwriting `hoursTenths` specifically
+ * (Steam's measured playtime is more accurate than a hand-typed estimate,
+ * but silently rewriting the owner's own record is the exact failure this
+ * whole feature is built to avoid) is a decision the SCRIPT makes
+ * explicitly, gated behind `--overwrite-hours`, never something this
+ * function does on its own. There is no equivalent overwrite path for
+ * `achievementsUnlocked`/`achievementsTotal` at all — a differing
+ * achievement count is reported and left alone, full stop.
+ *
+ * Built with `if` statements into a mutable local object, not conditional
+ * spreads, for the same `exactOptionalPropertyTypes` reason
+ * `metadataFieldsToFill` documents (CLAUDE.md's gotcha on M7's review
+ * filters): more than two or three independently-optional fields assembled
+ * in one object literal loses precision under the merged-spread form.
  */
-export function bestSteamTitleMatch(storedTitle: string, candidates: readonly OwnedSteamGame[]): SteamTitleMatch | null {
-  let best: SteamTitleMatch | null = null;
-  for (const game of candidates) {
-    const score = scoreTitleMatch(storedTitle, game.name);
-    if (best === null || score.distance < best.score.distance) {
-      best = { game, score };
-    }
+export function steamSyncFieldsToFill(
+  current: StoredSteamSyncFields,
+  matchedAppid: number | null,
+  achievements: AchievementCounts | null,
+  hoursTenths: number | null,
+): SteamSyncFill {
+  const fill: { -readonly [K in keyof SteamSyncFill]: SteamSyncFill[K] } = {};
+  if (current.steamAppid === null && matchedAppid !== null) fill.steamAppid = matchedAppid;
+  if (current.achievementsTotal === null && achievements !== null) fill.achievementsTotal = achievements.total;
+  if (current.achievementsUnlocked === null && achievements !== null) {
+    fill.achievementsUnlocked = achievements.unlocked;
   }
-  return best;
+  if (current.hoursTenths === null && hoursTenths !== null) fill.hoursTenths = hoursTenths;
+  return fill;
 }
-
-// Re-exported so callers that only need title comparison (the sync script's
-// "already matched by steam_appid" fast path still wants normalization for
-// logging/reporting) don't need a second import from metadata.ts.
-export { normalizeGameTitle };

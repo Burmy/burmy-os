@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  bestSteamTitleMatch,
   buildAchievementsUrl,
   buildOwnedGamesUrl,
+  steamSyncFieldsToFill,
   toAchievementCounts,
   toOwnedGames,
-  type OwnedSteamGame,
 } from '@/server/games/steam';
 
 describe('buildOwnedGamesUrl', () => {
@@ -149,31 +148,41 @@ describe('toAchievementCounts', () => {
   });
 });
 
-describe('bestSteamTitleMatch', () => {
-  const candidates: OwnedSteamGame[] = [
-    { appid: 1, name: 'Grand Theft Auto: Vice City', playtimeMinutes: 100 },
-    { appid: 2, name: 'Grand Theft Auto: San Andreas', playtimeMinutes: 200 },
-  ];
+const FULLY_EMPTY = {
+  steamAppid: null,
+  achievementsUnlocked: null,
+  achievementsTotal: null,
+  hoursTenths: null,
+};
 
-  it('finds an identical-after-normalization title as the best match', () => {
-    const match = bestSteamTitleMatch('grand theft auto vice city', candidates);
-    expect(match?.game.appid).toBe(1);
-    expect(match?.score.confidence).toBe('high');
+describe('steamSyncFieldsToFill', () => {
+  it('fills every column when all are currently null and Steam data is available', () => {
+    expect(steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual({
+      steamAppid: 1_091_500,
+      achievementsUnlocked: 20,
+      achievementsTotal: 45,
+      hoursTenths: 1_360,
+    });
   });
 
-  it('matches after stripping a trailing parenthetical from the stored title', () => {
-    const match = bestSteamTitleMatch('Grand Theft Auto: Vice City (itch)', candidates);
-    expect(match?.game.appid).toBe(1);
-    expect(match?.score.confidence).toBe('high');
+  it('never fills a column that already holds a value, even when Steam disagrees', () => {
+    const current = { steamAppid: 999, achievementsUnlocked: 10, achievementsTotal: 40, hoursTenths: 500 };
+    expect(steamSyncFieldsToFill(current, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual({});
   });
 
-  it('reports LOW confidence for a close-but-not-identical title, never auto-promoted to high', () => {
-    const match = bestSteamTitleMatch('Grand Theft Auto Vice City HD', candidates);
-    expect(match?.game.appid).toBe(1);
-    expect(match?.score.confidence).toBe('low');
+  it('fills only the columns that are null, leaving already-set columns untouched', () => {
+    const current = { steamAppid: 1_091_500, achievementsUnlocked: null, achievementsTotal: null, hoursTenths: 500 };
+    expect(steamSyncFieldsToFill(current, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual({
+      achievementsUnlocked: 20,
+      achievementsTotal: 45,
+    });
   });
 
-  it('returns null for an empty candidate list', () => {
-    expect(bestSteamTitleMatch('Anything', [])).toBeNull();
+  it('fills nothing when no Steam data is available at all', () => {
+    expect(steamSyncFieldsToFill(FULLY_EMPTY, null, null, null)).toEqual({});
+  });
+
+  it('fills steamAppid alone when only a match was found, no achievements or playtime yet', () => {
+    expect(steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, null, null)).toEqual({ steamAppid: 1_091_500 });
   });
 });
