@@ -15,6 +15,26 @@ export interface PlayYearDraft {
 }
 
 /**
+ * A draft row counts as real — and must reach the server — unless it is
+ * COMPLETELY empty (both `year` and `hours` blank after trimming). That is
+ * the only state that means "clicked Add a year, then changed my mind."
+ *
+ * This is the ONE place that decides which rows count. Before this existed,
+ * this panel's live validation counted every row while `game-dialog.tsx`
+ * separately dropped any row with a blank year before submitting — two
+ * independent opinions about the same drafts, which could show "49h of 49h"
+ * on screen while silently submitting a mismatched (or even empty) split.
+ * Both the live validation below and the dialog's FormData serialization
+ * must call this same function; a partially filled row (year without hours,
+ * or hours without year) is deliberately NOT dropped here — it has to reach
+ * the server so `playYearsSchema` in `game-actions.ts` rejects it explicitly
+ * instead of vanishing client-side.
+ */
+export function isRealPlayYearDraft(row: PlayYearDraft): boolean {
+  return row.year.trim() !== '' || row.hours.trim() !== '';
+}
+
+/**
  * Optional per-year breakdown of a game's hours.
  *
  * Used by roughly 3 games out of 160, so it stays collapsed and out of the way
@@ -31,7 +51,10 @@ export function PlayYearsPanel({
   readonly onChange: (next: readonly PlayYearDraft[]) => void;
   readonly totalTenths: number;
 }): React.ReactElement {
-  const parsed = value.map((row) => ({ hoursTenths: fromHoursInput(row.hours) ?? 0 }));
+  // Only rows `isRealPlayYearDraft` also counts feed the sum — this must be
+  // the exact same rule the dialog uses to decide what gets submitted, or
+  // the on-screen "Xh of Yh" can say OK while a different set of rows ships.
+  const parsed = value.filter(isRealPlayYearDraft).map((row) => ({ hoursTenths: fromHoursInput(row.hours) ?? 0 }));
   const validation = validateSplit(totalTenths, parsed);
 
   function update(index: number, patch: Partial<PlayYearDraft>): void {

@@ -23,9 +23,14 @@ vi.mock('@/features/games/metadata-actions', () => ({
 // only reachable through `.mock.calls`.
 const updateGameAction = vi.fn(async (_id: string, _formData: FormData) => ({ ok: true as const }));
 
+// Also hoisted (not an inline `vi.fn()`), for the same reason as
+// `updateGameAction` above: the play-year regression tests below assert on
+// the FormData this actually received.
+const createGameAction = vi.fn(async (_formData: FormData) => ({ ok: true as const }));
+
 vi.mock('@/features/games/game-actions', () => ({
   deleteGameAction: vi.fn(async () => ({ ok: true as const })),
-  createGameAction: vi.fn(async () => ({ ok: true as const })),
+  createGameAction,
   updateGameAction,
 }));
 
@@ -207,5 +212,94 @@ describe('GameDialog cover art', () => {
     const formData = await pickTheSuggestion(OLD_COVER);
     expect(formData.get('coverUrl')).toBe(NEW_COVER);
     expect(formData.get('genre')).toBe('Action RPG');
+  });
+});
+
+/**
+ * Regression coverage for the Task 4 final-review Finding 1: the panel's
+ * live validation and the dialog's own FormData serialization used to apply
+ * TWO INDEPENDENT rules for which draft rows count, which disagreed in both
+ * directions. Both suites below reproduce the exact scenarios from the
+ * review before the shared `isRealPlayYearDraft` rule existed — see
+ * `.superpowers/sdd/2026-08-23-games-play-year-attribution/task-4-report.md`
+ * for the fail-then-pass evidence recorded when these were added.
+ */
+describe('GameDialog play-year split — row-eligibility consistency', () => {
+  beforeEach(() => {
+    searchGameMetadataAction.mockClear();
+    createGameAction.mockClear();
+    updateGameAction.mockClear();
+  });
+
+  it('submits a row whose year is still blank rather than silently dropping it (false-OK regression)', async () => {
+    // Total 49h. Row 1 is fully filled (2024/37h). Row 2 is the owner typing
+    // hours BEFORE year — hours '12', year still blank. The panel's live
+    // check sums both rows' hours (37 + 12 = 49) and shows no warning. Before
+    // the fix, the dialog separately dropped row 2 for having a blank year,
+    // so what actually reached the server (only 2024/37 = 37 of 49) silently
+    // disagreed with what the screen just showed matched exactly.
+    const user = userEvent.setup();
+    render(<GameDialog game={null} open onOpenChange={() => {}} />);
+
+    await user.type(screen.getByLabelText('Title'), 'Hollow Knight');
+    await user.type(screen.getByLabelText('Hours played'), '49');
+    await user.click(screen.getByRole('button', { name: /split across years/i }));
+
+    await user.click(screen.getByRole('button', { name: /add a year/i }));
+    await user.type(screen.getAllByLabelText('Year')[0]!, '2024');
+    await user.type(screen.getAllByLabelText('Hours')[0]!, '37');
+
+    await user.click(screen.getByRole('button', { name: /add a year/i }));
+    // Only hours typed on the second row — its year stays blank.
+    await user.type(screen.getAllByLabelText('Hours')[1]!, '12');
+
+    // The live panel shows no mismatch: 37 + 12 = 49, matching the total.
+    expect(screen.queryByRole('alert')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(createGameAction).toHaveBeenCalledTimes(1);
+    });
+    const submitted = createGameAction.mock.calls[0]![0];
+    const submittedPlayYears = JSON.parse(submitted.get('playYears') as string) as unknown[];
+
+    // Whatever the panel used to compute "49h of 49h" must be exactly what
+    // reaches the server. Dropping the blank-year row here means the server
+    // sees only 37 of 49 — a mismatch the screen never warned about.
+    expect(submittedPlayYears).toHaveLength(2);
+  });
+
+  it('does not silently empty an existing stored split when only the year cell is blanked (data-loss regression)', async () => {
+    // A game with a real stored split: 2024 -> 49h, matching the 49h total
+    // exactly. The owner blanks the YEAR cell only — the hours cell still
+    // reads '49'. Before the fix, the dialog's submit-time filter dropped
+    // any row with a blank year, so this row vanished from the FormData
+    // entirely: `playYears` became `[]`, which `validateSplit` treats as
+    // legitimately "no split" (ok: true), and `replacePlayYears(..., [])`
+    // then DELETES the stored split outright — a successful-looking save
+    // that destroys real data.
+    const user = userEvent.setup();
+    const existing = game({
+      hoursTenths: 490,
+      playYears: [{ year: 2024, hoursTenths: 490 }],
+    });
+    render(<GameDialog game={existing} open onOpenChange={() => {}} />);
+
+    // The split panel starts expanded because this game already has a split.
+    const yearInput = screen.getByLabelText('Year');
+    await user.clear(yearInput);
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateGameAction).toHaveBeenCalledTimes(1);
+    });
+    const submitted = updateGameAction.mock.calls[0]![1];
+    const submittedPlayYears = JSON.parse(submitted.get('playYears') as string) as unknown[];
+
+    // A row that still carries real hours data must never be indistinguishable
+    // from "delete this row" just because its year cell was cleared.
+    expect(submittedPlayYears.length).toBeGreaterThan(0);
   });
 });

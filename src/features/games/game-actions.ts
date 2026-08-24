@@ -55,10 +55,24 @@ const gameSchema = z.object({
 const playYearsSchema = z
   .array(
     z.object({
-      year: z.coerce.number().int().min(1970).max(2100),
+      // A bare `z.coerce.number()` would accept `''` as `0` (`Number('')`
+      // is `0`, not `NaN`) and only get rejected because 0 happens to fall
+      // below the 1970 floor — a coercion accident, not a real check. The
+      // explicit `.min(1)` on the string form rejects a blank year on its
+      // own terms, independent of wherever the numeric range happens to sit.
+      year: z
+        .string()
+        .trim()
+        .min(1, 'Year is required')
+        .transform((value) => Number(value))
+        .pipe(z.number().int().min(1970).max(2100)),
       // Whitespace-only must be a validation failure, NOT a silent 0 — a
-      // fabricated zero is exactly the bug class this project has hit before.
-      hours: z.string().trim().min(1),
+      // fabricated zero is exactly the bug class this project has hit
+      // before. The human message matches the top-level Hours field's own
+      // message for the identical failure a few lines below — without it,
+      // Zod's default ("Too small: expected string to have >=1 characters")
+      // would reach the owner verbatim.
+      hours: z.string().trim().min(1, 'Hours must be a number like 23 or 23.5'),
     }),
   )
   .max(30);
@@ -271,6 +285,11 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
   try {
     await replacePlayYears(owner.userId, saved.id, parsed.playYears);
   } catch {
+    // Revalidate even on this failure path: `createGame`/`updateGame` above
+    // already committed the game row, so without this the library cache
+    // still hides it — "try editing it again" would point at a row the
+    // owner can't see, and re-adding it would collide as a duplicate.
+    revalidatePath('/games', 'layout');
     return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
   }
 
@@ -315,6 +334,11 @@ export async function updateGameAction(id: string, formData: FormData): Promise<
   try {
     await replacePlayYears(owner.userId, saved.id, parsed.playYears);
   } catch {
+    // Revalidate even on this failure path: `createGame`/`updateGame` above
+    // already committed the game row, so without this the library cache
+    // still hides it — "try editing it again" would point at a row the
+    // owner can't see, and re-adding it would collide as a duplicate.
+    revalidatePath('/games', 'layout');
     return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
   }
 

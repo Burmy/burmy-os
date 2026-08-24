@@ -31,7 +31,7 @@ import {
 import type { GameSuggestion } from '@/server/games/metadata';
 import { createGameAction, deleteGameAction, updateGameAction } from '../game-actions';
 import { searchGameMetadataAction } from '../metadata-actions';
-import { type PlayYearDraft, PlayYearsPanel } from './play-years-panel';
+import { isRealPlayYearDraft, type PlayYearDraft, PlayYearsPanel } from './play-years-panel';
 
 /**
  * Radix `Select` treats an item `value=""` as "no selection" — `<SelectValue />`
@@ -212,9 +212,12 @@ export function GameDialog({
     formData.set('metacritic', metacritic === null ? '' : String(metacritic));
     formData.set('averagePlaytimeHours', averagePlaytimeHours === null ? '' : String(averagePlaytimeHours));
     formData.set('esrbRating', esrbRating ?? '');
-    // Filtering empty-year rows here means an owner who clicks "Add a year"
-    // and changes their mind does not submit a junk row.
-    formData.set('playYears', JSON.stringify(playYears.filter((row) => row.year.trim() !== '')));
+    // `isRealPlayYearDraft` is shared with the panel's own live validation —
+    // dropping a row here that the panel still counted would silently submit
+    // a split the screen never actually showed (see its doc comment). Only a
+    // row that is COMPLETELY empty is safe to drop; a row with just a year or
+    // just hours still needs to reach the server so it can be rejected there.
+    formData.set('playYears', JSON.stringify(playYears.filter(isRealPlayYearDraft)));
 
     startTransition(async () => {
       const result = game === null
