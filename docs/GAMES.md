@@ -49,8 +49,8 @@ guess.
 | `price_cents` | signed bigint | Same convention as `finance_transactions.amount_cents`. No FK to Finance — see "Out of scope" |
 | `status` | enum, not null, default `backlog` | `backlog \| playing \| completed \| paused_dropped` |
 | `rating` | smallint, nullable | 1–5. Null means "no opinion yet," not zero |
-| `hours_tenths` | integer, nullable | Tenths of an hour. 235 = 23.5h. See "Hours" below |
-| `first_played_year` | smallint, nullable | Sparse by design |
+| `hours_tenths` | integer, nullable | Tenths of an hour. 235 = 23.5h. See "Hours" below. The authoritative total — see "Play-year attribution" below for how it's optionally split across years |
+| `first_played_year` | smallint, nullable | Sparse by design. Also where hours land by default when no `game_play_years` split exists — see "Play-year attribution" below |
 | `achievements_unlocked`, `achievements_total` | smallint, nullable | Counts, not a checklist — see below |
 | `cover_url`, `genre` | text, nullable | Populated by hand or from an IGDB suggestion |
 | `platinum` | boolean, not null, default `false` | The owner's own claim, not derived from achievement counts — see "Platinum" below |
@@ -141,6 +141,93 @@ back off from the editor.
 
 ---
 
+## Play-year attribution
+
+`first_played_year` was doing two unrelated jobs: "when did I start this" and "which year owns
+these hours." For almost every game those coincide. For a game played across a year boundary — a
+base game in 2024, its DLC in 2025 — they do not, and crediting every hour to the start year is
+wrong: the spreadsheet import recorded exactly this case as a composite string, `"53 + 6"`, that the
+schema had no column for.
+
+### The `game_play_years` table
+
+One row per "I played N hours of this game in year Y" (migration `drizzle/0007_nervous_kid_colt.sql`).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `owner_id` | text, not null, FK → `user`, `ON DELETE CASCADE` | |
+| `game_id` | uuid, not null, FK → `games`, `ON DELETE CASCADE` | |
+| `year` | smallint, not null | |
+| `hours_tenths` | integer, not null | Same tenths-of-an-hour convention as `games.hours_tenths` |
+
+Unique on `(game_id, year)` — a game cannot have two rows claiming the same year.
+
+**`games.hours_tenths` remains the authoritative total. These rows are an attribution OF that total,
+never a replacement for it.** That distinction is load-bearing, not stylistic: Steam and PSN own the
+total for a linked game and have no concept of years at all (see "Steam library sync" below), so the
+total has to stay a single number an API can write. A game with **no** `game_play_years` rows
+attributes everything to `first_played_year` — the behaviour every game already had before this
+feature existed, which is why only 3 of 160 games needed anything backfilled (see "Seeding the three
+known splits" below).
+
+### The split must sum to the total, or it shows up as a visible gap
+
+`attributeHours` (`src/server/games/play-years.ts` — pure TypeScript, no React, no Next, no
+database, same boundary rule as the rest of `src/server/games/`) turns `games` rows plus
+`game_play_years` rows into a per-year attribution. When a split's rows don't sum to the game's
+`hours_tenths` — the usual cause is a Steam sync raising the total after the split was last edited —
+the shortfall (or overshoot) is accumulated into `unattributedTenths` and rendered as its own
+"Unattributed" line in the Year by year table (`YearlyBreakdownTable`), never silently absorbed into
+a year and never silently dropped. A negative `unattributedTenths` means the split overshoots the
+total; the table renders that with a minus sign rather than hiding it.
+
+`validateSplit` runs the same total-vs-split check at edit time, in the `PlayYearsPanel` (a
+collapsed-by-default "Split across years" toggle in the add/edit dialog — used by roughly 3 games
+out of 160, so it stays out of the way for everyone else) and again server-side in
+`createGameAction`/`updateGameAction`. `findDuplicateYear` rejects two rows claiming the same year
+in one submission. Both checks run **before either write is attempted** — before `createGame`/
+`updateGame` and before `replacePlayYears` — so a mismatched or duplicated split is refused as a
+plain field error and never reaches the database, rather than relying on the table's own
+`(game_id, year)` unique index to refuse it after the game row has already been committed.
+
+The game row and the split are still two separate writes, not one transaction: `replacePlayYears`
+(`src/server/db/games/play-years.ts`) deletes and re-inserts a game's rows inside its own
+transaction, but that transaction is separate from the `createGame`/`updateGame` call just before
+it. The duplicate-year and sum checks above remove the only reachable way the split write could fail
+in normal operation, so closing that window for real would mean widening `createGame`/`updateGame`
+to accept play years directly — for a gap that now requires an actual mid-request database fault to
+hit at all. If `replacePlayYears` does throw, the game row has already been saved; the action
+catches it and reports a field error rather than crashing, which is defense-in-depth, not a rollback.
+
+### Achievements are not split, and never will be
+
+`buildYearlyBreakdown` attributes hours per year but leaves achievements on `first_played_year`,
+unconditionally. No source anywhere — the library, Steam, or PSN — records which year a trophy was
+earned in, so splitting them proportionally across a game's played years would fabricate data the
+owner never entered. This is a permanent property of the data available, not a gap this feature
+happens not to have closed yet.
+
+### Seeding the three known splits
+
+`scripts/seed-play-year-splits.mjs` promoted the only three games whose year split existed anywhere
+— as prose in `notes` (e.g. "Imported as \"53 + 6\" across 2025 + 2026") — into real rows: Clair
+Obscur: Expedition 33 (2025/53h + 2026/6h), Hollow Knight (2024/37h + 2025/12h), and Lies of P
+(2024/52h + 2025/25h). Dry-run by default, `--apply` to write, and it re-verifies each split against
+the game's *current* `hours_tenths` before writing — a hand-recovered split that no longer sums to
+the live total is refused, not force-written. A one-off script rather than a SQL data migration for
+the same reason `fix-game-platforms.mjs` gives: migrations run against both local and production,
+where `games.id` values differ, and a title-keyed write inside a migration is fragile.
+
+### Neither Steam nor PSN can ever supply this
+
+Steam's `GetOwnedGames` returns only `playtime_forever` and `playtime_2weeks` — no per-year
+breakdown exists in the API at all. PSN's `getUserPlayedGames` (research only; never built — see
+"Steam library sync" below) returns a single cumulative `playDuration`, same limitation. Per-year
+attribution is permanently a hand-entered fact, not something a future sync could ever fill in
+automatically the way it fills in the total.
+
+---
+
 ## Lifecycle statuses
 
 Four states, driving the library's filter chips and the dashboard's backlog/playing/completed
@@ -179,9 +266,11 @@ failure mode this module makes structurally impossible — every number the Game
 recomputed from the current `games` rows on every render, so there is no second copy of any total that
 could ever fall out of sync with the first.
 
-The stats layer exposes five pure functions, all operating on `GameStatRow[]` (a narrower projection
-of `Game` — no `notes` or `coverUrl`, since nothing downstream needs them; `priceCents` **is**
-included, for the money figures below):
+The stats layer exposes five pure functions, all taking `GameStatRow[]` (a narrower projection of
+`Game` — no `notes` or `coverUrl`, since nothing downstream needs them; `priceCents` **is** included,
+for the money figures below) as their first argument. Two take a second: `buildYearlyBreakdown` also
+takes the owner's `game_play_years` rows, and `findCallouts` also takes `buildYearlyBreakdown`'s own
+output — see below and "Play-year attribution" above.
 
 - **`buildLibrarySummary`** — total games, total hours, backlog/playing/completed counts, average
   rating (mean of rated games only — unrated games don't pull the average toward zero), the
@@ -193,18 +282,28 @@ included, for the money figures below):
   the money sitting unplayed in the backlog (`priceCents` summed across `backlog`-status games only).
   Every average here follows the same "exclude, don't zero-fill" rule as `averageRating` above, and
   every ratio guards its own zero denominator to return `null` rather than `NaN` or `Infinity`.
-- **`buildYearlyBreakdown`** — one row per `firstPlayedYear` present in the data, newest first, each
-  carrying its own game count, hours, achievements, and the hours delta from the previous year present
-  (`null` for the earliest year — there is nothing to compare it to). A game with no
+- **`buildYearlyBreakdown`** — returns `{ rows, unattributedTenths }`. One row per year present in
+  the data, newest first, each carrying `startedCount` (games whose `firstPlayedYear` is that year —
+  sums to the library total across years, same as the old plain game count did), `playedCount`
+  (distinct games with hours *attributed* to that year via `attributeHours` — deliberately does NOT
+  sum to the total, since a game played across two years is genuinely played in both), hours,
+  achievements (still keyed to `firstPlayedYear`, never split — see "Play-year attribution" above),
+  and the hours delta from the previous year present (`null` for the earliest year). A game with no
   `firstPlayedYear` — a retro entry — is **excluded from this breakdown entirely**, not bucketed into
-  a fake "year zero": it genuinely has no place in a year-by-year comparison.
+  a fake "year zero": it genuinely has no place in a year-by-year comparison. `unattributedTenths` is
+  rendered as its own "Unattributed" line by `YearlyBreakdownTable`, never folded into a year.
 - **`buildDistribution`** — a generic key/label counter used three times on the dashboard (platform,
   ownership, genre). Its `percent` is the share of rows that actually *had* a value for that key, not
   a share of the whole library — a game with no genre recorded doesn't silently deflate every genre's
   percentage.
-- **`findCallouts`** — longest game by hours, the developer with the most cumulative hours across
-  their games, and the year with the most hours played, each computed over played games only
-  (`hoursTenths > 0`).
+- **`findCallouts`** — longest game and top developer by total hours, each computed over played games
+  only (`hoursTenths > 0`), neither year-scoped. `bestYear` takes `buildYearlyBreakdown`'s own
+  `YearlyBreakdownRow[]` and picks the max by `hoursTenths`, rather than building a second, independent
+  year→hours map off `firstPlayedYear`. An earlier version did build that second map, crediting a
+  game's *full* total to a single year — the same bug play-year attribution exists to fix everywhere
+  else — and the two callers disagreed: the callout read 591.7h for 2024 while the table, going
+  through `attributeHours`, read 579.7h for the same year and the same library. One attribution
+  implementation now, not two kept in sync by hand.
 
 `src/server/games/money.ts` is the Games-side sibling of `finance/money.ts`'s formatting half — a
 single pure `formatPriceCents` — used only for display of the money figures above. It is NOT imported

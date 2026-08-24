@@ -324,6 +324,12 @@ These are verified, not folklore. Do not "fix" them back.
   only `scripts/sync-steam-library.mjs` (2026-08-23) uses them, and that script itself exits early
   with an error if either is unset, since there's nothing useful it can do without them. See
   `docs/GAMES.md`, "Steam library sync."
+- **`games.hours_tenths` is the authoritative total; `game_play_years` only says WHICH YEARS it
+  happened in.** Neither Steam nor PSN can supply a per-year breakdown (Steam gives
+  `playtime_forever` and `playtime_2weeks`; PSN gives one cumulative `playDuration`), so the total
+  has to stay a single number an API can write while the split stays owner-entered. Do not
+  "normalize" this by deriving the total from the rows — a sync would then have nowhere to write,
+  and 157 of 160 games have no rows at all. See `docs/GAMES.md`, "Play-year attribution."
 
 ---
 
