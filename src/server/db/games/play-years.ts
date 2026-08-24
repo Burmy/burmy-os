@@ -5,7 +5,7 @@
  * parameter of every function and goes into every WHERE.
  */
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { gamePlayYears, games } from '@/server/db/schema';
@@ -25,6 +25,29 @@ export async function listPlayYears(ownerId: string): Promise<PlayYearRow[]> {
     .orderBy(asc(gamePlayYears.gameId), asc(gamePlayYears.year));
 
   return rows;
+}
+
+/**
+ * Sum of each game's `game_play_years` rows, for a whole chunk of games in
+ * ONE query — used by the Steam sync engine (src/features/games/sync/sync-actions.ts)
+ * so a chunk of `CHUNK_SIZE` games costs one query, not `CHUNK_SIZE` of them.
+ * A game with no split rows at all is simply absent from the returned map —
+ * the caller decides what "no split" means (`null`, in `StoredGameForSync`).
+ */
+export async function sumPlayYearsForGames(ownerId: string, gameIds: readonly string[]): Promise<Map<string, number>> {
+  if (gameIds.length === 0) return new Map();
+
+  const db = getDb();
+  const rows = await db
+    .select({
+      gameId: gamePlayYears.gameId,
+      totalTenths: sql<number>`sum(${gamePlayYears.hoursTenths})::int`,
+    })
+    .from(gamePlayYears)
+    .where(and(eq(gamePlayYears.ownerId, ownerId), inArray(gamePlayYears.gameId, gameIds)))
+    .groupBy(gamePlayYears.gameId);
+
+  return new Map(rows.map((row) => [row.gameId, row.totalTenths]));
 }
 
 export async function listPlayYearsForGame(ownerId: string, gameId: string): Promise<PlayYearRow[]> {

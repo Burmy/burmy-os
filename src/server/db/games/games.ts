@@ -274,3 +274,67 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
     status: row.status as GameStatus,
   }));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Steam sync (src/features/games/sync/sync-actions.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The narrow projection the Steam sync engine needs to plan changes for one game. */
+export interface SteamSyncGame {
+  readonly id: string;
+  readonly title: string;
+  readonly steamAppid: number | null;
+  readonly hoursTenths: number | null;
+  readonly achievementsUnlocked: number | null;
+  readonly achievementsTotal: number | null;
+}
+
+/** How many Steam-platform games the owner has — a sync run's `total`. */
+export async function countSteamGames(ownerId: string): Promise<number> {
+  const rows = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')));
+
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * One page of the owner's Steam-platform games, ordered STABLY BY `id` — not
+ * title, which can change mid-run and would make a resumable cursor
+ * meaningless. This is the sync engine's only source of "what to process
+ * next."
+ */
+export async function listSteamGamesChunk(ownerId: string, offset: number, limit: number): Promise<SteamSyncGame[]> {
+  return getDb()
+    .select({
+      id: gamesTable.id,
+      title: gamesTable.title,
+      steamAppid: gamesTable.steamAppid,
+      hoursTenths: gamesTable.hoursTenths,
+      achievementsUnlocked: gamesTable.achievementsUnlocked,
+      achievementsTotal: gamesTable.achievementsTotal,
+    })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')))
+    .orderBy(asc(gamesTable.id))
+    .limit(limit)
+    .offset(offset);
+}
+
+/**
+ * Every Steam-platform game's id/title/steamAppid, unpaged — the sync
+ * engine's finalization step re-matches every one of these (not just the
+ * ones in a given chunk) to decide which Steam-owned games genuinely have no
+ * library counterpart. Staging never writes to `games`, so a title match
+ * staged several chunks ago is still invisible in the `steamAppid` column;
+ * recomputing the match here (pure, deterministic) is the only way to know.
+ */
+export async function listSteamGamesForMatching(
+  ownerId: string,
+): Promise<{ readonly id: string; readonly title: string; readonly steamAppid: number | null }[]> {
+  return getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title, steamAppid: gamesTable.steamAppid })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')));
+}
