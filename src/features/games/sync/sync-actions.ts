@@ -28,7 +28,7 @@
 import { revalidatePath } from 'next/cache';
 
 import { requireOwner } from '@/server/auth/owner';
-import { SyncRunAlreadyCommittedError, SyncRunNotFoundError } from '@/server/db/games/errors';
+import { SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from '@/server/db/games/errors';
 import { countSteamGames, listSteamGamesChunk, listSteamGamesForMatching } from '@/server/db/games/games';
 import { sumPlayYearsForGames } from '@/server/db/games/play-years';
 import {
@@ -302,9 +302,10 @@ export async function setSyncChangeSelectedAction(changeId: string, selected: bo
 
 /**
  * Applies every selected change in a run to `games` and marks the run
- * committed. `commitSyncRun`'s own two failure modes — the run does not
- * exist (or belongs to someone else) and the run was already committed —
- * come back as a field-free `ActionResult` message, not a crash: both are
+ * committed. `commitSyncRun`'s own expected failure modes — the run does not
+ * exist (or belongs to someone else), the run was already committed, or the
+ * run is not `ready` yet (still `running`, or `failed`/`cancelled`) — come
+ * back as a field-free `ActionResult` message, not a crash: all three are
  * expected outcomes of a button the owner can double-click or a stale tab
  * can resubmit from, not a fault in the running code. Anything else (a
  * disallowed field name reaching the whitelist check, a database fault)
@@ -318,6 +319,7 @@ export async function commitSyncRunAction(runId: string): Promise<ActionResult> 
   } catch (error) {
     if (error instanceof SyncRunNotFoundError) return fail(error.message);
     if (error instanceof SyncRunAlreadyCommittedError) return fail(error.message);
+    if (error instanceof SyncRunNotReadyError) return fail(error.message);
     throw error;
   }
 

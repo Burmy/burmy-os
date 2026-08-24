@@ -8,12 +8,12 @@
  * the selected ones is a later task's job.
  */
 
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable, gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
 import type { PlannedChange, SyncChangeKind } from '@/server/games/sync-plan';
-import { SyncRunAlreadyCommittedError, SyncRunNotFoundError } from './errors';
+import { SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from './errors';
 
 export type SyncRunStatus = 'running' | 'ready' | 'committed' | 'failed' | 'cancelled';
 
@@ -269,6 +269,39 @@ const COMMIT_ORDER: Record<SyncChangeKind, number> = { link: 0, field_update: 1,
  * guard, not a re-derivation of the staging default. There is nothing a
  * `reconcile` change could apply anyway: it names no `games` column.
  *
+ * ONLY A `ready` RUN MAY BE COMMITTED
+ *
+ * `running` has chunks still in flight — committing it approves a
+ * half-populated set, and the engine would go on appending changes to a run
+ * that is now `committed`, which is incoherent. `failed`/`cancelled` have
+ * nothing valid to apply either. `committed` gets its own dedicated
+ * `SyncRunAlreadyCommittedError` (checked first, below) so a double-commit's
+ * message stays exactly "already committed"; every OTHER non-`ready` status
+ * throws the less specific `SyncRunNotReadyError`.
+ *
+ * WHY THE ADVISORY LOCK
+ *
+ * Same defect `commitImport` (`src/server/db/finance/imports.ts`) already
+ * documents and fixes: under READ COMMITTED, a plain `SELECT` does not
+ * serialize against another transaction's `SELECT`. Two near-simultaneous
+ * commits of the SAME run — a double-click before the button re-renders, two
+ * tabs open on one run — can each read `status = 'ready'` before either has
+ * written `'committed'`, and both then proceed to apply every selected
+ * change. For `link`/`field_update` alone the writes happen to be
+ * idempotent, so the immutability invariant breaks silently with no error;
+ * for a `new_game`, the partial unique index on `(owner_id, steam_appid)`
+ * makes the SECOND transaction's insert throw a raw, unwrapped Postgres
+ * unique-violation instead of a clean refusal. `pg_advisory_xact_lock`,
+ * taken as the very first statement — before the status read — makes the
+ * second transaction BLOCK until the first's commit (or rollback) is
+ * visible, so its own status read genuinely sees the first one's result and
+ * takes the typed `SyncRunAlreadyCommittedError` path instead. Keyed to the
+ * RUN (not the owner, unlike `commitImport`'s owner-wide lock): the
+ * contested resource here is one run's status transition, not a
+ * cross-record dedupe check shared by every import for an owner, so scoping
+ * the lock to the run alone still fixes the actual race while letting two
+ * DIFFERENT runs commit concurrently.
+ *
  * WHY ONE TRANSACTION
  *
  * The owner reviews and approves a SET of changes together. Applying half of
@@ -293,6 +326,10 @@ export async function commitSyncRun(
   const db = getDb();
 
   return db.transaction(async (tx) => {
+    // FIRST statement in the transaction, before the status read — see
+    // "WHY THE ADVISORY LOCK" above. Keyed to the run, not the owner.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('burmy_sync_commit'), hashtext(${runId}))`);
+
     const runs = await tx
       .select()
       .from(gameSyncRuns)
@@ -302,6 +339,7 @@ export async function commitSyncRun(
     const run = runs[0];
     if (!run) throw new SyncRunNotFoundError();
     if (run.status === 'committed') throw new SyncRunAlreadyCommittedError();
+    if (run.status !== 'ready') throw new SyncRunNotReadyError(run.status);
 
     const selectedChanges = await tx
       .select()

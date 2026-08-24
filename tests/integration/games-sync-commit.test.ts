@@ -8,20 +8,25 @@ import { countRows, harness, resetDatabase } from './harness';
  * `games`. Integration rather than unit because everything worth proving
  * here belongs to the database: the whitelist that keeps a `field_update`
  * payload from ever becoming a dynamic column name, transactional
- * all-or-nothing commit, and owner scoping on the run itself.
+ * all-or-nothing commit, owner scoping on the run itself, the `ready`-only
+ * gate, and the `pg_advisory_xact_lock` that makes that gate actually hold
+ * under real concurrency.
  */
 
 type Sync = typeof import('@/server/db/games/sync');
 type Games = typeof import('@/server/db/games/games');
+type Errors = typeof import('@/server/db/games/errors');
 
 let sync: Sync;
 let games: Games;
+let errors: Errors;
 
 beforeAll(async () => {
   await harness();
-  [sync, games] = await Promise.all([
+  [sync, games, errors] = await Promise.all([
     import('@/server/db/games/sync'),
     import('@/server/db/games/games'),
+    import('@/server/db/games/errors'),
   ]);
 });
 
@@ -56,16 +61,23 @@ async function makeGame(
   return created.id;
 }
 
+/** Every real commit test needs the run past `running` first — `commitSyncRun` now refuses anything but `ready`. */
+async function makeReadyRun(ownerId: string, total: number, library: unknown[] = []): Promise<string> {
+  const run = await sync.createSyncRun(ownerId, 'steam', total, library);
+  await sync.finishSyncRun(ownerId, run.id, 'ready');
+  return run.id;
+}
+
 describe('commitSyncRun', () => {
   it('applies only selected changes', async () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameA = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
     const gameB = await makeGame(owner, 'Celeste', { hoursTenths: 100 });
-    const run = await sync.createSyncRun(owner, 'steam', 2, []);
+    const runId = await makeReadyRun(owner, 2);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         { kind: 'field_update', gameId: gameA, title: 'Hollow Knight', payload: { field: 'hoursTenths', from: 490, to: 600 } },
         { kind: 'field_update', gameId: gameB, title: 'Celeste', payload: { field: 'hoursTenths', from: 100, to: 200 } },
@@ -73,11 +85,11 @@ describe('commitSyncRun', () => {
       2,
     );
 
-    const staged = await sync.listSyncChanges(owner, run.id);
+    const staged = await sync.listSyncChanges(owner, runId);
     const celesteChange = staged.find((change) => change.gameId === gameB);
     await sync.setSyncChangeSelected(owner, celesteChange!.id, false);
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
     const a = await games.getGame(owner, gameA);
     const b = await games.getGame(owner, gameB);
@@ -87,11 +99,11 @@ describe('commitSyncRun', () => {
 
   it('creates a game for a selected new_game change', async () => {
     const owner = await makeOwner('owner@example.invalid');
-    const run = await sync.createSyncRun(owner, 'steam', 0, []);
+    const runId = await makeReadyRun(owner, 0);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         {
           kind: 'new_game',
@@ -103,7 +115,7 @@ describe('commitSyncRun', () => {
       0,
     );
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
     const all = await games.listGames(owner);
     const created = all.find((game) => game.title === 'Half-Life: Opposing Force');
@@ -117,11 +129,11 @@ describe('commitSyncRun', () => {
 
   it('derives backlog status for a zero-hour new game', async () => {
     const owner = await makeOwner('owner@example.invalid');
-    const run = await sync.createSyncRun(owner, 'steam', 0, []);
+    const runId = await makeReadyRun(owner, 0);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         {
           kind: 'new_game',
@@ -133,7 +145,7 @@ describe('commitSyncRun', () => {
       0,
     );
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
     const all = await games.listGames(owner);
     const created = all.find((game) => game.title === 'Team Fortress Classic');
@@ -142,20 +154,20 @@ describe('commitSyncRun', () => {
 
   it('does not create a game for a deselected new_game change', async () => {
     const owner = await makeOwner('owner@example.invalid');
-    const run = await sync.createSyncRun(owner, 'steam', 0, []);
+    const runId = await makeReadyRun(owner, 0);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [{ kind: 'new_game', gameId: null, title: 'Ricochet', payload: { steamAppid: 60, hoursTenths: 5, platform: 'steam' } }],
       0,
     );
 
-    const [change] = await sync.listSyncChanges(owner, run.id);
+    const [change] = await sync.listSyncChanges(owner, runId);
     await sync.setSyncChangeSelected(owner, change!.id, false);
 
     const before = await countRows('games');
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
     const after = await countRows('games');
 
     expect(after).toBe(before);
@@ -168,11 +180,11 @@ describe('commitSyncRun', () => {
     const gameA = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
     const gameB = await makeGame(owner, 'Celeste', { hoursTenths: 100 });
     const gameC = await makeGame(owner, 'Hades', { hoursTenths: 210 });
-    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    const runId = await makeReadyRun(owner, 1);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [{ kind: 'field_update', gameId: gameA, title: 'Hollow Knight', payload: { field: 'hoursTenths', from: 490, to: 600 } }],
       1,
     );
@@ -180,7 +192,7 @@ describe('commitSyncRun', () => {
     const bBefore = await games.getGame(owner, gameB);
     const cBefore = await games.getGame(owner, gameC);
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
     const bAfter = await games.getGame(owner, gameB);
     const cAfter = await games.getGame(owner, gameC);
@@ -192,11 +204,11 @@ describe('commitSyncRun', () => {
   it('never reduces the games row count', async () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameA = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
-    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    const runId = await makeReadyRun(owner, 1);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         { kind: 'field_update', gameId: gameA, title: 'Hollow Knight', payload: { field: 'hoursTenths', from: 490, to: 600 } },
         { kind: 'new_game', gameId: null, title: 'Portal', payload: { steamAppid: 400, hoursTenths: 40, platform: 'steam' } },
@@ -205,7 +217,7 @@ describe('commitSyncRun', () => {
     );
 
     const before = await countRows('games');
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
     const after = await countRows('games');
 
     expect(after).toBeGreaterThanOrEqual(before);
@@ -215,14 +227,14 @@ describe('commitSyncRun', () => {
   it('applies a link before a field_update on the same game', async () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight', { steamAppid: null, hoursTenths: 490 });
-    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    const runId = await makeReadyRun(owner, 1);
 
     // Staged field_update THEN link — insertion order deliberately reversed
     // from the required apply order, to prove the commit reorders rather
     // than trusting staging order.
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         { kind: 'field_update', gameId, title: 'Hollow Knight', payload: { field: 'hoursTenths', from: 490, to: 600 } },
         { kind: 'link', gameId, title: 'Hollow Knight', payload: { steamAppid: 367520 } },
@@ -230,7 +242,7 @@ describe('commitSyncRun', () => {
       1,
     );
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
     const after = await games.getGame(owner, gameId);
     expect(after.steamAppid).toBe(367520);
@@ -240,11 +252,11 @@ describe('commitSyncRun', () => {
   it('skips reconcile entirely', async () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
-    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    const runId = await makeReadyRun(owner, 1);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         {
           kind: 'reconcile',
@@ -256,7 +268,7 @@ describe('commitSyncRun', () => {
       1,
     );
 
-    const [change] = await sync.listSyncChanges(owner, run.id);
+    const [change] = await sync.listSyncChanges(owner, runId);
     // Sanity check on the staging default this test deliberately overrides below.
     expect(change?.selected).toBe(false);
 
@@ -267,7 +279,7 @@ describe('commitSyncRun', () => {
     await sql`update game_sync_changes set selected = true where id = ${change!.id}`;
 
     const before = await games.getGame(owner, gameId);
-    const result = await sync.commitSyncRun(owner, run.id);
+    const result = await sync.commitSyncRun(owner, runId);
     const after = await games.getGame(owner, gameId);
 
     expect(after).toEqual(before);
@@ -277,16 +289,16 @@ describe('commitSyncRun', () => {
   it('rejects a payload naming a non-syncable column', async () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight');
-    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    const runId = await makeReadyRun(owner, 1);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [{ kind: 'field_update', gameId, title: 'Hollow Knight', payload: { field: 'title', from: 'Hollow Knight', to: 'Hacked' } }],
       1,
     );
 
-    await expect(sync.commitSyncRun(owner, run.id)).rejects.toThrow();
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
 
     const after = await games.getGame(owner, gameId);
     expect(after.title).toBe('Hollow Knight');
@@ -294,41 +306,79 @@ describe('commitSyncRun', () => {
 
   it('marks the run committed', async () => {
     const owner = await makeOwner('owner@example.invalid');
-    const run = await sync.createSyncRun(owner, 'steam', 0, []);
+    const runId = await makeReadyRun(owner, 0);
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
-    const after = await sync.getSyncRun(owner, run.id);
+    const after = await sync.getSyncRun(owner, runId);
     expect(after?.status).toBe('committed');
   });
 
   it('rejects committing the same run twice', async () => {
     const owner = await makeOwner('owner@example.invalid');
-    const run = await sync.createSyncRun(owner, 'steam', 0, []);
+    const runId = await makeReadyRun(owner, 0);
 
-    await sync.commitSyncRun(owner, run.id);
+    await sync.commitSyncRun(owner, runId);
 
-    await expect(sync.commitSyncRun(owner, run.id)).rejects.toThrow();
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toBeInstanceOf(errors.SyncRunAlreadyCommittedError);
+  });
+
+  it('rejects committing a run that is still running', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
+    // Deliberately NOT calling makeReadyRun — a fresh run defaults to 'running'.
+    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.appendSyncChanges(
+      owner,
+      run.id,
+      [{ kind: 'field_update', gameId, title: 'Hollow Knight', payload: { field: 'hoursTenths', from: 490, to: 900 } }],
+      1,
+    );
+
+    await expect(sync.commitSyncRun(owner, run.id)).rejects.toBeInstanceOf(errors.SyncRunNotReadyError);
+
+    const after = await games.getGame(owner, gameId);
+    expect(after.hoursTenths).toBe(490);
+    const runAfter = await sync.getSyncRun(owner, run.id);
+    expect(runAfter?.status).toBe('running');
+  });
+
+  it('rejects committing a run that failed', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
+    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.appendSyncChanges(
+      owner,
+      run.id,
+      [{ kind: 'field_update', gameId, title: 'Hollow Knight', payload: { field: 'hoursTenths', from: 490, to: 900 } }],
+      1,
+    );
+    await sync.finishSyncRun(owner, run.id, 'failed', 'Steam did not respond');
+
+    await expect(sync.commitSyncRun(owner, run.id)).rejects.toBeInstanceOf(errors.SyncRunNotReadyError);
+
+    const after = await games.getGame(owner, gameId);
+    expect(after.hoursTenths).toBe(490);
   });
 
   it("rejects committing another owner's run", async () => {
     const mine = await makeOwner('mine@example.invalid');
     const theirs = await makeOwner('theirs@example.invalid');
     const gameId = await makeGame(theirs, 'Their Game', { hoursTenths: 490 });
-    const run = await sync.createSyncRun(theirs, 'steam', 1, []);
+    const runId = await makeReadyRun(theirs, 1);
 
     await sync.appendSyncChanges(
       theirs,
-      run.id,
+      runId,
       [{ kind: 'field_update', gameId, title: 'Their Game', payload: { field: 'hoursTenths', from: 490, to: 900 } }],
       1,
     );
 
-    await expect(sync.commitSyncRun(mine, run.id)).rejects.toThrow();
+    await expect(sync.commitSyncRun(mine, runId)).rejects.toThrow();
 
     const after = await games.getGame(theirs, gameId);
     expect(after.hoursTenths).toBe(490);
-    const runAfter = await sync.getSyncRun(theirs, run.id);
+    const runAfter = await sync.getSyncRun(theirs, runId);
     expect(runAfter?.status).not.toBe('committed');
   });
 
@@ -336,11 +386,11 @@ describe('commitSyncRun', () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameA = await makeGame(owner, 'Hollow Knight', { hoursTenths: 490 });
     const gameB = await makeGame(owner, 'Celeste', { hoursTenths: 100 });
-    const run = await sync.createSyncRun(owner, 'steam', 2, []);
+    const runId = await makeReadyRun(owner, 2);
 
     await sync.appendSyncChanges(
       owner,
-      run.id,
+      runId,
       [
         // Valid, and staged (so ordered) FIRST — proves an already-applied
         // write inside the transaction still rolls back.
@@ -351,14 +401,89 @@ describe('commitSyncRun', () => {
       2,
     );
 
-    await expect(sync.commitSyncRun(owner, run.id)).rejects.toThrow();
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
 
     const a = await games.getGame(owner, gameA);
     const b = await games.getGame(owner, gameB);
     expect(a.hoursTenths).toBe(490);
     expect(b.title).toBe('Celeste');
 
-    const runAfter = await sync.getSyncRun(owner, run.id);
+    const runAfter = await sync.getSyncRun(owner, runId);
     expect(runAfter?.status).not.toBe('committed');
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // CRITICAL FIX EVIDENCE — a plain in-transaction `SELECT` does not
+  // serialize against another transaction's `SELECT` under READ COMMITTED.
+  // Two near-simultaneous `commitSyncRun` calls on the same run (a
+  // double-click, two tabs) can both observe a non-`committed` status and
+  // both proceed.
+  //
+  // Run against the code as of commit b107a9f (no `pg_advisory_xact_lock`),
+  // a narrow version of this test — a single `new_game` change, nothing
+  // else — passed 5/5 times: on a local, already-warm connection pool, the
+  // FIRST transaction's short sequence of queries reliably finished (and
+  // committed) before the SECOND transaction's connection was even fully
+  // reserved, so the race window never actually got exercised. Widening the
+  // first transaction's own work (many `field_update` changes ahead of the
+  // `new_game`, each an extra sequential round trip) reopened that window
+  // and reproduced the bug reliably (5/5 runs): exactly one promise
+  // fulfilled and one rejected, but the rejection was a RAW, unwrapped
+  // Postgres unique-violation ("Failed query: insert into games …") from
+  // the `games_owner_steam_appid_idx` partial unique index — not the clean
+  // `SyncRunAlreadyCommittedError` a caller can show the owner. Full
+  // captured output is in the fix report appended to task-4-report.md.
+  //
+  // The `pg_advisory_xact_lock` below (mirroring `commitImport` in
+  // `src/server/db/finance/imports.ts`) makes the second transaction BLOCK
+  // until the first's commit is visible, so its own status read genuinely
+  // sees `committed` and takes the typed refusal path instead — this test
+  // now passes deterministically with the fix in place.
+  // ───────────────────────────────────────────────────────────────────────
+  it('serializes concurrent commits — exactly one succeeds, the other refuses cleanly', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const runId = await makeReadyRun(owner, 0);
+
+    // Padding: many sequential field_update changes ahead of the new_game,
+    // widening the window between the guard-check SELECT and the final
+    // commit so the second transaction's own SELECT has a realistic chance
+    // to land inside it. See the block comment above for why this is
+    // necessary — a single-change version of this test doesn't reliably
+    // reproduce the race in this environment.
+    const paddingGameIds: string[] = [];
+    for (let i = 0; i < 40; i += 1) {
+      paddingGameIds.push(await makeGame(owner, `Padding Game ${i}`, { hoursTenths: 10 }));
+    }
+    const paddingChanges = paddingGameIds.map((id, i) => ({
+      kind: 'field_update' as const,
+      gameId: id,
+      title: `Padding Game ${i}`,
+      payload: { field: 'hoursTenths', from: 10, to: 20 },
+    }));
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        ...paddingChanges,
+        { kind: 'new_game', gameId: null, title: 'Portal 2', payload: { steamAppid: 620, hoursTenths: 80, platform: 'steam' } },
+      ],
+      0,
+    );
+
+    const results = await Promise.allSettled([sync.commitSyncRun(owner, runId), sync.commitSyncRun(owner, runId)]);
+
+    const fulfilled = results.filter((result) => result.status === 'fulfilled');
+    const rejected = results.filter((result) => result.status === 'rejected');
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+
+    const [loser] = rejected as PromiseRejectedResult[];
+    expect(loser!.reason).toBeInstanceOf(errors.SyncRunAlreadyCommittedError);
+
+    // Exactly one game landed — the loser's attempt never reached `games` at all.
+    const created = (await games.listGames(owner)).filter((game) => game.title === 'Portal 2');
+    expect(created).toHaveLength(1);
   });
 });

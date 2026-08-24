@@ -52,6 +52,21 @@ export class SyncRunAlreadyCommittedError extends Error {
 }
 
 /**
+ * Only a `ready` run may be committed. `running` has chunks still in flight
+ * — approving it commits a half-populated set, and the engine would go on
+ * appending changes to a run that is now `committed`. `failed`/`cancelled`
+ * have nothing valid to apply. `committed` gets its OWN dedicated error
+ * (`SyncRunAlreadyCommittedError` above) rather than this one, so "already
+ * committed" stays the exact message a double-commit sees.
+ */
+export class SyncRunNotReadyError extends Error {
+  constructor(readonly status: string) {
+    super(`This sync run is ${status}, not ready to commit.`);
+    this.name = 'SyncRunNotReadyError';
+  }
+}
+
+/**
  * Drizzle WRAPS driver errors — the SQLSTATE lives on the `cause` chain, not on
  * `error.code`. A naive `error.code === '23505'` compiles, reads correctly, and
  * silently never matches, turning every duplicate title into an unhandled 500.
