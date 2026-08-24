@@ -934,3 +934,75 @@ export const gamePlayYears = pgTable(
     index('game_play_years_owner_idx').on(t.ownerId),
   ],
 );
+
+export const gameSyncSourceEnum = pgEnum('game_sync_source', ['steam', 'psn']);
+export const gameSyncRunStatusEnum = pgEnum('game_sync_run_status', [
+  'running',
+  'ready',
+  'committed',
+  'failed',
+  'cancelled',
+]);
+
+/**
+ * One Steam (later: PSN) sync run.
+ *
+ * Processed in small client-driven chunks rather than one long request, so no
+ * single call approaches a serverless timeout and progress is real rather than
+ * a spinner. `cursor` is how many library games have been processed; `total` is
+ * how many there are. A run persists, so closing the tab mid-sync leaves a
+ * resumable run rather than a lost one.
+ */
+export const gameSyncRuns = pgTable(
+  'game_sync_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    source: gameSyncSourceEnum('source').notNull(),
+    status: gameSyncRunStatusEnum('status').notNull().default('running'),
+    cursor: integer('cursor').notNull().default(0),
+    total: integer('total').notNull().default(0),
+    /**
+     * The owner's Steam library as fetched ONCE at the start of the run —
+     * appid, name and playtime only. Held here so each chunk does not re-fetch
+     * the whole list, and so a resumed run matches against exactly the same
+     * snapshot it started with rather than a library that moved underneath it.
+     * Transient run state, discarded with the run.
+     */
+    steamLibrary: jsonb('steam_library'),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('game_sync_runs_owner_status_idx').on(t.ownerId, t.status)],
+);
+
+/**
+ * One proposed change staged by a run. Nothing here has been written to
+ * `games` — that happens only when the owner approves the run.
+ *
+ * `payload` carries both the proposed value and the value it would replace, so
+ * the review screen shows a real before/after rather than just a target.
+ */
+export const gameSyncChanges = pgTable(
+  'game_sync_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => gameSyncRuns.id, { onDelete: 'cascade' }),
+    /** Null for `new_game` — that change has no library row yet, by definition. */
+    gameId: uuid('game_id').references(() => games.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    selected: boolean('selected').notNull().default(true),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('game_sync_changes_run_idx').on(t.runId)],
+);

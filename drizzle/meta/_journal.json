@@ -57,6 +57,13 @@
       "when": 1787545945479,
       "tag": "0007_nervous_kid_colt",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787603171086,
+      "tag": "0008_gigantic_spirit",
+      "breakpoints": true
     }
   ]
 }
