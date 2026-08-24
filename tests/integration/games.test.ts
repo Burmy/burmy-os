@@ -163,6 +163,76 @@ describe('deleteGame', () => {
   });
 });
 
+describe('listGames', () => {
+  /**
+   * Regression for the "unplayed backlog game sorts above everything the
+   * owner actually played" bug. Postgres `DESC` defaults to NULLS FIRST, so
+   * a naive `desc(firstPlayedYear)` put every no-year game at the very TOP.
+   * This is the whole protection against that regressing — see the ordering
+   * comment on `listGames` in `src/server/db/games/games.ts`.
+   */
+  it('orders newest-played first with unplayed (no-year) games LAST, ranked by the deliberate platform order among themselves', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+
+    // Two played games on different years — must sort by year, descending.
+    const playedOlder = await games.createGame(owner, {
+      title: 'Old Game',
+      platform: 'ps4',
+      firstPlayedYear: 2020,
+    });
+    const playedNewer = await games.createGame(owner, {
+      title: 'New Game',
+      platform: 'ps5',
+      firstPlayedYear: 2023,
+    });
+
+    // Six no-year (unplayed/backlog) games, one per platform value, created
+    // in an order that is neither the expected output order nor alphabetical
+    // — so passing this test actually proves the ORDER BY did the work, not
+    // insertion order or a lucky title sort.
+    const noYearOther = await games.createGame(owner, { title: 'Zed', platform: 'other' });
+    const noYearPsp = await games.createGame(owner, { title: 'Psp Game', platform: 'psp' });
+    const noYearPc = await games.createGame(owner, { title: 'Pc Game', platform: 'pc' });
+    const noYearSteam = await games.createGame(owner, { title: 'Steam Game', platform: 'steam' });
+    const noYearPs4 = await games.createGame(owner, { title: 'Ps4 Game', platform: 'ps4' });
+    const noYearPs5 = await games.createGame(owner, { title: 'Ps5 Game', platform: 'ps5' });
+
+    const result = await games.listGames(owner);
+
+    expect(result.map((g) => g.id)).toEqual([
+      playedNewer.id, // 2023 — most recently played
+      playedOlder.id, // 2020
+      // Everything below has no recorded year at all — NULLS LAST, not first.
+      noYearPs5.id,
+      noYearPs4.id,
+      // steam and pc share rank 2 (both render as "Steam / PC" — see
+      // PLATFORM_LABELS), so they tiebreak by title: "Pc Game" < "Steam Game".
+      noYearPc.id,
+      noYearSteam.id,
+      noYearPsp.id,
+      noYearOther.id,
+    ]);
+  });
+
+  it('breaks a tie between two PLAYED games on the same year by title alone, not by the no-year platform rule', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const laterAlphabetically = await games.createGame(owner, {
+      title: 'Bravo',
+      platform: 'ps4', // would rank AFTER 'Alpha's ps5 under the no-year rule too, but that rule must not even apply here
+      firstPlayedYear: 2021,
+    });
+    const earlierAlphabetically = await games.createGame(owner, {
+      title: 'Alpha',
+      platform: 'ps5',
+      firstPlayedYear: 2021,
+    });
+
+    const result = await games.listGames(owner);
+
+    expect(result.map((g) => g.id)).toEqual([earlierAlphabetically.id, laterAlphabetically.id]);
+  });
+});
+
 describe('listGameStatRows', () => {
   it('returns the narrow projection the stats layer consumes', async () => {
     const owner = await makeOwner('owner@burmy.test');

@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -108,9 +108,36 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
     .select()
     .from(gamesTable)
     .where(and(...filters))
-    // Newest-played first, then alphabetical — the order the library grid reads
-    // best in, and stable for games sharing a year.
-    .orderBy(desc(gamesTable.firstPlayedYear), asc(gamesTable.title));
+    .orderBy(
+      // Newest-played first. Postgres's DESC defaults to NULLS FIRST, which
+      // would put every game with no recorded year — an unplayed backlog
+      // entry — ABOVE everything the owner has actually played. `nulls last`
+      // is load-bearing here, not decorative.
+      sql`${gamesTable.firstPlayedYear} desc nulls last`,
+      // ─────────────────────────────────────────────────────────────────────
+      // DELIBERATE, OWNER-CHOSEN PLATFORM ORDER — NOT ALPHABETICAL.
+      //
+      // Only breaks ties among games with NO recorded year (the `when
+      // first_played_year is null` guard): for every game that DOES have a
+      // year, this branch collapses to the constant `0` and falls straight
+      // through to the title tiebreak below, exactly as before. Within the
+      // no-year group, rank is PS5, PS4, Steam/PC (steam and pc share a rank
+      // — they render as one merged label, see PLATFORM_LABELS), PSP, then
+      // anything else. Do not "tidy" this into alphabetical order or enum
+      // order — it encodes a real product decision the owner asked for.
+      // ─────────────────────────────────────────────────────────────────────
+      sql`case when ${gamesTable.firstPlayedYear} is null then
+        case ${gamesTable.platform}::text
+          when 'ps5' then 0
+          when 'ps4' then 1
+          when 'steam' then 2
+          when 'pc' then 2
+          when 'psp' then 3
+          else 4
+        end
+      else 0 end`,
+      asc(gamesTable.title),
+    );
 
   return rows.map(rowToGame);
 }
