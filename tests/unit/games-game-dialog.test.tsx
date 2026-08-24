@@ -2,20 +2,31 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { GameSuggestion } from '@/server/games/metadata';
+
 // Hoisted to a named const (not an inline `vi.fn()` inside the factory)
 // specifically so this file can assert on its `.mock.calls` — the whole
 // point of these tests is proving how many times, and with what argument,
 // this action was invoked.
-const searchGameMetadataAction = vi.fn(async () => []);
+//
+// The return type is annotated rather than inferred: bare `async () => []`
+// infers `never[]`, which makes `mockResolvedValue([...])` a type error in
+// the cover suite below.
+const searchGameMetadataAction = vi.fn(async (_title: string): Promise<GameSuggestion[]> => []);
 
 vi.mock('@/features/games/metadata-actions', () => ({
   searchGameMetadataAction,
 }));
 
+// Hoisted for the same reason as `searchGameMetadataAction` above: the cover
+// regression below asserts on the FormData this actually received, which is
+// only reachable through `.mock.calls`.
+const updateGameAction = vi.fn(async (_id: string, _formData: FormData) => ({ ok: true as const }));
+
 vi.mock('@/features/games/game-actions', () => ({
   deleteGameAction: vi.fn(async () => ({ ok: true as const })),
   createGameAction: vi.fn(async () => ({ ok: true as const })),
-  updateGameAction: vi.fn(async () => ({ ok: true as const })),
+  updateGameAction,
 }));
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -120,5 +131,80 @@ describe('GameDialog metadata search', () => {
     });
 
     expect(searchGameMetadataAction).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Regression coverage for "changing a game's cover art does nothing."
+ *
+ * `applySuggestion` guarded every metadata field on `field === ''`, grouping
+ * `coverUrl` with `genre`/`developer`/`publisher`. That guard is right for
+ * those three — each has a real text input, so a hand-typed value must not be
+ * clobbered by a later pick. It was wrong for `coverUrl`, which has no input
+ * control anywhere in the form: a pick is the only way it can ever change, so
+ * guarding it on "still empty" made re-picking a cover on a game that already
+ * had one a no-op that still reported "Game updated."
+ */
+describe('GameDialog cover art', () => {
+  const OLD_COVER = 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/old.jpg';
+  const NEW_COVER = 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/new.jpg';
+
+  function suggestion(): GameSuggestion {
+    return {
+      externalId: 'igdb-1',
+      title: 'Hades',
+      coverUrl: NEW_COVER,
+      genre: 'Roguelike',
+      developer: 'Supergiant Games',
+      publisher: 'Supergiant Games',
+      metacritic: 93,
+      averagePlaytimeHours: 22,
+      esrbRating: 'T',
+      releaseYear: 2020,
+    };
+  }
+
+  beforeEach(() => {
+    searchGameMetadataAction.mockClear();
+    updateGameAction.mockClear();
+  });
+
+  async function pickTheSuggestion(existingCover: string | null): Promise<FormData> {
+    searchGameMetadataAction.mockResolvedValue([suggestion()]);
+    const user = userEvent.setup();
+    render(<GameDialog game={game({ title: 'Hades', coverUrl: existingCover })} open onOpenChange={() => {}} />);
+
+    // The search only fires once the owner actually edits the title (see the
+    // `titleEditedRef` suite above), so retype it to surface the picker.
+    const titleInput = screen.getByLabelText('Title');
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Hades');
+
+    const pick = await screen.findByRole('button', { name: /Hades \(2020\)/ }, { timeout: 2000 });
+    await user.click(pick);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateGameAction).toHaveBeenCalledTimes(1);
+    });
+    return updateGameAction.mock.calls[0]![1];
+  }
+
+  it('submits the newly picked cover for a game that already had one', async () => {
+    const formData = await pickTheSuggestion(OLD_COVER);
+    expect(formData.get('coverUrl')).toBe(NEW_COVER);
+  });
+
+  it('still fills the cover for a game that had none', async () => {
+    const formData = await pickTheSuggestion(null);
+    expect(formData.get('coverUrl')).toBe(NEW_COVER);
+  });
+
+  it('leaves a hand-typed genre alone, unlike the cover', async () => {
+    // The same pick that now always replaces cover art must NOT overwrite the
+    // three fields the owner can actually type into.
+    const formData = await pickTheSuggestion(OLD_COVER);
+    expect(formData.get('coverUrl')).toBe(NEW_COVER);
+    expect(formData.get('genre')).toBe('Action RPG');
   });
 });

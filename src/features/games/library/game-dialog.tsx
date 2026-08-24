@@ -53,11 +53,22 @@ type SearchStatus = 'idle' | 'loading' | 'results' | 'empty';
  * Metadata lookup is search-as-you-type: debounced 300ms after the last
  * keystroke, minimum 3 characters, with each new keystroke superseding
  * whatever request came before it. Picking a result fills cover art, genre,
- * developer and publisher — but only into a field that is still EMPTY.
- * `coverUrl`/`genre`/`developer`/`publisher` are the owner's own editable
- * fields (a hand-typed genre must never be silently replaced by IGDB's), so
- * once one holds a value — hand-typed, loaded from an existing game, or
- * filled by an earlier pick — a later pick leaves it alone. `metacritic`,
+ * developer and publisher.
+ *
+ * `genre`/`developer`/`publisher` fill only into a field that is still EMPTY:
+ * they are the owner's own editable fields (a hand-typed genre must never be
+ * silently replaced by IGDB's), so once one holds a value — hand-typed, loaded
+ * from an existing game, or filled by an earlier pick — a later pick leaves it
+ * alone.
+ *
+ * `coverUrl` is deliberately NOT guarded that way, unlike the three above it
+ * once was grouped with. It has no input control anywhere in this form, so a
+ * pick is the ONLY way it can ever change and there is no hand-typed value to
+ * protect. Guarding it on `=== ''` meant re-picking a wrong cover on a game
+ * that already had one silently did nothing — and still reported "Game
+ * updated," because the submit genuinely succeeded, just with the unchanged
+ * URL. A `null` cover on the incoming pick is still skipped, so choosing an
+ * entry IGDB has no art for never blanks art that already works. `metacritic`,
  * `averagePlaytimeHours` and `esrbRating` have no hand-editable control at
  * all (read-only third-party facts), so there is nothing of the owner's to
  * protect there and they always take the latest pick's value.
@@ -165,7 +176,9 @@ export function GameDialog({
   function applySuggestion(suggestion: GameSuggestion): void {
     suppressNextSearchRef.current = true;
     setTitle(suggestion.title);
-    if (coverUrl === '' && suggestion.coverUrl !== null) setCoverUrl(suggestion.coverUrl);
+    // No `coverUrl === ''` guard — see the note on this component. Cover art
+    // has no input control, so an explicit pick is the only way to change it.
+    if (suggestion.coverUrl !== null) setCoverUrl(suggestion.coverUrl);
     if (genre === '' && suggestion.genre !== null) setGenre(suggestion.genre);
     if (developer === '' && suggestion.developer !== null) setDeveloper(suggestion.developer);
     if (publisher === '' && suggestion.publisher !== null) setPublisher(suggestion.publisher);
