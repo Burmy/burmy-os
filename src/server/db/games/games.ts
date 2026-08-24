@@ -40,6 +40,7 @@ export interface Game {
   readonly metacritic: number | null;
   readonly averagePlaytimeHours: number | null;
   readonly esrbRating: string | null;
+  readonly steamAppid: number | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -65,6 +66,7 @@ export interface GameInput {
   readonly metacritic?: number | null;
   readonly averagePlaytimeHours?: number | null;
   readonly esrbRating?: string | null;
+  readonly steamAppid?: number | null;
 }
 
 function rowToGame(row: typeof gamesTable.$inferSelect): Game {
@@ -89,6 +91,7 @@ function rowToGame(row: typeof gamesTable.$inferSelect): Game {
     metacritic: row.metacritic,
     averagePlaytimeHours: row.averagePlaytimeHours,
     esrbRating: row.esrbRating,
+    steamAppid: row.steamAppid,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

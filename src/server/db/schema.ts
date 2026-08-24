@@ -864,6 +864,22 @@ export const games = pgTable(
      */
     averagePlaytimeHours: smallint('average_playtime_hours'),
     esrbRating: text('esrb_rating'),
+    /**
+     * Steam's stable numeric app id (e.g. 1091500 for Cyberpunk 2077).
+     * Nullable — most rows predate the Steam sync and PS/PSP rows never get
+     * one at all.
+     *
+     * Once a library row is matched to a Steam app, THIS is what the sync
+     * script (`scripts/sync-steam-library.mjs`) looks up on every later run,
+     * never the title again. Title matching is the risky part of the whole
+     * feature — the owner's titles carry edition/store noise ("[Launch
+     * Edition]", "(itch)") that already defeated IGDB's matcher (see
+     * docs/GAMES.md) — so it happens at most once per game, with the result
+     * persisted here, exactly like the "resolve the match once, persist the
+     * external id" approach `psn-integration-research.md` recommends for any
+     * third-party library sync.
+     */
+    steamAppid: integer('steam_appid'),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -876,5 +892,12 @@ export const games = pgTable(
     index('games_owner_idx').on(t.ownerId),
     index('games_owner_status_idx').on(t.ownerId, t.status),
     index('games_owner_year_idx').on(t.ownerId, t.firstPlayedYear),
+    // Partial: only rows that have actually been matched to a Steam app
+    // carry a value here, and one Steam app maps to at most one library row
+    // per owner. Mirrors `finance_categories_owner_name_live_idx`'s partial-
+    // uniqueness shape (there: live categories only; here: matched rows only).
+    uniqueIndex('games_owner_steam_appid_idx')
+      .on(t.ownerId, t.steamAppid)
+      .where(sql`${t.steamAppid} is not null`),
   ],
 );

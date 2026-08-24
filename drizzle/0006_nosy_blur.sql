@@ -1,0 +1,2 @@
+ALTER TABLE "games" ADD COLUMN "steam_appid" integer;--> statement-breakpoint
+CREATE UNIQUE INDEX "games_owner_steam_appid_idx" ON "games" USING btree ("owner_id","steam_appid") WHERE "games"."steam_appid" is not null;
