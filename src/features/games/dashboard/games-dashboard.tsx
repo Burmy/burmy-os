@@ -1,5 +1,6 @@
 import { formatHours, hours } from '@/server/games/hours';
 import { formatPriceCents } from '@/server/games/money';
+import type { PlayYearRow } from '@/server/games/play-years';
 import {
   type GameStatRow,
   buildDistribution,
@@ -18,14 +19,16 @@ import { YearlyBreakdownTable } from './yearly-breakdown-table';
 
 export function GamesDashboard({
   rows,
+  playYears,
   currentYear,
 }: {
   readonly rows: readonly GameStatRow[];
+  readonly playYears: readonly PlayYearRow[];
   readonly currentYear: number;
 }): React.ReactElement {
   const summary = buildLibrarySummary(rows);
   const financial = buildFinancialSummary(rows);
-  const yearly = buildYearlyBreakdown(rows);
+  const yearly = buildYearlyBreakdown(rows, playYears);
   const callouts = findCallouts(rows);
 
   const platforms = buildDistribution(rows, (row) => row.platform, (key) => PLATFORM_LABELS[key as GamePlatform]);
@@ -85,20 +88,24 @@ export function GamesDashboard({
       </StatGroup>
 
       <Section title="Year by year" description="Every number here is computed from your library, not stored.">
-        <YearlyBreakdownTable rows={yearly} currentYear={currentYear} />
+        <YearlyBreakdownTable
+          rows={yearly.rows}
+          unattributedTenths={yearly.unattributedTenths}
+          currentYear={currentYear}
+        />
       </Section>
 
       <div className="space-y-3">
         <h2 className="text-sm font-medium">Trends</h2>
         <div className="grid gap-6 lg:grid-cols-3">
           <Section title="Games per year">
-            <GamesPerYearChart rows={yearly} />
+            <GamesPerYearChart rows={yearly.rows} />
           </Section>
           <Section title="Hours per year">
-            <HoursPerYearChart rows={yearly} />
+            <HoursPerYearChart rows={yearly.rows} />
           </Section>
           <Section title="Trophies per year">
-            <TrophiesPerYearChart rows={yearly} />
+            <TrophiesPerYearChart rows={yearly.rows} />
           </Section>
         </div>
       </div>

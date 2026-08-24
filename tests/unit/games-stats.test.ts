@@ -33,36 +33,98 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
 
 describe('buildYearlyBreakdown', () => {
   it('groups games, hours, and achievements by year, newest first', () => {
-    const rows = buildYearlyBreakdown([
-      game({ id: 'a', firstPlayedYear: 2024, hoursTenths: 450, achievementsUnlocked: 45 }),
-      game({ id: 'b', firstPlayedYear: 2024, hoursTenths: 230, achievementsUnlocked: 63 }),
-      game({ id: 'c', firstPlayedYear: 2025, hoursTenths: 640, achievementsUnlocked: 54 }),
-    ]);
+    const { rows } = buildYearlyBreakdown(
+      [
+        game({ id: 'a', firstPlayedYear: 2022, hoursTenths: 100, achievementsUnlocked: 5 }),
+        game({ id: 'b', firstPlayedYear: 2023, hoursTenths: 200, achievementsUnlocked: 7 }),
+        game({ id: 'c', firstPlayedYear: 2023, hoursTenths: 50, achievementsUnlocked: 1 }),
+      ],
+      [],
+    );
 
-    expect(rows.map((r) => r.year)).toEqual([2025, 2024]);
-    expect(rows[1]!).toMatchObject({ year: 2024, gameCount: 2, hoursTenths: 680, achievements: 108 });
+    expect(rows.map((r) => r.year)).toEqual([2023, 2022]);
+    expect(rows[0]).toMatchObject({ year: 2023, startedCount: 2, playedCount: 2, hoursTenths: 250, achievements: 8 });
+    expect(rows[1]).toMatchObject({ year: 2022, startedCount: 1, playedCount: 1, hoursTenths: 100, achievements: 5 });
   });
 
-  it('excludes games with no year — a sparse retro entry is not year zero', () => {
-    const rows = buildYearlyBreakdown([game({ firstPlayedYear: null })]);
+  it('excludes a game with no first-played year', () => {
+    const { rows } = buildYearlyBreakdown([game({ firstPlayedYear: null })], []);
     expect(rows).toEqual([]);
   });
 
-  it('treats missing hours and achievements as zero rather than skipping the game', () => {
-    const rows = buildYearlyBreakdown([game({ firstPlayedYear: 2020, hoursTenths: null, achievementsUnlocked: null })]);
-    expect(rows[0]!).toMatchObject({ year: 2020, gameCount: 1, hoursTenths: 0, achievements: 0 });
+  it('treats null hours and null achievements as zero', () => {
+    const { rows } = buildYearlyBreakdown(
+      [game({ firstPlayedYear: 2020, hoursTenths: null, achievementsUnlocked: null })],
+      [],
+    );
+    expect(rows[0]).toMatchObject({ year: 2020, hoursTenths: 0, achievements: 0 });
   });
 
-  it('reports change versus the previous year so the UI never recomputes it', () => {
-    const rows = buildYearlyBreakdown([
-      game({ id: 'a', firstPlayedYear: 2023, hoursTenths: 1000 }),
-      game({ id: 'b', firstPlayedYear: 2024, hoursTenths: 1500 }),
-    ]);
+  it('reports hours in the year they were played, not the year the game started', () => {
+    // The bug this whole feature exists to fix: 37h in 2024, 12h in 2025.
+    const { rows } = buildYearlyBreakdown(
+      [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490, achievementsUnlocked: 3 })],
+      [
+        { gameId: 'hk', year: 2024, hoursTenths: 370 },
+        { gameId: 'hk', year: 2025, hoursTenths: 120 },
+      ],
+    );
 
-    const y2024 = rows.find((r) => r.year === 2024)!;
-    expect(y2024.hoursChangeTenths).toBe(500);
-    const y2023 = rows.find((r) => r.year === 2023)!;
-    expect(y2023.hoursChangeTenths).toBeNull();
+    expect(rows.map((r) => [r.year, r.hoursTenths])).toEqual([
+      [2025, 120],
+      [2024, 370],
+    ]);
+  });
+
+  it('counts a split game as started once but played in every year it touched', () => {
+    const { rows } = buildYearlyBreakdown(
+      [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490 })],
+      [
+        { gameId: 'hk', year: 2024, hoursTenths: 370 },
+        { gameId: 'hk', year: 2025, hoursTenths: 120 },
+      ],
+    );
+
+    const byYear = new Map(rows.map((r) => [r.year, r]));
+    expect(byYear.get(2024)).toMatchObject({ startedCount: 1, playedCount: 1 });
+    expect(byYear.get(2025)).toMatchObject({ startedCount: 0, playedCount: 1 });
+  });
+
+  it('keeps achievements on the start year even when hours are split', () => {
+    const { rows } = buildYearlyBreakdown(
+      [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490, achievementsUnlocked: 9 })],
+      [
+        { gameId: 'hk', year: 2024, hoursTenths: 370 },
+        { gameId: 'hk', year: 2025, hoursTenths: 120 },
+      ],
+    );
+
+    const byYear = new Map(rows.map((r) => [r.year, r]));
+    expect(byYear.get(2024)?.achievements).toBe(9);
+    expect(byYear.get(2025)?.achievements).toBe(0);
+  });
+
+  it('surfaces hours a split fails to account for', () => {
+    const { unattributedTenths } = buildYearlyBreakdown(
+      [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 510 })],
+      [{ gameId: 'hk', year: 2024, hoursTenths: 490 }],
+    );
+
+    expect(unattributedTenths).toBe(20);
+  });
+
+  it('computes the year-over-year change from attributed hours', () => {
+    const { rows } = buildYearlyBreakdown(
+      [
+        game({ id: 'a', firstPlayedYear: 2022, hoursTenths: 100 }),
+        game({ id: 'b', firstPlayedYear: 2023, hoursTenths: 250 }),
+      ],
+      [],
+    );
+
+    const byYear = new Map(rows.map((r) => [r.year, r]));
+    expect(byYear.get(2022)?.hoursChangeTenths).toBeNull();
+    expect(byYear.get(2023)?.hoursChangeTenths).toBe(150);
   });
 });
 

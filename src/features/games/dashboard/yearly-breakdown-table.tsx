@@ -10,9 +10,11 @@ import type { YearlyBreakdownRow } from '@/server/games/stats';
  */
 export function YearlyBreakdownTable({
   rows,
+  unattributedTenths,
   currentYear,
 }: {
   readonly rows: readonly YearlyBreakdownRow[];
+  readonly unattributedTenths: number;
   readonly currentYear: number;
 }): React.ReactElement {
   if (rows.length === 0) {
@@ -21,11 +23,11 @@ export function YearlyBreakdownTable({
 
   const totals = rows.reduce(
     (sum, row) => ({
-      gameCount: sum.gameCount + row.gameCount,
+      startedCount: sum.startedCount + row.startedCount,
       hoursTenths: sum.hoursTenths + row.hoursTenths,
       achievements: sum.achievements + row.achievements,
     }),
-    { gameCount: 0, hoursTenths: 0, achievements: 0 },
+    { startedCount: 0, hoursTenths: 0, achievements: 0 },
   );
 
   return (
@@ -33,7 +35,15 @@ export function YearlyBreakdownTable({
       <TableHeader>
         <TableRow>
           <TableHead>Year</TableHead>
-          <TableHead className="text-right">Games</TableHead>
+          <TableHead className="text-right" title="Games first played this year">
+            Started
+          </TableHead>
+          <TableHead
+            className="text-right"
+            title="Games with hours recorded in this year, including ones started earlier"
+          >
+            Played
+          </TableHead>
           <TableHead className="text-right">Hours</TableHead>
           <TableHead className="text-right">vs. prev</TableHead>
           <TableHead className="text-right">Achievements</TableHead>
@@ -46,7 +56,8 @@ export function YearlyBreakdownTable({
               {row.year}
               {row.year === currentYear ? <span className="text-muted-foreground ml-2 text-xs">in progress</span> : null}
             </TableCell>
-            <TableCell className="tabular text-right">{row.gameCount}</TableCell>
+            <TableCell className="tabular text-right">{row.startedCount}</TableCell>
+            <TableCell className="tabular text-right">{row.playedCount}</TableCell>
             <TableCell className="tabular text-right">{formatHours(hours(row.hoursTenths))}</TableCell>
             <TableCell
               className={cn(
@@ -65,9 +76,28 @@ export function YearlyBreakdownTable({
             <TableCell className="tabular text-right">{row.achievements}</TableCell>
           </TableRow>
         ))}
+        {unattributedTenths === 0 ? null : (
+          <TableRow className="text-muted-foreground">
+            <TableCell
+              className="text-sm italic"
+              title="Hours recorded on a game whose year-by-year split does not add up to its total"
+            >
+              Unattributed
+            </TableCell>
+            <TableCell className="tabular text-right">—</TableCell>
+            <TableCell className="tabular text-right">—</TableCell>
+            <TableCell className="tabular text-right">
+              {unattributedTenths < 0 ? '−' : ''}
+              {formatHours(hours(Math.abs(unattributedTenths)))}
+            </TableCell>
+            <TableCell />
+            <TableCell className="tabular text-right">—</TableCell>
+          </TableRow>
+        )}
         <TableRow className="bg-muted/40 border-t-2 font-semibold">
           <TableCell>Total</TableCell>
-          <TableCell className="tabular text-right">{totals.gameCount}</TableCell>
+          <TableCell className="tabular text-right">{totals.startedCount}</TableCell>
+          <TableCell className="tabular text-right">—</TableCell>
           <TableCell className="tabular text-right">{formatHours(hours(totals.hoursTenths))}</TableCell>
           <TableCell />
           <TableCell className="tabular text-right">{totals.achievements}</TableCell>

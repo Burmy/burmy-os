@@ -16,6 +16,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { type PlayYearRow, attributeHours } from './play-years';
 import type { GameOwnership, GamePlatform, GameStatus } from './taxonomy';
 
 export type { GameOwnership, GamePlatform, GameStatus };
@@ -42,11 +43,24 @@ export interface GameStatRow {
 
 export interface YearlyBreakdownRow {
   readonly year: number;
-  readonly gameCount: number;
+  /** Games whose `firstPlayedYear` is this year. Sums to the library total across years. */
+  readonly startedCount: number;
+  /**
+   * Distinct games with hours attributed to this year. Deliberately does NOT
+   * sum to the library total: a game played across two years is genuinely
+   * played in both, and counting it once would hide that.
+   */
+  readonly playedCount: number;
   readonly hoursTenths: number;
   readonly achievements: number;
   /** Hours vs the previous year present in the data. Null for the earliest year. */
   readonly hoursChangeTenths: number | null;
+}
+
+export interface YearlyBreakdown {
+  readonly rows: readonly YearlyBreakdownRow[];
+  /** See `AttributionResult.unattributedTenths`. Rendered as its own line, never folded into a year. */
+  readonly unattributedTenths: number;
 }
 
 export interface LibrarySummary {
@@ -98,37 +112,68 @@ export interface Callouts {
  * this module has no notion of "today"; a caller that wants to highlight the
  * in-progress year passes it in separately when rendering these rows, not
  * when building them.
+ *
+ * Hours come from `attributeHours`, so a game played across two years lands in
+ * both. Achievements do NOT: they stay on `firstPlayedYear` because no source
+ * anywhere — the library, Steam, or PSN — records which year a trophy was
+ * earned in, and splitting them proportionally would fabricate data.
  */
-export function buildYearlyBreakdown(rows: readonly GameStatRow[]): YearlyBreakdownRow[] {
-  const byYear = new Map<number, { gameCount: number; hoursTenths: number; achievements: number }>();
+export function buildYearlyBreakdown(
+  rows: readonly GameStatRow[],
+  playYears: readonly PlayYearRow[],
+): YearlyBreakdown {
+  const { attributions, unattributedTenths } = attributeHours(rows, playYears);
+
+  const byYear = new Map<
+    number,
+    { startedCount: number; playedGames: Set<string>; hoursTenths: number; achievements: number }
+  >();
+
+  function bucket(year: number): {
+    startedCount: number;
+    playedGames: Set<string>;
+    hoursTenths: number;
+    achievements: number;
+  } {
+    const existing = byYear.get(year);
+    if (existing !== undefined) return existing;
+    const created = { startedCount: 0, playedGames: new Set<string>(), hoursTenths: 0, achievements: 0 };
+    byYear.set(year, created);
+    return created;
+  }
+
+  for (const attribution of attributions) {
+    const target = bucket(attribution.year);
+    target.hoursTenths += attribution.hoursTenths;
+    target.playedGames.add(attribution.gameId);
+  }
 
   for (const row of rows) {
     // A retro entry with no year is not year zero — it has no place in a
     // year-by-year comparison and is excluded rather than bucketed.
     if (row.firstPlayedYear === null) continue;
-
-    const bucket = byYear.get(row.firstPlayedYear) ?? { gameCount: 0, hoursTenths: 0, achievements: 0 };
-    byYear.set(row.firstPlayedYear, {
-      gameCount: bucket.gameCount + 1,
-      hoursTenths: bucket.hoursTenths + (row.hoursTenths ?? 0),
-      achievements: bucket.achievements + (row.achievementsUnlocked ?? 0),
-    });
+    const target = bucket(row.firstPlayedYear);
+    target.startedCount += 1;
+    target.achievements += row.achievementsUnlocked ?? 0;
   }
 
   const ascending = [...byYear.entries()].sort((a, b) => a[0] - b[0]);
 
-  return ascending
-    .map(([year, bucket], index) => {
+  const built = ascending
+    .map(([year, data], index) => {
       const previous = index === 0 ? null : ascending[index - 1]![1];
       return {
         year,
-        gameCount: bucket.gameCount,
-        hoursTenths: bucket.hoursTenths,
-        achievements: bucket.achievements,
-        hoursChangeTenths: previous === null ? null : bucket.hoursTenths - previous.hoursTenths,
+        startedCount: data.startedCount,
+        playedCount: data.playedGames.size,
+        hoursTenths: data.hoursTenths,
+        achievements: data.achievements,
+        hoursChangeTenths: previous === null ? null : data.hoursTenths - previous.hoursTenths,
       };
     })
     .sort((a, b) => b.year - a.year);
+
+  return { rows: built, unattributedTenths };
 }
 
 export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummary {

@@ -32,18 +32,18 @@ export function GamesPerYearChart({
         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
         <XAxis dataKey="year" tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }} tickLine={false} axisLine={false} />
         <YAxis
-          domain={computeChartDomain(data.map((row) => row.gameCount))}
+          domain={computeChartDomain(data.map((row) => row.startedCount))}
           allowDecimals={false}
           tick={{ fontSize: 12, fill: 'var(--color-muted-foreground)' }}
           tickLine={false}
           axisLine={false}
           width={40}
         />
-        <Tooltip formatter={(value) => [String(value), 'Games']} {...TOOLTIP_STYLES} />
+        <Tooltip formatter={(value) => [String(value), 'Games started']} {...TOOLTIP_STYLES} />
         <Line
           type="linear"
-          dataKey="gameCount"
-          name="Games"
+          dataKey="startedCount"
+          name="Games started"
           stroke="var(--color-chart-cat-2)"
           strokeWidth={2}
           dot={{ r: 3 }}
