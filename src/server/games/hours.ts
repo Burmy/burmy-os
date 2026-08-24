@@ -64,3 +64,22 @@ export function toHoursInput(value: Hours): string {
 export function sumHours(values: readonly Hours[]): Hours {
   return hours(values.reduce<number>((total, value) => total + value, 0));
 }
+
+/**
+ * Steam's `playtime_forever` field (from `IPlayerService/GetOwnedGames`) is
+ * MINUTES, not tenths of an hour — a different unit than every other input
+ * this module handles. This is still the only place that conversion happens
+ * (`src/server/db/games/steam-client.ts` and `scripts/sync-steam-library.mjs`
+ * both call this rather than inlining `/ 6`), for the same reason
+ * `fromHoursInput` owns the owner-typed-text path: nothing else in the
+ * module does hours math.
+ *
+ * Rounds to the nearest tenth of an hour (nearest 6 minutes). Non-finite or
+ * negative input — a malformed or missing field from a third-party payload —
+ * degrades to `hours(0)` rather than propagating `NaN` or a negative value
+ * into a stored play-time column.
+ */
+export function minutesToHoursTenths(minutes: number): Hours {
+  if (!Number.isFinite(minutes) || minutes <= 0) return hours(0);
+  return hours(Math.round(minutes / 6));
+}

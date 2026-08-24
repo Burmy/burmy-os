@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatHours, fromHoursInput, hours, sumHours, toHoursInput } from '@/server/games/hours';
+import {
+  formatHours,
+  fromHoursInput,
+  hours,
+  minutesToHoursTenths,
+  sumHours,
+  toHoursInput,
+} from '@/server/games/hours';
 
 describe('fromHoursInput', () => {
   it('parses a whole number of hours into tenths', () => {
@@ -59,5 +66,39 @@ describe('sumHours', () => {
 
   it('returns zero for an empty list', () => {
     expect(sumHours([])).toBe(0);
+  });
+});
+
+describe('minutesToHoursTenths', () => {
+  it('converts 0 minutes to exactly 0 tenths, not NaN or -0', () => {
+    expect(minutesToHoursTenths(0)).toBe(0);
+    expect(Object.is(minutesToHoursTenths(0), -0)).toBe(false);
+  });
+
+  it('converts a whole number of hours worth of minutes exactly', () => {
+    expect(minutesToHoursTenths(60)).toBe(10); // 1h
+    expect(minutesToHoursTenths(600)).toBe(100); // 10h
+  });
+
+  it('rounds to the nearest tenth of an hour (nearest 6 minutes)', () => {
+    expect(minutesToHoursTenths(6)).toBe(1); // exactly 0.1h
+    expect(minutesToHoursTenths(3)).toBe(1); // rounds up from 0.05h
+    expect(minutesToHoursTenths(2)).toBe(0); // rounds down toward 0h
+  });
+
+  it('never produces a float — every result is a whole number of tenths', () => {
+    for (const minutes of [1, 5, 7, 59, 91, 12_345]) {
+      expect(Number.isInteger(minutesToHoursTenths(minutes))).toBe(true);
+    }
+  });
+
+  it('matches a real large playtime figure (532.8h in the source data becomes 31968 minutes)', () => {
+    expect(minutesToHoursTenths(31_968)).toBe(5328);
+  });
+
+  it('degrades non-finite or negative input to 0 rather than propagating NaN or a negative value', () => {
+    expect(minutesToHoursTenths(Number.NaN)).toBe(0);
+    expect(minutesToHoursTenths(-10)).toBe(0);
+    expect(minutesToHoursTenths(Number.POSITIVE_INFINITY)).toBe(0);
   });
 });
