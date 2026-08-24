@@ -14,10 +14,25 @@ import { formatHours, hours } from '@/server/games/hours';
 /**
  * One game in the gallery. Cover art is the primary affordance; everything else
  * is secondary metadata layered beneath it. Games with no cover fall back to a
- * plain icon tile rather than a broken-image box — roughly half the historical
- * library predates cover art being available at all. The title always renders
- * in the info panel below, cover or not, so every card has identical structure
+ * tile that carries the title itself, rather than a bare icon floating in
+ * empty space — roughly half the historical library predates cover art being
+ * available at all, and a lone icon next to real box art elsewhere in the
+ * grid reads as broken, not intentional. The title always renders in the
+ * info panel below too, cover or not, so every card has identical structure
  * and a mixed grid never looks ragged.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * STATUS BADGE LIVES AT THE BOTTOM OF THE COVER, NOT THE TOP.
+ *
+ * Portrait box art almost always carries the game's own logo/title treatment
+ * across the top third of the cover — a badge pinned to the top-left corner
+ * sat directly on top of it (reported: "Completed" over DISHONORED 2's own
+ * logo, unreadable in both directions — the badge fought the art and the art
+ * fought the badge). The bottom of a cover is far more often plain
+ * background art, so the badge moves there instead, backed by `StatusBadge`'s
+ * `variant="onImage"` (an opaque pill, legible against arbitrary art without
+ * reaching for a gradient scrim — see that component for why).
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function GameCard({
   game,
@@ -43,14 +58,31 @@ export function GameCard({
       aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}`}
       onClick={() => onOpen(game)}
       className={cn(
-        'group focus-visible:ring-ring flex flex-col overflow-hidden rounded-lg border text-left',
-        'transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:outline-none',
+        // NOT `overflow-hidden` on this element — a ring/box-shadow-based
+        // focus indicator on the SAME element that clips its own content can
+        // itself get clipped in some engines. The cover art below clips its
+        // OWN corners on its own wrapper instead, so this element can stay
+        // un-clipped and the focus ring always renders in full.
+        'group flex flex-col rounded-lg border text-left',
+        'transition-colors hover:border-foreground/20 hover:bg-muted/40',
+        'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
       )}
     >
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden">
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">
         {game.coverUrl === null ? (
-          <div className="flex h-full items-center justify-center p-3">
-            <Gamepad2 className="text-muted-foreground/40 size-8" aria-hidden />
+          // A "letter tile" rather than a lone floating icon — the game's own
+          // initial standing in for missing art, the same convention plenty
+          // of apps use for a missing avatar/image. Deliberately NOT the full
+          // title: it already renders in the info panel below (see the
+          // "identical structure" note above), so repeating it here would
+          // just be noise on the tile itself — and it's decorative
+          // (`aria-hidden`), since the card's own `aria-label` already
+          // carries the real title.
+          <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
+            <span className="text-muted-foreground/40 text-4xl font-semibold">
+              {game.title.trim().charAt(0).toUpperCase()}
+            </span>
+            <Gamepad2 className="text-muted-foreground/25 size-4" />
           </div>
         ) : (
           <Image
@@ -61,18 +93,14 @@ export function GameCard({
             className="object-cover transition-transform group-hover:scale-[1.03]"
           />
         )}
-        <div className="absolute top-2 left-2">
-          <StatusBadge status={game.status} />
+        <div className="absolute inset-x-2 bottom-2 flex items-end justify-between gap-1.5">
+          <StatusBadge status={game.status} variant="onImage" />
+          {game.platinum ? <PlatinumBadge /> : null}
         </div>
-        {game.platinum ? (
-          <div className="absolute top-2 right-2">
-            <PlatinumBadge />
-          </div>
-        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-3">
-        <span className="line-clamp-2 text-sm font-medium">{game.title}</span>
+        <span className="line-clamp-2 text-sm font-semibold">{game.title}</span>
         <span className="text-muted-foreground text-xs">
           {PLATFORM_LABELS[game.platform]}
           {game.firstPlayedYear === null ? '' : ` · ${game.firstPlayedYear}`}

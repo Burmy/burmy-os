@@ -100,50 +100,59 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Search sits on its own row, above the chips, at every breakpoint —
+          rather than sharing one line with two chip groups that only wraps
+          once it overflows. On a narrow viewport that shared-line layout let
+          a chip group's own content (multiple platform names, each with a
+          count) push the row wider before wrapping kicked in; stacking is
+          the simplest layout that just holds up regardless of how many chips
+          end up in play. */}
+      <div className="space-y-2">
         <Input
           type="search"
           aria-label="Search games"
           placeholder="Search title, developer, publisher…"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          className="h-8 max-w-64"
+          className="h-8 w-full sm:max-w-64"
         />
 
-        <div className="flex flex-wrap gap-1">
-          <FilterChip label="All" count={games.length} active={status === 'all'} onClick={() => setStatus('all')} />
-          {/* A status with zero games in the library is noise, not a real filter —
-              same principle as the platform chips below. */}
-          {GAME_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
-            <FilterChip
-              key={value}
-              label={STATUS_LABELS[value]}
-              count={counts.get(value) ?? 0}
-              active={status === value}
-              onClick={() => setStatus(value)}
-            />
-          ))}
-        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div className="flex flex-wrap gap-1">
+            <FilterChip label="All" count={games.length} active={status === 'all'} onClick={() => setStatus('all')} />
+            {/* A status with zero games in the library is noise, not a real filter —
+                same principle as the platform chips below. */}
+            {GAME_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
+              <FilterChip
+                key={value}
+                label={STATUS_LABELS[value]}
+                count={counts.get(value) ?? 0}
+                active={status === value}
+                onClick={() => setStatus(value)}
+              />
+            ))}
+          </div>
 
-        <div className="flex flex-wrap gap-1">
-          <FilterChip
-            label="All platforms"
-            count={games.length}
-            active={platform === 'all'}
-            onClick={() => setPlatform('all')}
-          />
-          {/* Only platforms the owner actually has games on — a zero-count chip
-              like "PC 0" is noise the owner has to read past, not a useful
-              filter (steam absorbs the real PC library; see PLATFORM_LABELS). */}
-          {GAME_PLATFORMS.filter((value) => (platformCounts.get(value) ?? 0) > 0).map((value) => (
+          <div className="flex flex-wrap gap-1">
             <FilterChip
-              key={value}
-              label={PLATFORM_LABELS[value]}
-              count={platformCounts.get(value) ?? 0}
-              active={platform === value}
-              onClick={() => setPlatform(value)}
+              label="All platforms"
+              count={games.length}
+              active={platform === 'all'}
+              onClick={() => setPlatform('all')}
             />
-          ))}
+            {/* Only platforms the owner actually has games on — a zero-count chip
+                like "PC 0" is noise the owner has to read past, not a useful
+                filter (steam absorbs the real PC library; see PLATFORM_LABELS). */}
+            {GAME_PLATFORMS.filter((value) => (platformCounts.get(value) ?? 0) > 0).map((value) => (
+              <FilterChip
+                key={value}
+                label={PLATFORM_LABELS[value]}
+                count={platformCounts.get(value) ?? 0}
+                active={platform === value}
+                onClick={() => setPlatform(value)}
+              />
+            ))}
+          </div>
         </div>
       </div>
 
