@@ -93,10 +93,20 @@ export async function getSyncRunLibrary(ownerId: string, runId: string): Promise
 }
 
 /**
- * Insert changes and advance the run's cursor in ONE transaction, with an
- * ownership pre-check on the run inside that transaction — a run belonging
- * to someone else is a silent no-op, never a write. Mirrors the pre-check
- * pattern in `replacePlayYears` (`src/server/db/games/play-years.ts`).
+ * Insert changes and advance the run's cursor in ONE transaction, with TWO
+ * independent layers of owner enforcement rather than one:
+ *
+ * 1. A pre-check on the run, which guards the INSERT — an `INSERT VALUES`
+ *    has no WHERE clause of its own to scope by ownership, so ownership has
+ *    to be verified before it runs, not during it. Mirrors the pre-check
+ *    pattern in `replacePlayYears` (`src/server/db/games/play-years.ts`).
+ * 2. An `ownerId` predicate directly on the cursor UPDATE's WHERE, exactly
+ *    like `replacePlayYears`' DELETE keeps its own filter even though it
+ *    already has the same pre-check above it. The UPDATE is NOT gated by an
+ *    early return on the pre-check result — it runs unconditionally and
+ *    relies on its own filter, so a run belonging to someone else matches
+ *    zero rows here and this is a silent no-op regardless of what the
+ *    pre-check found. Two independent layers, not one guarding both writes.
  *
  * `selected` defaults to `true` at the column level, which is correct for
  * `link`, `field_update` and `new_game` — but WRONG for `reconcile`: a
@@ -120,9 +130,7 @@ export async function appendSyncChanges(
       .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)))
       .limit(1);
 
-    if (owned.length === 0) return;
-
-    if (changes.length > 0) {
+    if (owned.length > 0 && changes.length > 0) {
       await tx.insert(gameSyncChanges).values(
         changes.map((change) => ({
           ownerId,
@@ -139,7 +147,7 @@ export async function appendSyncChanges(
     await tx
       .update(gameSyncRuns)
       .set({ cursor: nextCursor, updatedAt: new Date() })
-      .where(eq(gameSyncRuns.id, runId));
+      .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)));
   });
 }
 

@@ -132,6 +132,15 @@ describe('sync run data access', () => {
     expect(await sync.listSyncChanges(mine, theirRun.id)).toEqual([]);
   });
 
+  it('never returns another owner run library snapshot', async () => {
+    const mine = await makeOwner('mine@example.invalid');
+    const theirs = await makeOwner('theirs@example.invalid');
+    const library = [{ appid: 1, name: 'Theirs', playtimeMinutes: 0 }];
+    const theirRun = await sync.createSyncRun(theirs, 'steam', 1, library);
+
+    expect(await sync.getSyncRunLibrary(mine, theirRun.id)).toBeNull();
+  });
+
   it('refuses to append to another owner run', async () => {
     const mine = await makeOwner('mine@example.invalid');
     const theirs = await makeOwner('theirs@example.invalid');
