@@ -311,6 +311,74 @@ no `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` present.**
 
 ---
 
+## Steam library sync
+
+`scripts/sync-steam-library.mjs` (2026-08-23) fills in achievements and play time for Steam-platform
+games automatically, via the official Steam Web API, replacing hand entry for those columns going
+forward. See `.superpowers/sdd/2026-08-20-game-tracker/psn-integration-research.md` for the evaluation
+that led here: Steam's API is official, documented, and has a credential that never expires, where the
+PSN equivalent would mean either scraping PSNProfiles (a scraper of a scraper, actively resisted by
+Cloudflare) or driving Sony's own undocumented API through a ~60-day manual re-authentication chore —
+PSN stayed a research note, not code.
+
+### A stable external id, matched once
+
+`games.steam_appid` (migration 0006) is a nullable integer, unique per owner where set. Title matching
+against a third-party catalog is the risky part of this whole feature — the owner's titles carry
+edition/store noise (`[Launch Edition]`, `(itch)`) that already defeated IGDB's own matcher (see "Cover
+art" above) — so a game is matched to a Steam app **at most once**, and the resolved id is persisted.
+Every later sync run is an id lookup for that game, never a re-match by title.
+
+### What it fills, and what it deliberately does not
+
+Only `platform = 'steam'` library rows are ever compared against Steam data — matching a PS5/PS4/PSP
+title against a Steam appid would be a category error. Within that scope, the sync **fills a column
+only where it is currently `null`**: `steam_appid`, `achievements_total`, and
+`achievements_unlocked`/`hours_tenths` where empty (`steamSyncFieldsToFill` in
+`src/server/games/steam.ts` is the single source of truth for that rule — the sync script's own
+`--apply` path never has to remember it separately). A stored value that **differs** from what Steam
+reports is always shown in the script's report and never silently overwritten; `hours_tenths` is the
+one column with an overwrite path at all (Steam's measured playtime is more accurate than a hand-typed
+estimate), gated behind the script's separate, explicit `--overwrite-hours` flag on top of `--apply`.
+`achievements_unlocked`/`achievements_total` have no overwrite path — a differing achievement count is
+reported and left alone, full stop.
+
+**`platinum` is never touched by this script**, deliberately — see "Platinum is the owner's own claim,
+never derived" above. A Steam game at 100% achievements is not a PlayStation platinum trophy; the two
+concepts don't map onto each other, and the script's own header comment says so explicitly so nobody
+wires this up by mistake later.
+
+**The 40 PSP games get nothing from this, ever, and are out of scope by construction** — they are not
+`platform = 'steam'` rows, and trophies/achievements postdate the PSP entirely (trophies launched with
+PS3 in 2008; PSP has no client-side trophy support). The PSN side of the original research (28 PS5 + 45
+PS4 games) was evaluated and set aside as a recurring ~60-day manual chore not worth the product surface
+for a single-user tool — see the research doc for the full reasoning. It was never built.
+
+A Steam-owned game with no matching library row is listed in the script's report (title, appid, hours)
+and **never imported** as a new row — the library is curated by the owner, and importing an entire Steam
+account is not this feature's goal.
+
+### Credentials and the dry-run contract
+
+`STEAM_API_KEY`/`STEAM_ID` are optional at the module level, matching IGDB's own contract:
+`src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing credentials, a
+network error, a timeout, a non-200, or malformed JSON, and the full test suite passes with neither
+present. The owner's Steam profile "Game details" privacy must be set to Public, or the API silently
+returns an empty games list — there is no error response to tell "wrong credentials" apart from "private
+profile," which is why the script's report calls this out explicitly when zero games come back.
+
+The script itself is a stricter, CLI-level gate on top of that soft-failure contract: it exits early
+with an error if either var is unset, since there is nothing useful a sync run can do without them —
+the same shape `backfill-game-metadata.mjs` already uses for `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`.
+
+**The script defaults to a dry run.** No database write happens without the explicit `--apply` flag —
+non-negotiable, since this touches data the owner entered by hand. A dry run (or an applied run) always
+writes a full human-readable report to a path outside the repo (default: the OS temp directory), listing
+every match, every difference, and every Steam-owned game with no library row, so the owner reviews
+before trusting `--apply`.
+
+---
+
 ## What's deliberately out of scope for v1
 
 Each of these was considered and cut, not overlooked:

@@ -317,6 +317,13 @@ These are verified, not folklore. Do not "fix" them back.
   exactly like the AI-optional rule for Finance. IGDB replaced RAWG (2026-08-20): RAWG has no portrait
   cover art anywhere in its data model and its search response silently omits `developers`/
   `publishers`; see `docs/GAMES.md`, "Cover art — IGDB, and its soft-failure contract."
+- **`STEAM_API_KEY`/`STEAM_ID` are optional too, same contract as IGDB's pair above.**
+  `src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing
+  credentials, a network error, a timeout, a non-200, or malformed JSON, and the full test suite must
+  pass with neither present. Unlike IGDB, these aren't consumed by any app request path at all —
+  only `scripts/sync-steam-library.mjs` (2026-08-23) uses them, and that script itself exits early
+  with an error if either is unset, since there's nothing useful it can do without them. See
+  `docs/GAMES.md`, "Steam library sync."
 
 ---
 
