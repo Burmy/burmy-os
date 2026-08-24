@@ -18,6 +18,7 @@ import { games as gamesTable } from '@/server/db/schema';
 import type { GameStatRow } from '@/server/games/stats';
 import type { GameOwnership, GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { DuplicateGameError, GameNotFoundError, isUniqueViolation } from './errors';
+import { listPlayYears, listPlayYearsForGame } from './play-years';
 
 export interface Game {
   readonly id: string;
@@ -43,6 +44,7 @@ export interface Game {
   readonly steamAppid: number | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+  readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
 }
 
 /** Only `title` and `platform` are required — a backlog entry may know nothing else yet. */
@@ -69,7 +71,10 @@ export interface GameInput {
   readonly steamAppid?: number | null;
 }
 
-function rowToGame(row: typeof gamesTable.$inferSelect): Game {
+function rowToGame(
+  row: typeof gamesTable.$inferSelect,
+  playYears: readonly { readonly year: number; readonly hoursTenths: number }[],
+): Game {
   return {
     id: row.id,
     title: row.title,
@@ -94,6 +99,7 @@ function rowToGame(row: typeof gamesTable.$inferSelect): Game {
     steamAppid: row.steamAppid,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    playYears,
   };
 }
 
@@ -142,7 +148,18 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
       asc(gamesTable.title),
     );
 
-  return rows.map(rowToGame);
+  // Single grouped query for every split the owner has, rather than one query
+  // per game — see `listPlayYears`'s own doc comment ("the stats page's
+  // single query"), which this reuses for the same reason.
+  const splits = await listPlayYears(ownerId);
+  const byGame = new Map<string, { year: number; hoursTenths: number }[]>();
+  for (const row of splits) {
+    const existing = byGame.get(row.gameId);
+    if (existing === undefined) byGame.set(row.gameId, [{ year: row.year, hoursTenths: row.hoursTenths }]);
+    else existing.push({ year: row.year, hoursTenths: row.hoursTenths });
+  }
+
+  return rows.map((row) => rowToGame(row, byGame.get(row.id) ?? []));
 }
 
 export async function getGame(ownerId: string, id: string): Promise<Game> {
@@ -154,7 +171,8 @@ export async function getGame(ownerId: string, id: string): Promise<Game> {
 
   const row = rows[0];
   if (!row) throw new GameNotFoundError();
-  return rowToGame(row);
+  const playYears = await listPlayYearsForGame(ownerId, row.id);
+  return rowToGame(row, playYears);
 }
 
 export async function createGame(ownerId: string, input: GameInput): Promise<Game> {
@@ -166,7 +184,8 @@ export async function createGame(ownerId: string, input: GameInput): Promise<Gam
 
     const row = rows[0];
     if (!row) throw new Error('Game insert returned no row');
-    return rowToGame(row);
+    // A brand-new row has no play-year split yet — nothing to query.
+    return rowToGame(row, []);
   } catch (error) {
     // Let the DATABASE decide uniqueness. A pre-check plus an insert is a race;
     // the unique index is not.
@@ -186,7 +205,11 @@ export async function updateGame(ownerId: string, id: string, input: GameInput):
 
     const row = rows[0];
     if (!row) throw new GameNotFoundError();
-    return rowToGame(row);
+    // This call only touches `games` columns — the play-year split (if any)
+    // is unchanged by it, so reflect its actual current state rather than
+    // reporting an empty split on a game that has one.
+    const playYears = await listPlayYearsForGame(ownerId, row.id);
+    return rowToGame(row, playYears);
   } catch (error) {
     if (isUniqueViolation(error)) throw new DuplicateGameError(input.title);
     throw error;

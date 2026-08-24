@@ -20,7 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import type { Game } from '@/server/db/games/games';
-import { hours, toHoursInput } from '@/server/games/hours';
+import { fromHoursInput, hours, toHoursInput } from '@/server/games/hours';
 import {
   GAME_OWNERSHIPS,
   GAME_STATUSES,
@@ -31,6 +31,7 @@ import {
 import type { GameSuggestion } from '@/server/games/metadata';
 import { createGameAction, deleteGameAction, updateGameAction } from '../game-actions';
 import { searchGameMetadataAction } from '../metadata-actions';
+import { type PlayYearDraft, PlayYearsPanel } from './play-years-panel';
 
 /**
  * Radix `Select` treats an item `value=""` as "no selection" — `<SelectValue />`
@@ -95,6 +96,16 @@ export function GameDialog({
   );
   const [esrbRating, setEsrbRating] = useState<string | null>(game?.esrbRating ?? null);
   const [title, setTitle] = useState(game?.title ?? '');
+  // Seeded exactly as the Hours `Field`'s own `defaultValue` was before this
+  // field became controlled — see the comment below the JSX for why it has to
+  // be controlled at all.
+  const [hoursFieldValue, setHoursFieldValue] = useState(
+    game === null || game.hoursTenths === null ? '' : toHoursInput(hours(game.hoursTenths)),
+  );
+  const [playYears, setPlayYears] = useState<readonly PlayYearDraft[]>(
+    (game?.playYears ?? []).map((row) => ({ year: String(row.year), hours: toHoursInput(hours(row.hoursTenths)) })),
+  );
+  const [showSplit, setShowSplit] = useState((game?.playYears ?? []).length > 0);
   const [suggestions, setSuggestions] = useState<readonly GameSuggestion[]>([]);
   const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -201,6 +212,9 @@ export function GameDialog({
     formData.set('metacritic', metacritic === null ? '' : String(metacritic));
     formData.set('averagePlaytimeHours', averagePlaytimeHours === null ? '' : String(averagePlaytimeHours));
     formData.set('esrbRating', esrbRating ?? '');
+    // Filtering empty-year rows here means an owner who clicks "Add a year"
+    // and changes their mind does not submit a junk row.
+    formData.set('playYears', JSON.stringify(playYears.filter((row) => row.year.trim() !== '')));
 
     startTransition(async () => {
       const result = game === null
@@ -328,9 +342,23 @@ export function GameDialog({
               <Field
                 id="hours"
                 label="Hours played"
-                defaultValue={game === null || game.hoursTenths === null ? '' : toHoursInput(hours(game.hoursTenths))}
+                value={hoursFieldValue}
+                onChange={setHoursFieldValue}
                 placeholder="23.5"
               />
+              <div className="sm:col-span-2">
+                {showSplit ? (
+                  <PlayYearsPanel
+                    value={playYears}
+                    onChange={setPlayYears}
+                    totalTenths={fromHoursInput(hoursFieldValue) ?? 0}
+                  />
+                ) : (
+                  <Button type="button" variant="link" size="sm" className="px-0" onClick={() => setShowSplit(true)}>
+                    Split across years
+                  </Button>
+                )}
+              </div>
               <Field id="firstPlayedYear" label="First played (year)" defaultValue={game?.firstPlayedYear ?? ''} placeholder="2026" />
               <Field id="rating" label="Rating (1-5)" defaultValue={game?.rating ?? ''} placeholder="4" />
               <FieldSelect

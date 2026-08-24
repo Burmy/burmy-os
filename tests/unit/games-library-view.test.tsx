@@ -47,6 +47,7 @@ function game(overrides: Partial<Game>): Game {
     steamAppid: null,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
+    playYears: [],
     ...overrides,
   };
 }

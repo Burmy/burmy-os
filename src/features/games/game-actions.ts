@@ -5,8 +5,10 @@ import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
 import { DuplicateGameError, GameNotFoundError } from '@/server/db/games/errors';
-import { type GameInput, createGame, deleteGame, updateGame } from '@/server/db/games/games';
+import { type Game, type GameInput, createGame, deleteGame, updateGame } from '@/server/db/games/games';
+import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
+import { validateSplit } from '@/server/games/play-years';
 import { GAME_OWNERSHIPS, GAME_PLATFORMS, GAME_STATUSES } from '@/server/games/taxonomy';
 import { type ActionResult, fail, ok } from './action-result';
 
@@ -49,6 +51,17 @@ const gameSchema = z.object({
   averagePlaytimeHours: z.coerce.number().int().min(0).max(1000).optional(),
   esrbRating: z.string().trim().max(50).optional(),
 });
+
+const playYearsSchema = z
+  .array(
+    z.object({
+      year: z.coerce.number().int().min(1970).max(2100),
+      // Whitespace-only must be a validation failure, NOT a silent 0 — a
+      // fabricated zero is exactly the bug class this project has hit before.
+      hours: z.string().trim().min(1),
+    }),
+  )
+  .max(30);
 
 function toResult(error: unknown): ActionResult {
   if (error instanceof DuplicateGameError) {
@@ -100,7 +113,12 @@ function text(formData: FormData, key: string): string | undefined {
  * cause; `mode` makes the two paths explicit instead of leaving it to be
  * inferred from which caller happens to pass a fresher object.
  */
-function parse(formData: FormData, mode: 'create' | 'update'): GameInput {
+interface ParsedGame {
+  readonly input: GameInput;
+  readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
+}
+
+function parse(formData: FormData, mode: 'create' | 'update'): ParsedGame {
   const raw = gameSchema.parse({
     title: text(formData, 'title') ?? '',
     platform: text(formData, 'platform') ?? 'other',
@@ -193,17 +211,50 @@ function parse(formData: FormData, mode: 'create' | 'update'): GameInput {
   if (raw.priceDollars !== undefined) input.priceCents = Math.round(raw.priceDollars * 100);
   else if (clearing) input.priceCents = null;
 
-  return input;
+  const rawPlayYears = text(formData, 'playYears');
+  let playYears: { year: number; hoursTenths: number }[] = [];
+  if (rawPlayYears !== undefined) {
+    const drafts = playYearsSchema.parse(JSON.parse(rawPlayYears));
+    playYears = drafts.map((draft, index) => {
+      const tenths = fromHoursInput(draft.hours);
+      if (tenths === null)
+        throw new z.ZodError([
+          {
+            code: 'custom',
+            path: ['playYears', index, 'hours'],
+            message: `"${draft.hours}" is not a valid number of hours`,
+          },
+        ]);
+      return { year: draft.year, hoursTenths: tenths };
+    });
+  }
+
+  return { input, playYears };
 }
 
 export async function createGameAction(formData: FormData): Promise<ActionResult> {
   const owner = await requireOwner();
 
+  let parsed: ParsedGame;
   try {
-    await createGame(owner.userId, parse(formData, 'create'));
+    parsed = parse(formData, 'create');
   } catch (error) {
     return toResult(error);
   }
+
+  const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
+  if (!validation.ok) {
+    return fail('The year-by-year split must add up to the total hours.');
+  }
+
+  let saved: Game;
+  try {
+    saved = await createGame(owner.userId, parsed.input);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  await replacePlayYears(owner.userId, saved.id, parsed.playYears);
 
   // `'layout'` covers both tab routes (`/games/library`, `/games/stats`) in
   // one call. `/games` itself is a pure `redirect('/games/library')` with no
@@ -217,11 +268,26 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
 export async function updateGameAction(id: string, formData: FormData): Promise<ActionResult> {
   const owner = await requireOwner();
 
+  let parsed: ParsedGame;
   try {
-    await updateGame(owner.userId, idSchema.parse(id), parse(formData, 'update'));
+    parsed = parse(formData, 'update');
   } catch (error) {
     return toResult(error);
   }
+
+  const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
+  if (!validation.ok) {
+    return fail('The year-by-year split must add up to the total hours.');
+  }
+
+  let saved: Game;
+  try {
+    saved = await updateGame(owner.userId, idSchema.parse(id), parsed.input);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  await replacePlayYears(owner.userId, saved.id, parsed.playYears);
 
   revalidatePath('/games', 'layout');
   return ok();
