@@ -5,10 +5,12 @@
  *
  * Walks the owner's Steam-platform library in small pages, matches each game
  * against a ONE-TIME snapshot of the owner's Steam library, and STAGES the
- * resulting changes for review — nothing here ever writes to `games`. The
- * review screen that reads and applies staged changes is a later task; this
- * module only produces `game_sync_changes` rows via
- * `src/server/db/games/sync.ts`.
+ * resulting changes for review — every action above `commitSyncRunAction`
+ * below only produces `game_sync_changes` rows via `src/server/db/games/sync.ts`
+ * and never writes to `games` itself. `commitSyncRunAction` is the one
+ * exception: it is a thin wrapper around `commitSyncRun`, which is where the
+ * staged changes actually get applied — see that function's own doc comment
+ * in `src/server/db/games/sync.ts` for the commit's own invariants.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * THE NO-DELETE INVARIANT
@@ -23,23 +25,28 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { revalidatePath } from 'next/cache';
+
 import { requireOwner } from '@/server/auth/owner';
+import { SyncRunAlreadyCommittedError, SyncRunNotFoundError } from '@/server/db/games/errors';
 import { countSteamGames, listSteamGamesChunk, listSteamGamesForMatching } from '@/server/db/games/games';
 import { sumPlayYearsForGames } from '@/server/db/games/play-years';
 import {
   appendSyncChanges,
+  commitSyncRun,
   createSyncRun,
   finishSyncRun,
   getSyncRun,
   getSyncRunLibrary,
   listSyncChanges,
+  setSyncChangeSelected,
 } from '@/server/db/games/sync';
 import { fetchAchievementCounts, fetchOwnedGames } from '@/server/db/games/steam-client';
 import { minutesToHoursTenths } from '@/server/games/hours';
 import { bestTitleMatchAmong } from '@/server/games/metadata';
 import type { OwnedSteamGame } from '@/server/games/steam';
 import { planLinkedGameChanges, planNewGameChange, type PlannedChange, type StoredGameForSync } from '@/server/games/sync-plan';
-import { type ActionResult, fail } from '../action-result';
+import { type ActionResult, fail, ok } from '../action-result';
 
 /**
  * Library games processed per `advanceSteamSyncAction` call. Each matched
@@ -279,4 +286,43 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
     await finishSyncRun(owner.userId, runId, 'failed', message);
     return { error: message };
   }
+}
+
+/**
+ * Toggles the owner's own review selection on one staged change. The review
+ * screen (`src/features/games/sync/sync-review.tsx`) applies this
+ * optimistically and reverts on a failed `ActionResult` — same idiom as
+ * Finance's `updateRowDecisionAction` in `src/features/finance/import/actions.ts`.
+ */
+export async function setSyncChangeSelectedAction(changeId: string, selected: boolean): Promise<ActionResult> {
+  const owner = await requireOwner();
+  await setSyncChangeSelected(owner.userId, changeId, selected);
+  return ok();
+}
+
+/**
+ * Applies every selected change in a run to `games` and marks the run
+ * committed. `commitSyncRun`'s own two failure modes — the run does not
+ * exist (or belongs to someone else) and the run was already committed —
+ * come back as a field-free `ActionResult` message, not a crash: both are
+ * expected outcomes of a button the owner can double-click or a stale tab
+ * can resubmit from, not a fault in the running code. Anything else (a
+ * disallowed field name reaching the whitelist check, a database fault)
+ * still throws — see `action-result.ts`'s own doc comment on that split.
+ */
+export async function commitSyncRunAction(runId: string): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await commitSyncRun(owner.userId, runId);
+  } catch (error) {
+    if (error instanceof SyncRunNotFoundError) return fail(error.message);
+    if (error instanceof SyncRunAlreadyCommittedError) return fail(error.message);
+    throw error;
+  }
+
+  // 'layout' covers both Games tab routes in one call — see the matching
+  // comment in `src/features/games/game-actions.ts`.
+  revalidatePath('/games', 'layout');
+  return ok();
 }

@@ -32,6 +32,26 @@ export class GameNotFoundError extends Error {
 }
 
 /**
+ * A sync run does not exist, or belongs to someone else. One error for both —
+ * same "don't let a crafted id distinguish the two" reasoning as
+ * `GameNotFoundError`.
+ */
+export class SyncRunNotFoundError extends Error {
+  constructor() {
+    super('Sync run not found');
+    this.name = 'SyncRunNotFoundError';
+  }
+}
+
+/** Committing an already-`committed` run would double-apply every selected change. */
+export class SyncRunAlreadyCommittedError extends Error {
+  constructor() {
+    super('This sync run has already been committed');
+    this.name = 'SyncRunAlreadyCommittedError';
+  }
+}
+
+/**
  * Drizzle WRAPS driver errors — the SQLSTATE lives on the `cause` chain, not on
  * `error.code`. A naive `error.code === '23505'` compiles, reads correctly, and
  * silently never matches, turning every duplicate title into an unhandled 500.

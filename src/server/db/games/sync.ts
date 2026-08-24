@@ -11,8 +11,9 @@
 import { and, asc, eq } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
-import { gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
+import { games as gamesTable, gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
 import type { PlannedChange, SyncChangeKind } from '@/server/games/sync-plan';
+import { SyncRunAlreadyCommittedError, SyncRunNotFoundError } from './errors';
 
 export type SyncRunStatus = 'running' | 'ready' | 'committed' | 'failed' | 'cancelled';
 
@@ -206,4 +207,184 @@ export async function setSyncChangeSelected(ownerId: string, changeId: string, s
     .update(gameSyncChanges)
     .set({ selected })
     .where(and(eq(gameSyncChanges.id, changeId), eq(gameSyncChanges.ownerId, ownerId)));
+}
+
+/**
+ * The four `games` columns a `field_update` change is allowed to touch.
+ * Whitelisted BY NAME rather than trusted from the payload — `payload.field`
+ * is JSONB staged by a sync run, not a compile-time-checked value — so a
+ * field name outside this set is a bug in the staging code, and
+ * `assertSyncableField` throws rather than let it anywhere near a dynamic
+ * `.set()` key.
+ */
+const SYNCABLE_FIELDS = ['hoursTenths', 'achievementsUnlocked', 'achievementsTotal', 'steamAppid'] as const;
+type SyncableField = (typeof SYNCABLE_FIELDS)[number];
+
+function assertSyncableField(field: unknown): SyncableField {
+  if (typeof field === 'string' && (SYNCABLE_FIELDS as readonly string[]).includes(field)) {
+    return field as SyncableField;
+  }
+  throw new Error(`field_update named a non-syncable column: ${JSON.stringify(field)}`);
+}
+
+/**
+ * The `.set()` patch for one `field_update`, built with an explicit switch —
+ * never `{ [field]: to }`. A computed key would still typecheck today, which
+ * is exactly why it is not used: the switch, not the whitelist check alone,
+ * is what makes "interpolate an arbitrary column name" structurally
+ * impossible to reintroduce later.
+ */
+function fieldUpdatePatch(field: SyncableField, to: number): Partial<typeof gamesTable.$inferInsert> {
+  switch (field) {
+    case 'hoursTenths':
+      return { hoursTenths: to };
+    case 'achievementsUnlocked':
+      return { achievementsUnlocked: to };
+    case 'achievementsTotal':
+      return { achievementsTotal: to };
+    case 'steamAppid':
+      return { steamAppid: to };
+  }
+}
+
+/** `link` must land before a `field_update` that might assume it; `new_game` last; `reconcile` never applies (see `commitSyncRun`). */
+const COMMIT_ORDER: Record<SyncChangeKind, number> = { link: 0, field_update: 1, new_game: 2, reconcile: 3 };
+
+/**
+ * Applies every SELECTED change in a run to `games`, in one transaction, then
+ * marks the run `committed`. Never writes to a game not named by a selected
+ * change, and never deletes or hides a `games` row — this is the one place
+ * in the whole sync feature that is allowed to touch `games` at all (every
+ * earlier module only stages `game_sync_changes` rows; see
+ * `src/features/games/sync/sync-actions.ts`'s own "no-delete invariant"
+ * doc comment for the sibling guarantee on the staging side).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `reconcile` IS SKIPPED, ALWAYS — NOT BECAUSE IT IS UNSELECTED
+ *
+ * A reconciliation item is advisory only ("your year-by-year split no longer
+ * adds up to the new total") and is skipped here unconditionally, even if it
+ * somehow carries `selected: true` — `appendSyncChanges` stages it `false` by
+ * default, but this function does not lean on that; it is an independent
+ * guard, not a re-derivation of the staging default. There is nothing a
+ * `reconcile` change could apply anyway: it names no `games` column.
+ *
+ * WHY ONE TRANSACTION
+ *
+ * The owner reviews and approves a SET of changes together. Applying half of
+ * them and then failing on the other half would leave `games` in a state
+ * never actually approved. `db.transaction()` rolls back everything the
+ * moment anything inside throws — including `assertSyncableField` rejecting
+ * a bad field name — so a single bad change aborts the WHOLE commit, not
+ * just its own row.
+ *
+ * `link`/`field_update` writes stay scoped to `ownerId` in their own WHERE,
+ * exactly like every other write in this module, even though the run-level
+ * pre-check above already confirmed ownership of the RUN — a change's
+ * `gameId` is trusted data staged by this owner's own run, but the filter
+ * costs nothing and this module never assumes a foreign key alone is
+ * sufficient scoping.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function commitSyncRun(
+  ownerId: string,
+  runId: string,
+): Promise<{ readonly applied: number; readonly created: number }> {
+  const db = getDb();
+
+  return db.transaction(async (tx) => {
+    const runs = await tx
+      .select()
+      .from(gameSyncRuns)
+      .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)))
+      .limit(1);
+
+    const run = runs[0];
+    if (!run) throw new SyncRunNotFoundError();
+    if (run.status === 'committed') throw new SyncRunAlreadyCommittedError();
+
+    const selectedChanges = await tx
+      .select()
+      .from(gameSyncChanges)
+      .where(
+        and(
+          eq(gameSyncChanges.runId, runId),
+          eq(gameSyncChanges.ownerId, ownerId),
+          eq(gameSyncChanges.selected, true),
+        ),
+      )
+      .orderBy(asc(gameSyncChanges.createdAt));
+
+    // `Array.prototype.sort` is stable (guaranteed since ES2019): changes of
+    // the SAME kind keep the staging order the query's own `orderBy` above
+    // already gave them. Only the kind buckets themselves get reordered.
+    const ordered = [...selectedChanges].sort(
+      (a, b) => COMMIT_ORDER[a.kind as SyncChangeKind] - COMMIT_ORDER[b.kind as SyncChangeKind],
+    );
+
+    let applied = 0;
+    let created = 0;
+
+    for (const change of ordered) {
+      const kind = change.kind as SyncChangeKind;
+      const payload = change.payload as Record<string, unknown>;
+
+      if (kind === 'reconcile') continue; // Advisory only — see doc comment above.
+
+      if (kind === 'link') {
+        if (change.gameId === null) throw new Error('link change is missing a gameId');
+        const steamAppid = payload.steamAppid;
+        if (typeof steamAppid !== 'number') {
+          throw new Error('link change payload is missing a numeric steamAppid');
+        }
+        await tx
+          .update(gamesTable)
+          .set({ steamAppid, updatedAt: new Date() })
+          .where(and(eq(gamesTable.id, change.gameId), eq(gamesTable.ownerId, ownerId)));
+        applied += 1;
+        continue;
+      }
+
+      if (kind === 'field_update') {
+        if (change.gameId === null) throw new Error('field_update change is missing a gameId');
+        const field = assertSyncableField(payload.field);
+        const to = payload.to;
+        if (typeof to !== 'number') throw new Error('field_update change payload is missing a numeric "to"');
+        await tx
+          .update(gamesTable)
+          .set({ ...fieldUpdatePatch(field, to), updatedAt: new Date() })
+          .where(and(eq(gamesTable.id, change.gameId), eq(gamesTable.ownerId, ownerId)));
+        applied += 1;
+        continue;
+      }
+
+      if (kind === 'new_game') {
+        const steamAppid = payload.steamAppid;
+        const hoursTenths = payload.hoursTenths;
+        if (typeof steamAppid !== 'number' || typeof hoursTenths !== 'number') {
+          throw new Error('new_game change payload is missing a numeric steamAppid or hoursTenths');
+        }
+        await tx.insert(gamesTable).values({
+          ownerId,
+          title: change.title,
+          platform: 'steam',
+          steamAppid,
+          hoursTenths,
+          // A game arriving with recorded hours is already underway or done;
+          // one at zero was just discovered on Steam and has not been played
+          // yet. New rows never land in 'playing' — sync cannot know that.
+          status: hoursTenths > 0 ? 'completed' : 'backlog',
+        });
+        created += 1;
+        continue;
+      }
+    }
+
+    await tx
+      .update(gameSyncRuns)
+      .set({ status: 'committed', updatedAt: new Date() })
+      .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)));
+
+    return { applied, created };
+  });
 }
