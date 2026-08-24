@@ -97,6 +97,25 @@ export function GameDialog({
   // redundant search for the former.
   const suppressNextSearchRef = useRef(false);
 
+  // True only once the owner has actually typed into the title field — set
+  // in the Input's own onChange handler below, nowhere else.
+  //
+  // Opening an EXISTING game seeds `title` from `game.title`, which is
+  // almost always >= SEARCH_MIN_LENGTH, so the debounce effect fired on
+  // mount and hit IGDB immediately for a game that already has all its
+  // metadata — wasted quota on every single card open. The effect cannot
+  // simply key on `title` alone (or on `title.length >= SEARCH_MIN_LENGTH`)
+  // because that can't distinguish "just opened, never touched" from "owner
+  // typed a 3+ character title" — both look identical to the effect once
+  // `title` itself is the only signal. It also cannot compare against the
+  // dialog's INITIAL title (e.g. `title !== game?.title`): that silently
+  // re-enables the exact same bug the moment the owner types a correction
+  // and then types it back to the original text — a real edit that should
+  // still search, but "changed vs. initial" would read it as unchanged. A
+  // dedicated ref set only by the field's own change handler is the only
+  // signal that means "the owner is genuinely editing this field."
+  const titleEditedRef = useRef(false);
+
   const belowMinLength = title.trim().length < SEARCH_MIN_LENGTH;
   // Derived at render time rather than cleared with a synchronous setState
   // at the top of the effect below (that pattern trips
@@ -111,6 +130,11 @@ export function GameDialog({
       suppressNextSearchRef.current = false;
       return;
     }
+
+    // Nothing to search until the owner has actually edited the field —
+    // see `titleEditedRef`'s own comment above for why this can't be
+    // inferred from `title` itself.
+    if (!titleEditedRef.current) return;
 
     if (title.trim().length < SEARCH_MIN_LENGTH) return;
 
@@ -211,7 +235,12 @@ export function GameDialog({
                 id="title"
                 name="title"
                 value={title}
-                onChange={(event) => setTitle(event.target.value)}
+                onChange={(event) => {
+                  // The one and only place this ref is set — see its
+                  // declaration above for why.
+                  titleEditedRef.current = true;
+                  setTitle(event.target.value);
+                }}
                 required
                 autoFocus
               />
