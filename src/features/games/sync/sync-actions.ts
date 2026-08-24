@@ -118,29 +118,57 @@ function matchedSteamAppids(
   return matched;
 }
 
-/** Whether Steam credentials are configured, for the UI to decide whether to offer the sync entry point at all. */
-export async function isSteamConfiguredAction(): Promise<boolean> {
-  await requireOwner();
+/**
+ * Whether Steam credentials are present in the environment.
+ *
+ * `fetchOwnedGames()` deliberately does NOT report this: with no
+ * `STEAM_API_KEY`/`STEAM_ID` it returns `[]` — "no request was even
+ * attempted" — the exact same value a genuinely empty, correctly configured
+ * library would produce. `null` is reserved for a request that was actually
+ * attempted and failed (network error, timeout, non-2xx, malformed JSON).
+ * See `src/server/db/games/steam-client.ts`'s module header — that
+ * contract is documented, unit-tested, and depended on by
+ * `scripts/sync-steam-library.mjs`, and is not to be changed. Anything that
+ * needs to know "is Steam configured at all" — this function, and
+ * `startSteamSyncAction` below — has to check the environment directly
+ * instead of inferring it from `fetchOwnedGames`'s return value.
+ */
+function steamCredentialsConfigured(): boolean {
   const apiKey = process.env.STEAM_API_KEY;
   const steamId = process.env.STEAM_ID;
   return apiKey !== undefined && apiKey !== '' && steamId !== undefined && steamId !== '';
+}
+
+/** Whether Steam credentials are configured, for the UI to decide whether to offer the sync entry point at all. */
+export async function isSteamConfiguredAction(): Promise<boolean> {
+  await requireOwner();
+  return steamCredentialsConfigured();
 }
 
 /**
  * Starts a run: fetches the owner's Steam library ONCE, snapshots it, and
  * creates a `game_sync_runs` row covering every Steam-platform library game.
  *
- * Never throws on a Steam failure. `fetchOwnedGames()` returning `null`
- * means credentials are missing or the request itself failed — both are
- * normal, reportable states (see the soft-failure contract documented in
- * `src/server/db/games/steam-client.ts`), not a crash.
+ * Never throws on a Steam failure, and never on a missing configuration —
+ * both are refused with a field-free `ActionResult` message, not a crash.
+ * Credentials are checked FIRST and explicitly, via the same
+ * `steamCredentialsConfigured()` check `isSteamConfiguredAction` uses —
+ * `fetchOwnedGames()` cannot tell "not configured" apart from "configured,
+ * and genuinely owns zero games" (both return `[]`; see that function's own
+ * doc comment). Only once credentials are confirmed present does a `null`
+ * from `fetchOwnedGames()` mean what it actually means here: the request
+ * itself failed.
  */
 export async function startSteamSyncAction(): Promise<ActionResult & { readonly runId?: string }> {
   const owner = await requireOwner();
 
+  if (!steamCredentialsConfigured()) {
+    return fail('Steam is not configured — set STEAM_API_KEY and STEAM_ID to sync.');
+  }
+
   const library = await fetchOwnedGames();
   if (library === null) {
-    return fail('Steam is not configured, or did not respond.');
+    return fail('Steam did not respond. Try again in a moment.');
   }
 
   const total = await countSteamGames(owner.userId);
@@ -152,9 +180,33 @@ export async function startSteamSyncAction(): Promise<ActionResult & { readonly 
 /**
  * Processes one chunk of a running sync: matches up to `CHUNK_SIZE` library
  * games against the run's Steam snapshot, stages the resulting changes, and
- * advances the cursor. On the chunk that reaches `total`, also stages a
- * `new_game` change for every Steam-owned game no library row accounts for,
- * then marks the run `ready`.
+ * advances the keyset bookmark. On the chunk that comes back EMPTY, also
+ * stages a `new_game` change for every Steam-owned game no library row
+ * accounts for, then marks the run `ready`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY "DONE" IS AN EMPTY CHUNK, NOT `cursor >= total`
+ *
+ * `total` is a count taken once, at run creation — a snapshot, not a live
+ * value. Pairing it with OFFSET/LIMIT pagination over `games.id` (a random
+ * `defaultRandom()` UUID, not a monotonic sequence) has two failure modes,
+ * both reproduced against real Postgres: deleting a not-yet-processed game
+ * mid-run makes the cursor converge just short of `total` and never reach
+ * it, stranding the run in `running` forever with `finishSyncRun` never
+ * called; inserting a game whose id happens to sort before already-processed
+ * rows shifts a later OFFSET page backward, restaging an already-processed
+ * game's `link` change as a duplicate while the truly new game is never
+ * seen at all.
+ *
+ * Keyset pagination (`listSteamGamesChunk`, `id > lastGameId`) and treating
+ * an EMPTY page as the only "done" signal fixes both: a delete just means
+ * one less row for the keyset walk to pass through — no position for it to
+ * strand at — and an insert is either picked up (if its id sorts after the
+ * bookmark) or missed until the next run (if it sorts before), never
+ * duplicated. `cursor`/`total` remain in `SyncProgress`, but ONLY for
+ * progress display ("7 of ~12") — `total` may not be reached exactly, and
+ * nothing here uses either to decide when to stop. Do not restore the old
+ * comparison; it is the defect, not a simplification.
  *
  * Wrapped end to end in try/catch — an unexpected failure marks the run
  * `failed` with a message instead of leaving it stuck `running` forever.
@@ -169,7 +221,7 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
     }
 
     const library = parseSteamLibrary(await getSyncRunLibrary(owner.userId, runId));
-    const chunk = await listSteamGamesChunk(owner.userId, run.cursor, CHUNK_SIZE);
+    const chunk = await listSteamGamesChunk(owner.userId, run.lastGameId, CHUNK_SIZE);
 
     // ONE query for the whole chunk's play-year sums, not one per game.
     const playYearSums = await sumPlayYearsForGames(
@@ -199,17 +251,22 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
       changes.push(...planLinkedGameChanges(stored, appid, achievements, steamHoursTenths));
     }
 
+    const done = chunk.length === 0;
     const newCursor = run.cursor + chunk.length;
-    await appendSyncChanges(owner.userId, runId, changes, newCursor);
+    const lastInChunk = chunk.at(-1);
+    // An empty chunk leaves the bookmark exactly where it was — there is
+    // nothing new to remember it by.
+    const newLastGameId = lastInChunk ? lastInChunk.id : run.lastGameId;
 
-    const done = newCursor >= run.total;
+    await appendSyncChanges(owner.userId, runId, changes, newCursor, newLastGameId);
+
     if (done) {
       const allSteamGames = await listSteamGamesForMatching(owner.userId);
       const matched = matchedSteamAppids(allSteamGames, library);
       const newGameChanges = library.filter((entry) => !matched.has(entry.appid)).map(planNewGameChange);
 
       if (newGameChanges.length > 0) {
-        await appendSyncChanges(owner.userId, runId, newGameChanges, newCursor);
+        await appendSyncChanges(owner.userId, runId, newGameChanges, newCursor, newLastGameId);
       }
       await finishSyncRun(owner.userId, runId, 'ready');
     }

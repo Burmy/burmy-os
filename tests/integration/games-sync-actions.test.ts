@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { countRows, harness, provisionOwner, resetDatabase } from './harness';
 
@@ -61,10 +61,21 @@ beforeAll(async () => {
 beforeEach(async () => {
   await resetDatabase();
   requestHeaders.current = new Headers();
+  // Fake-but-present credentials by default, so every test but the
+  // "not configured" one below exercises the CONFIGURED path — restored by
+  // `afterEach`'s `vi.unstubAllEnvs()`, same convention as
+  // `tests/unit/games-steam-client.test.ts` (`restoreMocks: true` resets
+  // `vi.fn()` call state between tests but does NOT undo `vi.stubEnv`).
+  vi.stubEnv('STEAM_API_KEY', 'test-api-key');
+  vi.stubEnv('STEAM_ID', '76561198000000000');
   fetchOwnedGames.mockReset();
   fetchOwnedGames.mockImplementation(async () => []);
   fetchAchievementCounts.mockReset();
   fetchAchievementCounts.mockImplementation(async () => null);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 /** Full raw row for a `games` id — every column, not the DAL's narrowed projection. */
@@ -74,6 +85,21 @@ async function fullGameRow(gameId: string): Promise<Record<string, unknown>> {
   const row = rows[0];
   if (!row) throw new Error(`expected a games row for ${gameId}`);
   return row;
+}
+
+/**
+ * The owner's Steam-platform game ids in the exact order the sync engine
+ * walks them — determined by a raw query, independent of whatever
+ * pagination implementation `listSteamGamesChunk` currently has, so this
+ * stays a reliable ground truth across both the broken offset version and
+ * the fixed keyset one.
+ */
+async function orderedSteamGameIds(ownerId: string): Promise<string[]> {
+  const { sql } = await harness();
+  const rows = await sql<{ id: string }[]>`
+    select "id" from "games" where "owner_id" = ${ownerId} and "platform" = 'steam' order by "id" asc
+  `;
+  return rows.map((row) => row.id);
 }
 
 /** Starts a run and unwraps the runId, failing the test loudly if the action refused to start. */
@@ -86,7 +112,28 @@ async function startRun(): Promise<string> {
 }
 
 describe('startSteamSyncAction', () => {
-  it('refuses to start when Steam credentials are absent', async () => {
+  it('refuses to start when Steam is not configured (no credentials)', async () => {
+    // `fetchOwnedGames()` cannot tell this apart from a real empty library —
+    // it returns `[]` for both (see `steam-client.ts`'s own doc comment) —
+    // so this exercises the REAL unconfigured path via the environment,
+    // deliberately NOT the mock: it does not tell the mock to return `null`
+    // at all, and asserts the mock is never even called, proving the
+    // refusal happens before any Steam request is attempted.
+    await provisionOwner();
+    vi.stubEnv('STEAM_API_KEY', undefined);
+    vi.stubEnv('STEAM_ID', undefined);
+
+    const result = await actions.startSteamSyncAction();
+
+    expect(result.ok).toBe(false);
+    expect(fetchOwnedGames).not.toHaveBeenCalled();
+  });
+
+  it('refuses to start when Steam does not respond', async () => {
+    // Credentials ARE configured (beforeEach) — this is a genuine request
+    // failure (network error, timeout, non-2xx, malformed JSON), which is
+    // the only thing a `null` from `fetchOwnedGames()` means once
+    // credentials are known to be present.
     await provisionOwner();
     fetchOwnedGames.mockResolvedValueOnce(null);
 
@@ -128,9 +175,16 @@ describe('advanceSteamSyncAction — the no-delete invariant', () => {
     const before = await fullGameRow(created.id);
 
     const runId = await startRun();
-    const progress = await actions.advanceSteamSyncAction(runId);
-    if ('error' in progress) throw new Error(progress.error);
-    expect(progress.done).toBe(true);
+    // "Done" is an EMPTY chunk (see advanceSteamSyncAction's own doc
+    // comment) — the one real library game is consumed by the first call,
+    // but a second, empty call is what actually signals completion.
+    let done = false;
+    for (let i = 0; i < 5 && !done; i += 1) {
+      const progress = await actions.advanceSteamSyncAction(runId);
+      if ('error' in progress) throw new Error(progress.error);
+      done = progress.done;
+    }
+    expect(done).toBe(true);
 
     const after = await fullGameRow(created.id);
     expect(after).toEqual(before);
@@ -266,5 +320,100 @@ describe('advanceSteamSyncAction — chunking and resumability', () => {
     expect(done).toBe(true);
     const run = await sync.getSyncRun(ownerId, runId);
     expect(run?.status).toBe('ready');
+  });
+});
+
+describe('advanceSteamSyncAction — keyset pagination survives a moving library', () => {
+  it('reaches ready even when a not-yet-processed game is deleted mid-run', async () => {
+    const ownerId = await provisionOwner();
+    for (let index = 0; index < 8; index += 1) {
+      await games.createGame(ownerId, { title: `Delete Test Game ${index}`, platform: 'steam', status: 'backlog' });
+    }
+    const orderedIds = await orderedSteamGameIds(ownerId);
+    expect(orderedIds).toHaveLength(8);
+
+    const runId = await startRun();
+
+    // First chunk (CHUNK_SIZE = 5) consumes orderedIds[0..4].
+    const first = await actions.advanceSteamSyncAction(runId);
+    if ('error' in first) throw new Error(first.error);
+    expect(first.done).toBe(false);
+
+    // Delete one of the three NOT-YET-PROCESSED games (orderedIds[5..7]) —
+    // this is what stranded the old offset/total implementation: `total`
+    // stays frozen at 8 but only 7 rows remain, so the cursor could never
+    // reach it.
+    const notYetProcessed = orderedIds[5];
+    if (notYetProcessed === undefined) throw new Error('expected a not-yet-processed game id');
+    await games.deleteGame(ownerId, notYetProcessed);
+
+    let done = false;
+    for (let i = 0; i < 10 && !done; i += 1) {
+      const progress = await actions.advanceSteamSyncAction(runId);
+      if ('error' in progress) throw new Error(progress.error);
+      done = progress.done;
+    }
+
+    expect(done).toBe(true);
+    const run = await sync.getSyncRun(ownerId, runId);
+    expect(run?.status).toBe('ready');
+  });
+
+  it('never stages a duplicate change when a game is inserted mid-run', async () => {
+    const ownerId = await provisionOwner();
+    const titles: string[] = [];
+    for (let index = 0; index < 8; index += 1) {
+      const title = `Insert Test Game ${index}`;
+      titles.push(title);
+      await games.createGame(ownerId, { title, platform: 'steam', status: 'backlog' });
+    }
+    const orderedIds = await orderedSteamGameIds(ownerId);
+    expect(orderedIds).toHaveLength(8);
+
+    // Steam owns every seeded title, plus the game inserted mid-run below —
+    // exact title matches so every processed game stages a `link` change,
+    // which makes a duplicate easy to detect.
+    const midRunTitle = 'Mid-Run New Game';
+    fetchOwnedGames.mockImplementation(async () =>
+      [...titles, midRunTitle].map((name, index) => ({ appid: 1000 + index, name, playtimeMinutes: 60 })),
+    );
+
+    const runId = await startRun();
+
+    const first = await actions.advanceSteamSyncAction(runId);
+    if ('error' in first) throw new Error(first.error);
+    expect(first.done).toBe(false);
+
+    // Insert a game whose id sorts BEFORE every already-seeded row —
+    // the exact reproduced shape: an id landing behind the pagination
+    // window instead of ahead of it. A real `defaultRandom()` id cannot be
+    // controlled from here, so this bypasses the DAL with a raw insert
+    // carrying an explicit, deliberately minimal id — test setup only,
+    // never a pattern application code should follow.
+    const { sql } = await harness();
+    const midRunGameId = '00000000-0000-0000-0000-000000000001';
+    await sql`
+      insert into "games" ("id", "owner_id", "title", "platform", "status")
+      values (${midRunGameId}, ${ownerId}, ${midRunTitle}, 'steam', 'backlog')
+    `;
+
+    let done = false;
+    for (let i = 0; i < 10 && !done; i += 1) {
+      const progress = await actions.advanceSteamSyncAction(runId);
+      if ('error' in progress) throw new Error(progress.error);
+      done = progress.done;
+    }
+    expect(done).toBe(true);
+
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    const linkChangeCountByGame = new Map<string, number>();
+    for (const change of changes) {
+      if (change.kind !== 'link' || change.gameId === null) continue;
+      linkChangeCountByGame.set(change.gameId, (linkChangeCountByGame.get(change.gameId) ?? 0) + 1);
+    }
+
+    for (const [gameId, count] of linkChangeCountByGame) {
+      expect(count, `game ${gameId} received ${count} link changes, expected at most 1`).toBeLessThanOrEqual(1);
+    }
   });
 });

@@ -962,8 +962,33 @@ export const gameSyncRuns = pgTable(
       .references(() => user.id, { onDelete: 'cascade' }),
     source: gameSyncSourceEnum('source').notNull(),
     status: gameSyncRunStatusEnum('status').notNull().default('running'),
+    /**
+     * `cursor`/`total` are for PROGRESS DISPLAY only ("7 of 47") — `total` is
+     * a snapshot of the owner's Steam-platform game count taken when the run
+     * was created, and a game deleted or inserted mid-run can make it an
+     * estimate the cursor never exactly reaches. `lastGameId` below, not
+     * this pair, is what the engine uses to decide what to process next and
+     * when the run is actually done.
+     */
     cursor: integer('cursor').notNull().default(0),
     total: integer('total').notNull().default(0),
+    /**
+     * Keyset pagination bookmark: the `id` of the last Steam-platform game
+     * this run has processed, in `id` order. `null` means no chunk has run
+     * yet. The next chunk queries `id > lastGameId ORDER BY id LIMIT
+     * CHUNK_SIZE`, and the run is done once that query returns nothing —
+     * not once `cursor` reaches `total`. That is what makes a game deleted
+     * mid-run harmless (the cursor simply never has to "arrive" anywhere)
+     * instead of stranding the run in `running` forever.
+     *
+     * Deliberately NOT a foreign key. An `ON DELETE SET NULL` would silently
+     * rewind an in-progress run to the very beginning the moment its
+     * last-processed game was deleted, restaging every change before it —
+     * worse than the bug this column exists to fix. This is a pagination
+     * bookmark, not a reference, so a deleted game's id can safely keep
+     * living here as an opaque marker forever.
+     */
+    lastGameId: uuid('last_game_id'),
     /**
      * The owner's Steam library as fetched ONCE at the start of the run —
      * appid, name and playtime only. Held here so each chunk does not re-fetch

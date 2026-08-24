@@ -20,8 +20,11 @@ export interface SyncRun {
   readonly id: string;
   readonly source: 'steam' | 'psn';
   readonly status: SyncRunStatus;
+  /** Progress display only — see the column's own doc comment in `schema.ts`. Not what drives chunking. */
   readonly cursor: number;
   readonly total: number;
+  /** Keyset pagination bookmark: the `id` of the last processed game, or `null` before any chunk has run. */
+  readonly lastGameId: string | null;
   readonly errorMessage: string | null;
 }
 
@@ -37,6 +40,7 @@ function rowToSyncRun(row: typeof gameSyncRuns.$inferSelect): SyncRun {
     status: row.status,
     cursor: row.cursor,
     total: row.total,
+    lastGameId: row.lastGameId,
     errorMessage: row.errorMessage,
   };
 }
@@ -114,12 +118,23 @@ export async function getSyncRunLibrary(ownerId: string, runId: string): Promise
  * up" note that applies nothing at commit, and the review screen requires
  * needs-attention items never be pre-selected. So it is computed per change
  * here rather than left to the column default.
+ *
+ * `nextLastGameId` is the keyset pagination bookmark (see `schema.ts`'s doc
+ * comment on the column) — deliberately OPTIONAL, and left untouched in the
+ * database when omitted, rather than defaulting to `null`. `null` is a
+ * meaningful value here (it is the run's genuine starting state), so
+ * "the caller didn't pass one" has to be distinguishable from "the caller
+ * explicitly wants it cleared" — the existing `errorMessage` param just
+ * below uses the same `!== undefined` convention for the same reason. This
+ * also keeps every pre-existing call site (this module's own integration
+ * tests included) working unchanged: only the sync engine passes it.
  */
 export async function appendSyncChanges(
   ownerId: string,
   runId: string,
   changes: readonly PlannedChange[],
   nextCursor: number,
+  nextLastGameId?: string | null,
 ): Promise<void> {
   const db = getDb();
 
@@ -146,7 +161,11 @@ export async function appendSyncChanges(
 
     await tx
       .update(gameSyncRuns)
-      .set({ cursor: nextCursor, updatedAt: new Date() })
+      .set({
+        cursor: nextCursor,
+        updatedAt: new Date(),
+        ...(nextLastGameId !== undefined ? { lastGameId: nextLastGameId } : {}),
+      })
       .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)));
   });
 }

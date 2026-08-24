@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -300,12 +300,26 @@ export async function countSteamGames(ownerId: string): Promise<number> {
 }
 
 /**
- * One page of the owner's Steam-platform games, ordered STABLY BY `id` — not
- * title, which can change mid-run and would make a resumable cursor
- * meaningless. This is the sync engine's only source of "what to process
- * next."
+ * One page of the owner's Steam-platform games, KEYSET-paginated by `id` —
+ * `afterId === null` starts from the beginning, otherwise only rows with
+ * `id > afterId` are returned. Deliberately NOT offset/limit: `id` is a
+ * random UUID (`defaultRandom()`), so an inserted row can sort anywhere,
+ * and OFFSET counts row POSITIONS rather than tracking a specific row. A
+ * game deleted before the offset shifts every later page left by one,
+ * silently reprocessing or skipping a row; a game inserted before it does
+ * the same in reverse. Keyset pagination has neither failure: it always
+ * resumes from a specific id, not a position, so a mid-run insert or delete
+ * elsewhere in the ordering cannot strand or duplicate anything. (An insert
+ * whose id happens to sort BEFORE `afterId` is still missed until the next
+ * run — see the sync engine's own doc comment.)
+ *
+ * Ordered STABLY BY `id` — not title, which can change mid-run and would
+ * make a bookmark meaningless.
  */
-export async function listSteamGamesChunk(ownerId: string, offset: number, limit: number): Promise<SteamSyncGame[]> {
+export async function listSteamGamesChunk(ownerId: string, afterId: string | null, limit: number): Promise<SteamSyncGame[]> {
+  const filters = [eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')];
+  if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
+
   return getDb()
     .select({
       id: gamesTable.id,
@@ -316,10 +330,9 @@ export async function listSteamGamesChunk(ownerId: string, offset: number, limit
       achievementsTotal: gamesTable.achievementsTotal,
     })
     .from(gamesTable)
-    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')))
+    .where(and(...filters))
     .orderBy(asc(gamesTable.id))
-    .limit(limit)
-    .offset(offset);
+    .limit(limit);
 }
 
 /**
