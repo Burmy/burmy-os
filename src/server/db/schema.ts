@@ -901,3 +901,36 @@ export const games = pgTable(
       .where(sql`${t.steamAppid} is not null`),
   ],
 );
+
+/**
+ * Optional per-year attribution of a game's play time.
+ *
+ * A game with NO rows here attributes all of `games.hours_tenths` to
+ * `games.first_played_year` — the behaviour every game had before this table
+ * existed, which is why ~157 of 160 rows needed no backfill.
+ *
+ * `games.hours_tenths` stays the authoritative total; these rows only say
+ * WHICH YEARS it happened in. See src/server/games/play-years.ts.
+ */
+export const gamePlayYears = pgTable(
+  'game_play_years',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    year: smallint('year').notNull(),
+    hoursTenths: integer('hours_tenths').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per game per year — two rows for the same year would be an
+    // ambiguous split, not extra detail.
+    uniqueIndex('game_play_years_game_year_idx').on(t.gameId, t.year),
+    index('game_play_years_owner_idx').on(t.ownerId),
+  ],
+);
