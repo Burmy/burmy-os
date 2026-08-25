@@ -479,6 +479,13 @@ owner can confirm it worked. If the name doesn't resolve (Steam's `success: 42`)
 a message pointing at where to find a real SteamID64, rather than sending a malformed id into
 `GetOwnedGames`.
 
+`src/server/db/games/steam-client.ts` — the in-app sync's own client, see "In-app Steam sync" below —
+resolves a vanity `STEAM_ID` the same way, via the same `buildResolveVanityUrl`/`isSteamId64`/
+`toResolvedVanityUrl` building blocks, memoized in-process so a run that calls `fetchAchievementCounts`
+dozens of times doesn't re-resolve the name on every call. It soft-fails to `null` on a resolution
+problem instead of throwing (matching the rest of this module's contract), where the script aborts —
+same split as every other failure mode covered above.
+
 The script itself is a stricter, CLI-level gate on top of the client's soft-failure contract in two
 ways: it exits early with an error if either var is unset (the same shape `backfill-game-metadata.mjs`
 already uses for `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`), and — unlike the app-side client — it
@@ -494,6 +501,123 @@ non-negotiable, since this touches data the owner entered by hand. A dry run (or
 writes a full human-readable report to a path outside the repo (default: the OS temp directory), listing
 every match, every difference, and every Steam-owned game with no library row, so the owner reviews
 before trusting `--apply`.
+
+---
+
+## In-app Steam sync
+
+A second, separate Steam integration from the one above: `src/features/games/sync/` drives a sync run
+from inside the app itself — click "Sync with Steam" on the Library screen, review a staged diff at
+`/games/sync/[runId]`, apply only what's selected. It shares Steam's HTTP client
+(`src/server/db/games/steam-client.ts`) and the pure `src/server/games/steam.ts` leaf with
+`scripts/sync-steam-library.mjs` above, but everything about WHAT it proposes and HOW it applies is
+different — see "The opposite fill rule" below before touching either.
+
+### Chunked and resumable, not one long request
+
+A Server Action has a serverless timeout; walking the owner's whole Steam-platform library in one call
+does not fit inside it. `startSteamSyncAction` fetches the owner's Steam library once and snapshots it
+into a `game_sync_runs` row; `advanceSteamSyncAction` then processes `CHUNK_SIZE` (5) library games per
+call — each matched game costs one `GetPlayerAchievements` request, so a chunk is at most 5 outbound
+Steam requests, comfortably inside any timeout. The Sync button (`src/features/games/sync/sync-button.tsx`)
+drives this by calling `advanceSteamSyncAction` in a loop, showing "N of M games checked," until a
+response reports `done: true`.
+
+**`done` comes from an empty chunk, never from `cursor >= total`.** `total` is a count taken once at run
+creation — a snapshot, not a live value — and pagination walks `games.id` by keyset (`id > lastGameId`),
+not OFFSET/LIMIT, specifically because `total` can never be trusted to line up with the cursor exactly
+(a game added or removed mid-run shifts it). See `advanceSteamSyncAction`'s own doc comment in
+`src/features/games/sync/sync-actions.ts` for the two failure modes this fixes, both reproduced against
+real Postgres before the fix. `cursor`/`total` exist in `SyncProgress` for the "N of M" label only —
+nothing in the engine or the button decides completion by comparing them.
+
+Because the run's state (cursor, staged changes so far) lives in the database the whole time, **closing
+the tab mid-run leaves a resumable run**, not a lost one — reopening `/games/sync/[runId]` for a still-
+`running` run shows "still in progress," and clicking Sync again from the Library screen is safe (it
+starts a fresh run rather than resuming one, since a fresh Steam library snapshot is cheap and correctness
+doesn't depend on continuing the exact same run).
+
+### Nothing is written without explicit approval
+
+Every one of `startSteamSyncAction`/`advanceSteamSyncAction` only ever calls `appendSyncChanges` and
+`finishSyncRun` (`src/server/db/games/sync.ts`) — neither touches the `games` table. The owner reviews
+the staged diff at `/games/sync/[runId]` (`SyncReview`, `src/features/games/sync/sync-review.tsx`),
+grouped into "Needs attention," "New games," "Field updates," and "Links," and only `commitSyncRunAction`
+— triggered by the review screen's own "Apply N selected changes" button, one explicit click — writes
+anything, and only for the changes the owner left checked. A run is immutable once committed: committing
+again, or committing a run that never reached `ready`, is refused with a message rather than silently
+re-applying.
+
+### Sync never deletes or hides a game
+
+A library game Steam's response doesn't account for is left completely untouched — no write of any kind
+reaches its row, and it is never removed from the run's processed set or hidden from the library. This
+falls out of the design rather than needing a special case: the sync engine never calls
+`createGame`/`updateGame`/`deleteGame` at all, only read functions plus the sync-tables' own append/finish
+functions (see the "NO-DELETE INVARIANT" block at the top of `sync-actions.ts`, and its matching
+invariant test in `tests/integration/games-sync-actions.test.ts`).
+
+In the owner's real library that means **40 PSP games and 12 Steam-platform games Steam does not own are
+permanently manual** — the PSP games because Steam only ever compares `platform = 'steam'` rows (same
+scoping rule as the CLI script above), and the 12 because a title with no Steam match simply produces no
+change for that game; neither group is ever flagged, deleted, or excluded from view. They stay exactly as
+entered, indefinitely, across every future run.
+
+### Steam owns hours and achievements for a linked game
+
+This is the one place the in-app sync and the CLI script actively disagree, by design (see "The opposite
+fill rule" below). Once a game is linked (`steamAppid !== null`) — the same provenance signal
+`game-card.tsx`'s source mark and the Library's Source filter chip both use, independent of the
+`platform` column — Steam's reported hours and achievement counts are treated as authoritative. The
+editor (`game-dialog.tsx`) renders `hoursTenths`, `achievementsUnlocked`, and `achievementsTotal`
+read-only for a linked game (`steamOwned`, with a "From Steam" hint), and a sync run proposes a
+`field_update` change whenever the stored value differs from what Steam reports. A `null` from Steam
+(no playtime field, a 400 from `GetPlayerAchievements` on an older title) is never proposed as a change
+— see `planLinkedGameChanges` in `src/server/games/sync-plan.ts` — so a temporary API gap can never
+overwrite a real recorded number with a zero.
+
+### A changed total raises a reconciliation item, never a re-split
+
+`game_play_years` rows (see "Play-year attribution" above) record which YEARS a game's hours happened
+in; only the owner knows that breakdown, and Steam's API has no per-year data to supply it (see the
+matching `CLAUDE.md` gotcha). So when a `field_update` changes `hoursTenths` on a game that already has
+a play-year split, the sync additionally stages a `reconcile` change — "your recorded years add up to
+X, but the new total is Y" — and never touches the split rows itself. `reconcile` changes are staged
+`selected: false` regardless of the column's own default (see the "needs-attention items never
+pre-selected" rule in `sync.ts`) and apply nothing at commit time even if somehow checked — they name no
+`games` column to write. The owner rebalances the split by hand on the game's own page; the sync only
+ever surfaces that it's now stale.
+
+### New games are staged pre-selected, but still need a click
+
+A Steam-owned game with no library row at all is staged as a `new_game` change once the run's keyset
+walk finishes (an empty chunk) — never inserted directly. `appendSyncChanges` defaults every non-
+`reconcile` change to `selected: true`, so a brand-new game shows up pre-checked in the "New games"
+group of the review screen, but it is still just a checkbox: nothing lands in `games` until the owner
+clicks Apply. Achievements are deliberately not fetched for a `new_game` proposal — the game doesn't
+exist in the library yet, and fetching them for every unmatched Steam title would multiply a run's
+Steam API cost for rows the owner may well leave unchecked.
+
+### The opposite fill rule
+
+`scripts/sync-steam-library.mjs` still exists, unchanged, for local-only runs — see "Steam library
+sync" above — and it follows the **opposite** rule from everything on this page: it fills a column
+**only where it is currently `null`** (`steamSyncFieldsToFill` in `src/server/games/steam.ts`), because
+its contract is "never overwrite what the owner typed by hand." The in-app sync makes Steam
+authoritative for a linked game's hours and achievement counts and proposes an update whenever they
+differ, which is why those fields are read-only in the editor. **Both are correct for their own
+caller — do not unify them.** See the `CLAUDE.md` gotcha of the same name for what breaks if that line
+gets blurred.
+
+### Known limitation: an insert that sorts before the bookmark
+
+Keyset pagination fixes the two failure modes described under "Chunked and resumable" above, but it has
+one known gap: a game added to the library mid-run whose `id` happens to sort BEFORE the keyset
+bookmark (`lastGameId`) is never seen by that run — the walk has already passed the point in `id`-order
+where it would have appeared. It is picked up cleanly on the next run (the next sync starts a fresh
+keyset walk from the beginning), so nothing is lost permanently; it just doesn't appear until the owner
+syncs again. A game added mid-run whose id sorts AFTER the bookmark is picked up normally, in the same
+run.
 
 ---
 

@@ -320,10 +320,20 @@ These are verified, not folklore. Do not "fix" them back.
 - **`STEAM_API_KEY`/`STEAM_ID` are optional too, same contract as IGDB's pair above.**
   `src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing
   credentials, a network error, a timeout, a non-200, or malformed JSON, and the full test suite must
-  pass with neither present. Unlike IGDB, these aren't consumed by any app request path at all —
-  only `scripts/sync-steam-library.mjs` (2026-08-23) uses them, and that script itself exits early
-  with an error if either is unset, since there's nothing useful it can do without them. See
-  `docs/GAMES.md`, "Steam library sync."
+  pass with neither present. `scripts/sync-steam-library.mjs` (2026-08-23) exits early with an error
+  if either is unset, since there's nothing useful it can do without them — see `docs/GAMES.md`,
+  "Steam library sync." The in-app sync (2026-08-24, `src/features/games/sync/`) consumes the same
+  pair through a real app request path, and degrades instead of exiting: `isSteamConfiguredAction`
+  checks the environment directly (never inferred from a fetch result — see its own doc comment) so
+  the Library screen's Sync button renders disabled with a visible explanation naming both vars,
+  never hidden and never thrown. See `docs/GAMES.md`, "In-app Steam sync."
+- **The in-app Steam sync and `scripts/sync-steam-library.mjs` deliberately follow OPPOSITE rules,
+  and unifying them is a bug.** The script fills only columns that are currently `NULL`
+  (`steamSyncFieldsToFill`) because its contract is "never overwrite what the owner typed." The
+  in-app sync makes Steam authoritative for a linked game's hours and achievement counts and proposes
+  an update whenever they differ, which is why those fields render read-only in the editor. Both are
+  correct for their own caller. `sync-plan.ts` exists as a separate module precisely because
+  `steam.ts` must stay a dependency-free leaf for the script to `node`-import it.
 - **`games.hours_tenths` is the authoritative total; `game_play_years` only says WHICH YEARS it
   happened in.** Neither Steam nor PSN can supply a per-year breakdown (Steam gives
   `playtime_forever` and `playtime_2weeks`; PSN gives one cumulative `playDuration`), so the total

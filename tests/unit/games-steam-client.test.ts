@@ -137,6 +137,124 @@ describe('fetchOwnedGames — success path', () => {
   });
 });
 
+/**
+ * `STEAM_ID` may be a vanity name (`steamcommunity.com/id/<name>`), not just
+ * a numeric SteamID64 — `.env.example` documents this as resolved
+ * automatically, and `scripts/sync-steam-library.mjs` has always done its
+ * own resolution before calling `GetOwnedGames`/`GetPlayerAchievements`.
+ * This module used to send the raw vanity string straight through as
+ * `steamid`, which Steam's API rejects (`400 Missing required routing
+ * parameter`) — reproduced against the real API before this fix, with the
+ * owner's actual vanity `STEAM_ID`. These tests cover the fix:
+ * `resolveSteamId` (module-private) must run first, and any resolution
+ * failure must soft-fail to `null` exactly like every other failure mode
+ * here — never a throw, and never a request sent with the unresolved name.
+ *
+ * Resolution is memoized per raw `STEAM_ID` string at module scope (see
+ * `resolveSteamId`'s own doc comment) — a cache that outlives any single
+ * test in this file. Each test below therefore uses ITS OWN vanity name,
+ * never reused across tests, so one test's successful (or failed)
+ * resolution can never silently satisfy a later test's assertion via a
+ * stale cache hit instead of the fetch behaviour that test actually sets
+ * up.
+ */
+describe('vanity STEAM_ID resolution', () => {
+  function fetchCallUrls(fetchSpy: ReturnType<typeof vi.fn>): string[] {
+    return fetchSpy.mock.calls.map((call) => String(call[0]));
+  }
+
+  it('resolves a vanity STEAM_ID before calling GetOwnedGames, and uses the resolved id', async () => {
+    vi.stubEnv('STEAM_API_KEY', 'test-api-key');
+    vi.stubEnv('STEAM_ID', 'vanity-basic');
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes('ResolveVanityURL')) {
+        return fakeJsonResponse(200, { response: { success: 1, steamid: '76561198263587821' } });
+      }
+      return fakeJsonResponse(200, {
+        response: { game_count: 1, games: [{ appid: 730, name: 'Counter-Strike 2', playtime_forever: 60 }] },
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await fetchOwnedGames()).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 60 }]);
+
+    const urls = fetchCallUrls(fetchSpy);
+    expect(urls[0]).toContain('ResolveVanityURL');
+    expect(urls[0]).toContain('vanityurl=vanity-basic');
+    expect(urls[1]).toContain('GetOwnedGames');
+    expect(urls[1]).toContain('steamid=76561198263587821');
+  });
+
+  it('never sends the raw vanity name as steamid to GetOwnedGames', async () => {
+    vi.stubEnv('STEAM_API_KEY', 'test-api-key');
+    vi.stubEnv('STEAM_ID', 'vanity-rawcheck');
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes('ResolveVanityURL')) {
+        return fakeJsonResponse(200, { response: { success: 1, steamid: '76561198111111111' } });
+      }
+      return fakeJsonResponse(200, { response: {} });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await fetchOwnedGames();
+
+    const ownedGamesCall = fetchCallUrls(fetchSpy).find((url) => url.includes('GetOwnedGames'));
+    expect(ownedGamesCall).toBeDefined();
+    expect(ownedGamesCall).not.toContain('steamid=vanity-rawcheck');
+  });
+
+  it('returns null, and never calls GetOwnedGames, when the vanity name fails to resolve (success: 42)', async () => {
+    vi.stubEnv('STEAM_API_KEY', 'test-api-key');
+    vi.stubEnv('STEAM_ID', 'no-such-profile');
+    const fetchSpy = vi.fn(async (_url: string) => fakeJsonResponse(200, { response: { success: 42 } }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await fetchOwnedGames()).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchCallUrls(fetchSpy)[0]).toContain('ResolveVanityURL');
+  });
+
+  it('returns null when the resolve request itself fails (non-2xx)', async () => {
+    vi.stubEnv('STEAM_API_KEY', 'test-api-key');
+    vi.stubEnv('STEAM_ID', 'vanity-resolve-fails');
+    vi.stubGlobal('fetch', vi.fn(async () => fakeJsonResponse(400, { error: 'Missing required routing parameter' })));
+
+    expect(await fetchOwnedGames()).toBeNull();
+    expect(await fetchAchievementCounts(730)).toBeNull();
+  });
+
+  it('does not re-resolve the vanity name on a second call', async () => {
+    vi.stubEnv('STEAM_API_KEY', 'test-api-key');
+    vi.stubEnv('STEAM_ID', 'vanity-cache-reuse');
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.includes('ResolveVanityURL')) {
+        return fakeJsonResponse(200, { response: { success: 1, steamid: '76561198222222222' } });
+      }
+      if (url.includes('GetOwnedGames')) return fakeJsonResponse(200, { response: {} });
+      return fakeJsonResponse(200, {
+        playerstats: { success: true, achievements: [{ apiname: 'A', achieved: 1 }] },
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await fetchOwnedGames();
+    await fetchAchievementCounts(730);
+
+    const resolveCalls = fetchCallUrls(fetchSpy).filter((url) => url.includes('ResolveVanityURL'));
+    expect(resolveCalls).toHaveLength(1);
+  });
+
+  it('makes no resolution request at all for an already-numeric SteamID64', async () => {
+    stubCredentials(); // STEAM_ID = '76561198000000000', already 17 digits
+    const fetchSpy = vi.fn(async () => fakeJsonResponse(200, { response: {} }));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await fetchOwnedGames();
+
+    expect(fetchCallUrls(fetchSpy).some((url) => url.includes('ResolveVanityURL'))).toBe(false);
+  });
+});
+
 describe('fetchAchievementCounts', () => {
   it('returns null and never calls fetch without credentials', async () => {
     vi.stubEnv('STEAM_API_KEY', undefined);

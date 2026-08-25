@@ -18,6 +18,12 @@ vi.mock('@/features/games/metadata-actions', () => ({
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// The header renders `SyncButton` (Task 6) unconditionally now, which calls
+// `useRouter()` even when its own click handler is never exercised — these
+// tests don't render inside a real Next.js app router, so it needs a mock
+// like every other `next/navigation` usage in this suite.
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
 const { LibraryView } = await import('@/features/games/library/library-view');
 
 type Game = Parameters<typeof LibraryView>[0]['games'][number];

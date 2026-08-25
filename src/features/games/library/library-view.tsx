@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { GAME_PLATFORMS, GAME_STATUSES, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
+import { SyncButton } from '../sync/sync-button';
 import { GameDialog } from './game-dialog';
 import { GameGrid } from './game-grid';
 import { GameTable } from './game-table';
@@ -27,7 +28,20 @@ type SourceFilter = 'all' | 'steam' | 'manual';
  * data already loaded, and round-tripping to the server to hide a card would
  * be latency for nothing.
  */
-export function LibraryView({ games }: { readonly games: readonly Game[] }): React.ReactElement {
+export function LibraryView({
+  games,
+  steamConfigured = false,
+}: {
+  readonly games: readonly Game[];
+  /**
+   * Whether `STEAM_API_KEY`/`STEAM_ID` are set, computed server-side by the
+   * Library page (`isSteamConfiguredAction`) — a Client Component cannot
+   * read those env vars itself. Defaults to `false` (the safe, disabled-
+   * with-explanation state) so existing callers and tests that don't pass it
+   * keep working unchanged.
+   */
+  readonly steamConfigured?: boolean;
+}): React.ReactElement {
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [platform, setPlatform] = useState<PlatformFilter>('all');
@@ -116,6 +130,8 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
             <Plus className="size-4" />
             Add game
           </Button>
+
+          <SyncButton configured={steamConfigured} />
         </div>
       </div>
 
