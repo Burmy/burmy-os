@@ -240,15 +240,23 @@ fills in the total.
 
 ## Lifecycle statuses
 
-Four states, driving the library's filter chips and the dashboard's backlog/playing/completed
+Five states, driving the library's filter chips and the dashboard's backlog/playing/completed
 breakdown:
 
 | Status | Meaning |
 | --- | --- |
-| `backlog` | Owned or wanted, not started |
+| `backlog` | Owned, not started |
 | `playing` | Currently in progress |
 | `completed` | Finished |
 | `paused_dropped` | Started, then set aside — for any reason |
+| `wanted` | Wishlisted, not released or not bought yet — see "Upcoming games" below |
+
+**`wanted` is excluded from every computed number**, in exactly one place: `listGameStatRows`
+(`src/server/db/games/games.ts`) filters it out at the query boundary. The six stat functions were
+deliberately NOT each given their own filter — six rules is six chances to forget one, and a stat
+function added later would silently miss it. Filtering at the read boundary makes every present and
+future stat correct by construction. A wishlisted game is also hidden from the Library screen unless
+its own chip is active.
 
 **`paused_dropped` is deliberately ONE state, not two.** The difference between "I'll come back to
 this" and "I'm never finishing this" is a sentence in `notes`, not a fact worth a schema column and a
@@ -783,6 +791,63 @@ committed, only how hard it is to miss before approving.
 
 ---
 
+## Upcoming games and the wishlist
+
+`/games/upcoming` lists anticipated unreleased games from IGDB, grouped by release month, with a
+one-click add to the wishlist.
+
+**`hypes` is the only usable signal, and that is not a preference.** IGDB documents it as "number of
+follows a game gets before release." Every other quality field — `total_rating`, `aggregated_rating`,
+`rating` and their counts — is review-derived and therefore structurally empty for anything
+unreleased, and `follows` is deprecated. `hypes` also stops accumulating at launch, so it stays a
+permanent record of pre-release anticipation.
+
+**`HYPE_FLOOR = 30` was calibrated against live data, not guessed.** IGDB publishes no scale for
+`hypes`. Measured over the next 12 months (PS5 + PC, main games only): floor 10 → 120 games, 20 → 66,
+30 → 45, 50 → 27. At 20 the tail admits genuinely obscure titles; at 30 the tail still holds real
+franchise entries; at 50 it thins to roughly two a month and risks empty months. The constant carries
+this table in a comment — if you change it, re-measure rather than nudging the number.
+
+### Three IGDB facts that cost real debugging time
+
+- **`category` is dead.** `where category = 0` returns **zero rows** against live IGDB. It has been
+  replaced by `game_type`, where `0 = Main Game`. Confirmed by querying `/game_types` directly.
+- **`status != (6,7)` is a landmine**, not a safety filter. It looks like "exclude cancelled and
+  rumoured," but `status` is unset on virtually every upcoming game and IGDB's `!=` drops null rows
+  rather than passing them through — adding it collapsed a real 45-game result to 1. Do not re-add it.
+- **IGDB returns `release_dates` rows in the PAST** even when the whole query is `first_release_date >
+  now`. A probe produced 2025-03 and 2026-04 buckets for a future-only query, so `groupByMonth`
+  rejects any month earlier than the current one.
+
+### Grouping
+
+`src/server/games/upcoming.ts` is pure. `date_format` values are `0` exact, `1` month, `2` year,
+`3-6` quarters, `7` TBD. Only `0` and `1` yield a real month; everything else falls into a single
+trailing **Later / TBD** group — which is load-bearing, not an edge case: **19 of 45 real games land
+there**, because IGDB has only year or quarter precision for them. A game appears once, in its
+earliest qualifying month, with all its platforms listed — never once per release row.
+
+### Fetching
+
+Live on every visit — no cached table, no refresh button. One IGDB request per page load, well inside
+the documented 4 requests/second limit. `fetchUpcomingGames()` returns `[]` for missing credentials
+AND for any failure, so the page cannot tell those apart; the empty state deliberately does not assert
+a cause it cannot know. `igdbConfigured()` is checked separately so "not configured" can be named
+precisely.
+
+### Auto-promotion on release
+
+A `wanted` game whose `release_date` has passed is flipped to `backlog` automatically. **This edits
+owner data without asking** — a deliberate decision, recorded here so nobody "fixes" it later.
+
+It deliberately does NOT run during the Server Component render: Next forbids mutation there and it
+would fire unpredictably. The page counts overdue rows and passes the count down; the client view
+fires `promoteReleasedWantedGamesAction()` once on mount only when that count is non-zero. The action
+is idempotent, so React Strict Mode's double-mount in development is harmless. No scheduled job is
+involved — nothing is deployed yet, so a cron would have nowhere to run.
+
+---
+
 ## What's deliberately out of scope for v1
 
 Each of these was considered and cut, not overlooked:
@@ -798,7 +863,6 @@ Each of these was considered and cut, not overlooked:
   treats as a deliberate, separately-scoped feature rather than a byproduct of two tables existing.
 - **Session-by-session play history.** Hours are one hand-edited number per game, not a log of
   individual play sessions with dates and durations. See "Hours are one number" above.
-- **A wishlist-vs-backlog distinction.** `backlog` covers both "I own this and haven't started" and
-  "I want this and don't own it yet" — there is no `ownership`-gated split between the two. The
-  source spreadsheet didn't track wanted-but-unowned games as a distinct category, and the four-status
-  lifecycle above doesn't currently model it either.
+- ~~**A wishlist-vs-backlog distinction.**~~ **Shipped** — see "Upcoming games and the wishlist"
+  above. `wanted` is now a real status, distinct from `backlog`, and excluded from every computed
+  number.
