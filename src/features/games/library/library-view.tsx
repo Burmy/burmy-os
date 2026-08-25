@@ -21,7 +21,6 @@ type PlatformFilter = GamePlatform | 'all';
 // Provenance, not platform — `game.steamAppid !== null` is the same signal
 // game-dialog.tsx uses to render Hours/Achievements read-only, independent
 // of the `platform` field (a `steam` platform game can still be unlinked).
-type SourceFilter = 'all' | 'steam' | 'manual';
 
 /**
  * The library screen. Owns view mode, status filter, platform filter, and
@@ -56,21 +55,22 @@ export function LibraryView({
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [platform, setPlatform] = useState<PlatformFilter>('all');
-  const [source, setSource] = useState<SourceFilter>('all');
   const [search, setSearch] = useState('');
   const [editing, setEditing] = useState<Game | null>(null);
   const [creating, setCreating] = useState(false);
 
   // `wanted` (wishlist) games are hidden unless their own status chip is
   // active — see the plan's "Library hides it by default." Every OTHER
-  // chip's count (status, platform, source), and the "All ___" chip in each
-  // group, is computed over THIS set rather than `games` directly, so none
-  // of them jump as the wishlist grows: a wishlisted PS5 game shouldn't
+  // chip's count (status, platform) is computed over THIS set rather than
+  // `games` directly, so none of them jump as the wishlist grows: a
+  // wishlisted PS5 game shouldn't
   // inflate the "PS5" platform chip while it's still invisible in the
   // default view. `counts` (the per-status map) below is the one exception
   // that stays keyed off `games` — it has to be, since `wanted`'s own chip
   // needs a real count, and doing so changes nothing for the other statuses
   // (a `wanted` row is never counted under any OTHER status key either way).
+  const filtered = status !== 'all' || platform !== 'all' || search.trim() !== '';
+
   const nonWantedGames = useMemo(() => games.filter((game) => game.status !== 'wanted'), [games]);
 
   const visible = useMemo(() => {
@@ -82,8 +82,6 @@ export function LibraryView({
         return false;
       }
       if (platform !== 'all' && game.platform !== platform) return false;
-      if (source === 'steam' && game.steamAppid === null) return false;
-      if (source === 'manual' && game.steamAppid !== null) return false;
       if (needle === '') return true;
       return (
         game.title.toLowerCase().includes(needle) ||
@@ -91,7 +89,7 @@ export function LibraryView({
         (game.publisher ?? '').toLowerCase().includes(needle)
       );
     });
-  }, [games, status, platform, source, search]);
+  }, [games, status, platform, search]);
 
   const counts = useMemo(() => {
     const byStatus = new Map<GameStatus, number>();
@@ -103,18 +101,6 @@ export function LibraryView({
     const byPlatform = new Map<GamePlatform, number>();
     for (const game of nonWantedGames) byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
     return byPlatform;
-  }, [nonWantedGames]);
-
-  // Same provenance signal as game-dialog.tsx's `steamOwned` and
-  // game-card.tsx's source mark — `steamAppid !== null`, not `platform`.
-  const sourceCounts = useMemo(() => {
-    let steam = 0;
-    let manual = 0;
-    for (const game of nonWantedGames) {
-      if (game.steamAppid === null) manual += 1;
-      else steam += 1;
-    }
-    return { steam, manual };
   }, [nonWantedGames]);
 
   return (
@@ -186,7 +172,10 @@ export function LibraryView({
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="flex flex-wrap gap-1">
-            <FilterChip label="All" count={nonWantedGames.length} active={status === 'all'} onClick={() => setStatus('all')} />
+            {/* No "All" chip: an active chip toggles itself off, and the
+                "Clear" control below appears whenever anything is filtered.
+                Three "All …" chips that only ever restated the same total
+                were the bulk of this row's clutter. */}
             {/* A status with zero games in the library is noise, not a real filter —
                 same principle as the platform chips below. */}
             {GAME_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
@@ -195,18 +184,12 @@ export function LibraryView({
                 label={STATUS_LABELS[value]}
                 count={counts.get(value) ?? 0}
                 active={status === value}
-                onClick={() => setStatus(value)}
+                onClick={() => setStatus(status === value ? 'all' : value)}
               />
             ))}
           </div>
 
           <div className="flex flex-wrap gap-1">
-            <FilterChip
-              label="All platforms"
-              count={nonWantedGames.length}
-              active={platform === 'all'}
-              onClick={() => setPlatform('all')}
-            />
             {/* Only platforms the owner actually has games on — a zero-count chip
                 like "PC 0" is noise the owner has to read past, not a useful
                 filter (steam absorbs the real PC library; see PLATFORM_LABELS). */}
@@ -216,39 +199,32 @@ export function LibraryView({
                 label={PLATFORM_LABELS[value]}
                 count={platformCounts.get(value) ?? 0}
                 active={platform === value}
-                onClick={() => setPlatform(value)}
+                onClick={() => setPlatform(platform === value ? 'all' : value)}
               />
             ))}
           </div>
 
-          <div className="flex flex-wrap gap-1">
-            <FilterChip
-              label="All sources"
-              count={nonWantedGames.length}
-              active={source === 'all'}
-              onClick={() => setSource('all')}
-            />
-            {/* Same zero-count-hides-the-chip rule as status/platform above —
-                a library with no synced games yet shouldn't show a dead
-                "Steam 0" chip, and one with no manual entries shouldn't show
-                a dead "Manual 0" chip. */}
-            {sourceCounts.steam === 0 ? null : (
-              <FilterChip
-                label="Steam"
-                count={sourceCounts.steam}
-                active={source === 'steam'}
-                onClick={() => setSource('steam')}
-              />
-            )}
-            {sourceCounts.manual === 0 ? null : (
-              <FilterChip
-                label="Manual"
-                count={sourceCounts.manual}
-                active={source === 'manual'}
-                onClick={() => setSource('manual')}
-              />
-            )}
-          </div>
+          {/* Replaces the three "All …" chips that used to lead each group.
+              They spent three permanent slots restating a total the header
+              already prints, and one of them ("All sources") headed a group
+              whose "Steam" chip meant something different from the "Steam /
+              PC" platform chip beside it. This appears only when there is
+              something to clear, so the row's resting state is just the
+              filters themselves. */}
+          {filtered ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground h-6 px-2 text-xs"
+              onClick={() => {
+                setStatus('all');
+                setPlatform('all');
+                setSearch('');
+              }}
+            >
+              Clear
+            </Button>
+          ) : null}
         </div>
       </div>
 

@@ -162,7 +162,6 @@ describe('LibraryView', () => {
   it('does not render a platform filter chip for a platform with zero games', () => {
     render(<LibraryView games={[game({ id: 'a', platform: 'ps5' })]} />);
 
-    expect(screen.getByRole('button', { name: /^all platforms/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^ps5/i })).toBeInTheDocument();
     // steam, psp, pc, other all have zero games in this library — none of
     // their chips should exist at all, not just be inactive.
@@ -175,11 +174,6 @@ describe('LibraryView', () => {
   it('does not render a status filter chip for a status with zero games', () => {
     render(<LibraryView games={[game({ id: 'a', status: 'completed' })]} />);
 
-    // `\d` right after "all" (no space) is what makes this the STATUS
-    // group's own "All" chip specifically — "All platforms"/"All sources"
-    // both also start with "all" but with a space, not a digit, so this
-    // stays unambiguous as more "All ___" chip groups are added.
-    expect(screen.getByRole('button', { name: /^all\d/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^completed/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
@@ -192,39 +186,57 @@ describe('LibraryView', () => {
   });
 
   /**
-   * Task 5: the Source facet distinguishes "Steam owns this game's hours"
-   * from "the owner entered it by hand" — `steamAppid !== null`, not the
-   * `platform` field (see the matching provenance note on `game-card.tsx`
-   * and `game-dialog.tsx`'s `steamOwned`).
+   * The three "All …" chips were removed — they spent permanent slots
+   * restating a total the header already prints, and one of them headed a
+   * Source group whose "Steam" chip meant something different from the
+   * "Steam / PC" platform chip beside it. Clearing a filter now happens by
+   * toggling the active chip, or via a "Clear" that appears only while
+   * something is filtered.
    */
-  it('filters by source', async () => {
+  it('clears a filter when its own active chip is clicked again', async () => {
     render(
       <LibraryView
         games={[
-          game({ id: 'a', title: 'Linked Game', steamAppid: 367520 }),
-          game({ id: 'b', title: 'Hand-entered Game', steamAppid: null }),
+          game({ id: 'a', title: 'Astro Bot', platform: 'ps5' }),
+          game({ id: 'b', title: 'Daxter', platform: 'psp' }),
         ]}
       />,
     );
 
-    // `\d` right after "steam" (no space, see the "All" chip's own comment
-    // above) picks the Source chip specifically, not the platform group's
-    // "Steam / PC" — neither game here uses the `steam` platform, so that
-    // chip wouldn't render anyway, but the digit anchor keeps this correct
-    // even in a library that has both.
-    await userEvent.click(screen.getByRole('button', { name: /^steam\d/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
+    expect(screen.queryByText('Daxter')).not.toBeInTheDocument();
 
-    expect(screen.getByText('Linked Game')).toBeInTheDocument();
-    expect(screen.queryByText('Hand-entered Game')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
+    expect(screen.getByText('Daxter')).toBeInTheDocument();
   });
 
-  it('does not render a source filter chip when every game shares one source', () => {
-    render(<LibraryView games={[game({ id: 'a', steamAppid: null })]} />);
+  it('offers Clear only while something is actually filtered', async () => {
+    render(<LibraryView games={[game({ id: 'a', platform: 'ps5' }), game({ id: 'b', platform: 'psp' })]} />);
 
-    expect(screen.getByRole('button', { name: /^all sources/i })).toBeInTheDocument();
-    // Every game here is manual — the "Steam" chip would be a dead 0 count.
+    expect(screen.queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^clear$/i }));
+
+    expect(screen.queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
+    expect(screen.getByText('2 games')).toBeInTheDocument();
+  });
+
+  it('no longer renders a Source filter group, whose "Steam" collided with the "Steam / PC" platform chip', () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', platform: 'steam', steamAppid: 367520 }),
+          game({ id: 'b', platform: 'ps5', steamAppid: null }),
+        ]}
+      />,
+    );
+
+    // The platform chip survives; the identically-named source chip does not.
+    expect(screen.getByRole('button', { name: /^steam \/ pc/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^steam\d/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^manual/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^manual/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^all sources/i })).not.toBeInTheDocument();
   });
 
   it('tells the owner the library is empty rather than rendering a blank grid', () => {
@@ -292,7 +304,7 @@ describe('LibraryView', () => {
       expect(screen.queryByText('Owned Game')).not.toBeInTheDocument();
     });
 
-    it('does not count wanted games in the "All" status chip, the platform chips, or the header total', () => {
+    it('does not count wanted games in the platform chips or the header total', () => {
       render(
         <LibraryView
           games={[
@@ -304,7 +316,6 @@ describe('LibraryView', () => {
 
       // "1 game" — the wishlist entry must not inflate the total.
       expect(screen.getByText('1 game')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /^all\d/i })).toHaveTextContent('All1');
       expect(screen.getByRole('button', { name: /^ps5/i })).toHaveTextContent('PS51');
     });
 

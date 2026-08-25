@@ -75,13 +75,23 @@ export function PsnSyncButton({ configured }: { readonly configured: boolean }):
 
   if (!configured) {
     return (
+      // The explanation stays VISIBLE, not tooltip-only. A silently disabled
+      // button leaves the owner with no idea why PlayStation sync does
+      // nothing, and a `title` is hover-only — invisible on touch entirely.
+      // It is kept to one short line so it stops dominating the header, with
+      // the full sentence available on hover.
       <div className="flex flex-col items-end gap-1">
-        <Button size="sm" variant="outline" disabled>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled
+          title="Set PSN_NPSSO to enable PlayStation sync."
+        >
           <RefreshCw className="size-4" aria-hidden />
           Sync with PlayStation
         </Button>
-        <p className="text-muted-foreground max-w-56 text-right text-xs text-balance">
-          Set <code className="font-mono">PSN_NPSSO</code> to enable PlayStation sync.
+        <p className="text-muted-foreground text-xs">
+          Needs <code className="font-mono">PSN_NPSSO</code>
         </p>
       </div>
     );

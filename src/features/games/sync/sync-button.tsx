@@ -76,13 +76,23 @@ export function SyncButton({ configured }: { readonly configured: boolean }): Re
   if (!configured) {
     return (
       <div className="flex flex-col items-end gap-1">
-        <Button size="sm" variant="outline" disabled>
+        {/* Kept to one short line, matching PsnSyncButton — the full
+            sentence is on hover. Still VISIBLE rather than tooltip-only: a
+            silently disabled button gives no clue why sync does nothing. */}
+        <Button
+          size="sm"
+          variant="outline"
+          disabled
+          title="Set STEAM_API_KEY and STEAM_ID to enable Steam sync."
+        >
           <RefreshCw className="size-4" aria-hidden />
           Sync with Steam
         </Button>
-        <p className="text-muted-foreground max-w-56 text-right text-xs text-balance">
-          Set <code className="font-mono">STEAM_API_KEY</code> and <code className="font-mono">STEAM_ID</code> to
-          enable Steam sync.
+        {/* BOTH vars are named. Steam needs the pair, and naming only one
+            would leave the owner setting it and wondering why sync still
+            does nothing. */}
+        <p className="text-muted-foreground text-xs">
+          Needs <code className="font-mono">STEAM_API_KEY</code> + <code className="font-mono">STEAM_ID</code>
         </p>
       </div>
     );
