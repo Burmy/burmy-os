@@ -205,6 +205,58 @@ describe('advancePsnSyncAction — the no-delete invariant (the owner\'s stated 
       expect(changes.some((change) => change.gameId === game.id)).toBe(false);
     }
   });
+
+  it('does not let a same-titled PS5/PS4 re-release relabel an unlinked PSP row by name collision', async () => {
+    // The real case the owner is worried about: Sony re-released "Persona 3
+    // Portable" on PS5 in 2023 under the IDENTICAL title as the owner's real
+    // PSP copy. A pure name match against PSN's ENTIRE played-titles list
+    // (no platform filter) would score this a near-perfect match and
+    // relabel the PSP row as a PS5 game — exactly the corruption
+    // `categoryToPlatform` was already hardened to never cause directly
+    // (it can never itself resolve `'psp'`), but which a same-titled
+    // cross-platform re-release can still cause INDIRECTLY through name
+    // matching alone if the PSP row is not excluded from the fallback.
+    const ownerId = await provisionOwner();
+    const psp = await games.createGame(ownerId, {
+      title: 'Persona 3 Portable',
+      platform: 'psp',
+      status: 'completed',
+      hoursTenths: 800,
+      rating: 5,
+    });
+
+    fetchPlayedTitles.mockImplementation(async () => [
+      {
+        titleId: 'CUSA99999_00',
+        name: 'Persona 3 Portable',
+        platform: 'ps5',
+        hoursTenths: 150,
+        firstPlayedYear: 2024,
+        lastPlayedAt: '2024-01-01T00:00:00.000Z',
+      },
+    ]);
+
+    const before = await fullGameRow(psp.id);
+
+    const runId = await startRun();
+    await runToCompletion(runId, 5);
+
+    // The PSP row is byte-identical — no link, no field_update, no platform
+    // flip, nothing.
+    const after = await fullGameRow(psp.id);
+    expect(after).toEqual(before);
+
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    expect(changes.some((change) => change.gameId === psp.id)).toBe(false);
+
+    // The genuine PS5 title must NOT be silently absorbed into the PSP row
+    // — it has to surface as its own new_game.
+    const newGame = changes.find((change) => change.kind === 'new_game' && change.title === 'Persona 3 Portable');
+    expect(newGame).toBeDefined();
+    expect(newGame?.gameId).toBeNull();
+    expect(newGame?.payload.psnTitleId).toBe('CUSA99999_00');
+    expect(newGame?.payload.platform).toBe('ps5');
+  });
 });
 
 describe('advancePsnSyncAction — matching and staging', () => {

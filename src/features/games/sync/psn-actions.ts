@@ -18,11 +18,21 @@
  * all, only read functions plus the sync-staging functions. PSP games are
  * WALKED like any other PlayStation-platform game (`listPsnGamesChunk`
  * covers `ps5`/`ps4`/`psp` — see that function's own doc comment for why PSP
- * is deliberately not filtered out as an "optimisation") and PSN can never
- * return data for one (it predates PSN's trophy system entirely), so every
- * PSP row resolves no played title, stages nothing, and is left byte-
- * identical. See `tests/integration/games-psn-actions.test.ts`'s named
- * invariant test, which proves this with a real mutation-testing check.
+ * is deliberately not filtered out as an "optimisation").
+ *
+ * PSN itself never returns a title that is GENUINELY a PSP game (its trophy
+ * system postdates the PSP entirely) — but that alone is NOT sufficient to
+ * keep a PSP row untouched, because Sony has re-released several PSP-era
+ * titles on PS4/PS5 under the IDENTICAL name (e.g. "Persona 3 Portable"). A
+ * plain name match has no way to tell the owner's real PSP copy apart from
+ * that unrelated re-release, so `resolvePlayedTitle` carries an EXPLICIT
+ * guard: an unlinked (`psnTitleId === null`) `platform === 'psp'` row skips
+ * the name-match fallback entirely and always resolves to `null`. Only that
+ * guard — not the absence of PSP titles in PSN's response by itself — is
+ * what makes every PSP row stage nothing and stay byte-identical. See
+ * `tests/integration/games-psn-actions.test.ts`'s two named tests: the
+ * unrelated-response invariant test (mutation-tested) and the same-titled
+ * re-release collision test.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -57,6 +67,7 @@ import { bestTitleMatchAmong } from '@/server/games/metadata';
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
 import { planLinkedPsnGameChanges, planNewPsnGameChange, type StoredGameForPsnSync } from '@/server/games/psn-plan';
 import type { PlannedChange } from '@/server/games/sync-plan';
+import type { GamePlatform } from '@/server/games/taxonomy';
 import { type ActionResult, fail } from '../action-result';
 
 /**
@@ -123,14 +134,35 @@ function parsePsnSnapshot(value: unknown): PsnSnapshot {
  * The played title this stored game resolves to against the run's snapshot,
  * or `null` when PSN does not own it. See the module header — STORED
  * `psnTitleId` always wins over a fresh match when present.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN UNLINKED PSP ROW NEVER FALLS THROUGH TO THE NAME MATCH
+ *
+ * `categoryToPlatform` (`src/server/games/psn.ts`) can never legitimately
+ * resolve `'psp'` — PSN's trophy system postdates the PSP entirely, so no
+ * response it returns is genuinely a PSP title. That means an UNLINKED
+ * `platform === 'psp'` row can never have a real fresh match in PSN's
+ * played-titles list — any name match it scores is necessarily a
+ * COINCIDENCE, not a real link. Sony has re-released several PSP-era games
+ * (e.g. "Persona 3 Portable") on PS4/PS5 under the IDENTICAL title, so
+ * without this guard a plain name match against the whole list would
+ * confidently — and wrongly — link the PSP row to that unrelated PS4/PS5
+ * release, staging a `platform` flip straight through the very column
+ * `categoryToPlatform` was hardened to protect. This is checked HERE,
+ * before the fallback runs, rather than by filtering `playedTitles` by
+ * platform for every game: doing it here keeps ps4/ps5 matching completely
+ * unchanged and makes the PSP case a single, auditable early return. See
+ * `tests/integration/games-psn-actions.test.ts`'s named collision test.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function resolvePlayedTitle(
-  game: { readonly title: string; readonly psnTitleId: string | null },
+  game: { readonly title: string; readonly platform: GamePlatform; readonly psnTitleId: string | null },
   playedTitles: readonly PsnPlayedTitle[],
 ): PsnPlayedTitle | null {
   if (game.psnTitleId !== null) {
     return playedTitles.find((entry) => entry.titleId === game.psnTitleId) ?? null;
   }
+  if (game.platform === 'psp') return null;
   return bestTitleMatchAmong(game.title, playedTitles, (entry) => entry.name)?.candidate ?? null;
 }
 
@@ -161,9 +193,17 @@ function resolveTrophyTitle(
  * the owner's PlayStation-platform games, exactly like Steam's
  * `matchedSteamAppids` — staging never writes to `games`, so a title match
  * staged several chunks ago is still invisible in the `psnTitleId` column.
+ *
+ * Delegates to `resolvePlayedTitle`, so an unlinked PSP row is subject to
+ * the SAME "never name-match" guard here as in the per-chunk loop — without
+ * it, a PSP row could silently "claim" a same-titled PS4/PS5 played title
+ * for the purposes of this set, which would then hide that title's own
+ * `new_game` change even though `resolvePlayedTitle` correctly refused to
+ * stage anything against the PSP row itself. `storedGames` therefore needs
+ * `platform`, not just `title`/`psnTitleId`.
  */
 function matchedPsnTitleIds(
-  storedGames: readonly { readonly title: string; readonly psnTitleId: string | null }[],
+  storedGames: readonly { readonly title: string; readonly platform: GamePlatform; readonly psnTitleId: string | null }[],
   playedTitles: readonly PsnPlayedTitle[],
 ): Set<string> {
   const matched = new Set<string>();

@@ -732,16 +732,32 @@ Steam both already hold.
 ### PSP is permanently manual
 
 PlayStation Portable predates PSN's trophy system entirely (trophies launched with the PS3 in 2008;
-the PSP has no client-side trophy support at all), so PSN can never return play or trophy data for a
-PSP title under any circumstances. The sync engine still WALKS every PSP-platform library row rather
-than filtering them out as an "optimisation" (`PSN_PLATFORMS` in `src/server/db/games/games.ts` covers
-`ps5`/`ps4`/`psp` together, on purpose) — each one resolves no played title, stages nothing, and is
-left byte-identical, proving the no-delete invariant for exactly the games the owner is most protective
-of, rather than leaving it unproven by carving PSP out of the walk entirely. In the owner's real
-library this means **every PSP game stays permanently hand-maintained, indefinitely, across every
-future PSN sync run** — never flagged, never excluded from view, and never silently skipped in a way
-that would make its absence from every run's changes ambiguous with "nothing changed" versus "never
-checked."
+the PSP has no client-side trophy support at all), so PSN can never return play or trophy data that
+GENUINELY belongs to a PSP title under any circumstances. The sync engine still WALKS every
+PSP-platform library row rather than filtering them out as an "optimisation" (`PSN_PLATFORMS` in
+`src/server/db/games/games.ts` covers `ps5`/`ps4`/`psp` together, on purpose) — each one resolves no
+played title, stages nothing, and is left byte-identical, proving the no-delete invariant for exactly
+the games the owner is most protective of, rather than leaving it unproven by carving PSP out of the
+walk entirely.
+
+**"PSN never returns PSP data" is not, by itself, enough to guarantee that.** Sony has re-released
+several PSP-era titles on PS4/PS5 under the IDENTICAL name — "Persona 3 Portable" shipped again on PS5
+in 2023 with no change to the title string — so a plain name match against PSN's played-titles list
+would score that unrelated re-release as a near-perfect match for the owner's real PSP copy, and
+happily stage a `platform` flip (`psp` → `ps5`) straight onto it. `resolvePlayedTitle`
+(`src/features/games/sync/psn-actions.ts`) closes this with an explicit guard: an unlinked
+(`psnTitleId === null`) row with `platform === 'psp'` skips the name-match fallback entirely and
+always resolves to no played title, never falling through to `bestTitleMatchAmong` at all. The same
+guard is applied where the engine decides which PSN titles count as "already matched," so a PSP row
+can never absorb a genuine PS4/PS5 release and hide it from that run's `new_game` list either. Proven
+by two integration tests: the unrelated-response invariant (mutation-tested — see
+`tests/integration/games-psn-actions.test.ts`) and a same-titled-re-release collision test seeding a
+real "Persona 3 Portable" PSP row against a mocked PS5 title of the same name.
+
+In the owner's real library this means **every PSP game stays permanently hand-maintained,
+indefinitely, across every future PSN sync run** — never flagged, never excluded from view, never
+relabelled by a same-titled re-release, and never silently skipped in a way that would make its
+absence from every run's changes ambiguous with "nothing changed" versus "never checked."
 
 ### An unconfirmed category value never becomes a guess
 

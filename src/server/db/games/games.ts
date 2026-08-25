@@ -465,19 +465,26 @@ export async function listPsnGamesChunk(ownerId: string, afterId: string | null,
 }
 
 /**
- * Every PlayStation-platform game's id/title/psnTitleId, unpaged — the PSN
- * sync engine's finalization step re-matches every one of these (not just
- * the ones in a given chunk) to decide which PSN-owned played titles
+ * Every PlayStation-platform game's id/title/platform/psnTitleId, unpaged —
+ * the PSN sync engine's finalization step re-matches every one of these (not
+ * just the ones in a given chunk) to decide which PSN-owned played titles
  * genuinely have no library counterpart. Same reasoning as
  * `listSteamGamesForMatching`: staging never writes to `games`, so a title
  * match staged several chunks ago is still invisible in the `psnTitleId`
- * column here.
+ * column here. `platform` is included so the caller can apply the same
+ * "never name-match an unlinked PSP row" guard here that it applies in the
+ * per-chunk loop — see `resolvePlayedTitle`'s doc comment in
+ * `psn-actions.ts` for why.
  */
 export async function listPsnGamesForMatching(
   ownerId: string,
-): Promise<{ readonly id: string; readonly title: string; readonly psnTitleId: string | null }[]> {
-  return getDb()
-    .select({ id: gamesTable.id, title: gamesTable.title, psnTitleId: gamesTable.psnTitleId })
+): Promise<
+  { readonly id: string; readonly title: string; readonly platform: GamePlatform; readonly psnTitleId: string | null }[]
+> {
+  const rows = await getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title, platform: gamesTable.platform, psnTitleId: gamesTable.psnTitleId })
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)));
+
+  return rows.map((row) => ({ ...row, platform: row.platform as GamePlatform }));
 }
