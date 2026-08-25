@@ -86,9 +86,71 @@ const CATEGORY_TO_PLATFORM: Readonly<Record<string, GamePlatform>> = {
  * something we can use." A `null` platform is a signal to the (later) sync
  * engine to leave the stored platform alone, never a guess. See the module
  * header for why `pspc_game` in particular must never resolve to `'psp'`.
+ *
+ * `unknown` is deliberately NOT mapped here even though the owner's real
+ * account proves it is real game data (see `isGameCategory` below) — its
+ * title IDs are the ones `platformFromTitleId` resolves instead, at the
+ * `toPlayedTitles` call site.
  */
 export function categoryToPlatform(category: string): GamePlatform | null {
   return CATEGORY_TO_PLATFORM[category] ?? null;
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SIX `category` VALUES OBSERVED ON THE OWNER'S REAL PSN ACCOUNT (verified
+ * live against `getUserPlayedGames`, 2026-08-25, 87 played titles total):
+ *
+ *   category                    count   what it actually is
+ *   ─────────────────────────────────────────────────────────────────────
+ *   ps4_game                       36   games
+ *   ps5_native_game                 28   games
+ *   unknown                         13   REAL GAMES — e.g. Cyberpunk 2077
+ *                                        (CUSA16596_00), Control
+ *                                        (CUSA11461_00), inFAMOUS™ Second
+ *                                        Son (CUSA00223_00)
+ *   ps4_videoservice_web_app         7   apps — Netflix (357h), YouTube
+ *                                        (642h), Prime Video, Spotify
+ *   ps4_nongame_mini_app             2   apps
+ *   not_found                        1   unresolvable
+ *
+ * Committed, Netflix's and YouTube's hundreds of "played" hours would dwarf
+ * every real game in the owner's library (their most-played real game is
+ * 170h) — a media app is not a game and must never be staged as a
+ * `new_game`.
+ *
+ * A PATTERN, not a fixed deny-list of the two app values seen above: a
+ * category is excluded when it CONTAINS "app" (covers both
+ * `ps4_videoservice_web_app` and `ps4_nongame_mini_app`, and any future PSN
+ * app category a fixed list would miss) or equals `not_found` (PSN
+ * couldn't resolve the title at all — nothing useful to stage either).
+ * Every other value — `unknown` included, despite its name — passes
+ * through, per the live evidence above.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function isGameCategory(category: string): boolean {
+  return category !== 'not_found' && !category.includes('app');
+}
+
+/**
+ * Falls back to the PSN title-ID prefix when `categoryToPlatform` returns
+ * `null` — i.e. when PSN's `category` field didn't tell us anything usable
+ * (this app's own `'unknown'` case, or a genuinely new category).
+ *
+ * Verified live: Cyberpunk 2077 on PS5 is `PPSA03974_00` under category
+ * `ps5_native_game` (`categoryToPlatform` already resolves this one, so the
+ * fallback never runs); the SAME owner's PS4 copy is `CUSA16596_00` under
+ * category `unknown` (`categoryToPlatform` returns `null` — this is exactly
+ * the case this fallback exists for). `CUSA…` -> `ps4`, `PPSA…` -> `ps5`.
+ *
+ * Anything else — including no recognisable prefix at all — stays `null`.
+ * In particular this must NEVER resolve `'psp'`: see the module header on
+ * why a guessed PSP platform would corrupt the owner's genuinely-PSP rows.
+ */
+function platformFromTitleId(titleId: string): GamePlatform | null {
+  if (titleId.startsWith('CUSA')) return 'ps4';
+  if (titleId.startsWith('PPSA')) return 'ps5';
+  return null;
 }
 
 export interface PsnPlayedTitle {
@@ -114,6 +176,10 @@ function yearOf(dateTime: unknown): number | null {
  * rather than thrown on, and a payload with no `titles` array at all — the
  * shape of an error response as much as a genuinely empty page — collapses
  * to `[]`.
+ *
+ * A title whose category is not a game (`isGameCategory` above) is skipped
+ * here too, at the same point malformed entries are — a media app has no
+ * more business becoming a `PsnPlayedTitle` than a `null` entry does.
  */
 export function toPlayedTitles(payload: unknown): PsnPlayedTitle[] {
   const titles = asRecord(payload)?.titles;
@@ -128,6 +194,8 @@ export function toPlayedTitles(payload: unknown): PsnPlayedTitle[] {
     if (typeof titleId !== 'string' || titleId === '' || typeof name !== 'string' || name === '') return [];
 
     const category = typeof record.category === 'string' ? record.category : '';
+    if (!isGameCategory(category)) return [];
+
     const playDuration = typeof record.playDuration === 'string' ? record.playDuration : '';
     const lastPlayedAt =
       typeof record.lastPlayedDateTime === 'string' && record.lastPlayedDateTime !== ''
@@ -138,7 +206,7 @@ export function toPlayedTitles(payload: unknown): PsnPlayedTitle[] {
       {
         titleId,
         name,
-        platform: categoryToPlatform(category),
+        platform: categoryToPlatform(category) ?? platformFromTitleId(titleId),
         hoursTenths: parsePlayDuration(playDuration),
         firstPlayedYear: yearOf(record.firstPlayedDateTime),
         lastPlayedAt,

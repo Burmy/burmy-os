@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 const setSyncChangeSelectedAction = vi.fn(async () => ({ ok: true as const }));
-const commitSyncRunAction = vi.fn(async () => ({ ok: true as const }));
+const commitSyncRunAction = vi.fn(async () => ({ ok: true as const, applied: 0, created: 0, skipped: 0 }));
 
 vi.mock('@/features/games/sync/sync-actions', () => ({
   setSyncChangeSelectedAction,

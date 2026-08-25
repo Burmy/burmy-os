@@ -283,7 +283,7 @@ describe('commitSyncRun', () => {
     const after = await games.getGame(owner, gameId);
 
     expect(after).toEqual(before);
-    expect(result).toEqual({ applied: 0, created: 0 });
+    expect(result).toEqual({ applied: 0, created: 0, skipped: 0 });
   });
 
   it('rejects a payload naming a non-syncable column', async () => {
@@ -704,5 +704,129 @@ describe('commitSyncRun', () => {
 
     const all = await games.listGames(owner);
     expect(all.find((game) => game.title === 'Mystery Game')).toBeUndefined();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // BUG 3b — A STAGED RUN IS A SNAPSHOT; THE LIBRARY CAN MOVE UNDERNEATH IT.
+  //
+  // Real scenario the owner hit: a staged run's `new_game` entries for
+  // "Half-Life: Opposing Force," "Metro Exodus Enhanced Edition" and "Forza
+  // Horizon 6" were since created by a DIFFERENT, already-committed Steam
+  // run. Committing the stale run must SKIP the ones that now already
+  // exist rather than throwing a raw unique-violation and aborting every
+  // other selected change in the same commit — including a genuinely NEW
+  // game staged right alongside them. This is the exact scenario that would
+  // prove a poisoned transaction: if the failed insert weren't isolated in
+  // its own SAVEPOINT, the second (genuinely new) insert in this same
+  // `db.transaction()` would fail too, with "current transaction is
+  // aborted," even though it named nothing already in the database.
+  // ───────────────────────────────────────────────────────────────────────
+  it('skips a new_game whose title+platform was already created by a different run, and still creates a genuinely new one in the same commit', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    // Simulates "a different, already-committed Steam run created this
+    // already" — created directly, standing in for that other run's commit.
+    await makeGame(owner, 'Half-Life: Opposing Force', { platform: 'steam', steamAppid: 50, hoursTenths: 73 });
+
+    const runId = await makeReadyRun(owner, 0);
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        // STALE — collides with the row created above (same title, same
+        // platform), even though this run's own snapshot didn't know that
+        // when it was staged. A different steamAppid on purpose: proves the
+        // collision is caught via `games_owner_title_platform_idx`, not
+        // only the steamAppid index.
+        {
+          kind: 'new_game',
+          gameId: null,
+          title: 'Half-Life: Opposing Force',
+          payload: { steamAppid: 999, hoursTenths: 73, platform: 'steam' },
+        },
+        // Genuinely new — must still be created, proving the stale
+        // collision above did not poison the rest of this transaction.
+        {
+          kind: 'new_game',
+          gameId: null,
+          title: 'Portal 2',
+          payload: { steamAppid: 620, hoursTenths: 80, platform: 'steam' },
+        },
+      ],
+      0,
+    );
+
+    const result = await sync.commitSyncRun(owner, runId);
+    expect(result).toEqual({ applied: 0, created: 1, skipped: 1 });
+
+    const all = await games.listGames(owner);
+    // Still exactly one "Half-Life: Opposing Force" row — the stale insert
+    // never landed, and the pre-existing row was never touched or duplicated.
+    expect(all.filter((game) => game.title === 'Half-Life: Opposing Force')).toHaveLength(1);
+    expect(all.find((game) => game.title === 'Half-Life: Opposing Force')?.steamAppid).toBe(50);
+    // The genuinely new game landed despite the collision ahead of it.
+    expect(all.find((game) => game.title === 'Portal 2')).toMatchObject({ steamAppid: 620, hoursTenths: 80 });
+
+    const runAfter = await sync.getSyncRun(owner, runId);
+    expect(runAfter?.status).toBe('committed');
+  });
+
+  it('skips a PSN new_game whose title+platform already exists (the Ghost of Tsushima scenario, across runs)', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    await makeGame(owner, 'Ghost of Tsushima', { platform: 'ps4', psnTitleId: 'CUSA11456_00', hoursTenths: 1070 });
+
+    const runId = await makeReadyRun(owner, 0);
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        {
+          kind: 'new_game',
+          gameId: null,
+          title: 'Ghost of Tsushima',
+          payload: { psnTitleId: 'CUSA18331_00', hoursTenths: 9, platform: 'ps4' },
+        },
+      ],
+      0,
+    );
+
+    const result = await sync.commitSyncRun(owner, runId);
+    expect(result).toEqual({ applied: 0, created: 0, skipped: 1 });
+
+    const all = await games.listGames(owner);
+    expect(all.filter((game) => game.title === 'Ghost of Tsushima')).toHaveLength(1);
+    expect(all.find((game) => game.title === 'Ghost of Tsushima')?.psnTitleId).toBe('CUSA11456_00');
+  });
+
+  it('propagates a non-unique-violation database error from a new_game insert rather than treating it as a skip', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const runId = await makeReadyRun(owner, 0);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      // A well-typed payload (real numbers, passes commitSyncRun's own
+      // validation) that still fails AT THE DATABASE: `hours_tenths` is a
+      // plain `integer` column and this value is far outside int4 range, so
+      // Postgres itself raises "value out of range for type integer" —
+      // SQLSTATE 22003, not 23505. Proves `insertNewGameTolerant` only
+      // swallows a genuine unique violation and lets everything else
+      // through to abort the commit.
+      [
+        {
+          kind: 'new_game',
+          gameId: null,
+          title: 'Broken Game',
+          payload: { steamAppid: 12345, hoursTenths: 99_999_999_999, platform: 'steam' },
+        },
+      ],
+      0,
+    );
+
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
+
+    const all = await games.listGames(owner);
+    expect(all.find((game) => game.title === 'Broken Game')).toBeUndefined();
+    const runAfter = await sync.getSyncRun(owner, runId);
+    expect(runAfter?.status).not.toBe('committed');
   });
 });

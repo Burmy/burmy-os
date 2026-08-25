@@ -35,9 +35,71 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { normalizeGameTitle } from './metadata';
 import type { PsnPlayedTitle, PsnTrophyTitle } from './psn';
 import type { PlannedChange, SyncChangeKind } from './sync-plan';
 import type { GamePlatform } from './taxonomy';
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BUG 3a — PSN LEGITIMATELY RETURNS THE SAME REAL GAME MORE THAN ONCE
+ *
+ * Verified live: "Ghost of Tsushima" appeared THREE times for the owner —
+ * `CUSA11456_00` (107h), `CUSA18331_00` (53min), `CUSA18376_00` (2min), all
+ * `ps4_game` — edition/regional variants under the same PSN account. Left
+ * undeduped, a title with no existing library row stages a SEPARATE
+ * `new_game` change per variant (`planNewPsnGameChange` below has no way to
+ * know they're "the same" — it only ever sees one title at a time), and the
+ * `games_owner_title_platform_idx` unique index — `(owner_id, lower(title),
+ * platform)` — means the first insert at commit succeeds and the second
+ * throws. That is the exact `500` the owner hit: `insert into "games"`,
+ * params naming "Ghost of Tsushima, ps4".
+ *
+ * `dedupePlayedTitles` runs ONCE, at staging time (`startPsnSyncAction`,
+ * before the run's snapshot is stored), so every later consumer — the
+ * per-chunk matching loop and the end-of-run `new_game` sweep alike — only
+ * ever sees one entry per real game. This is a DIFFERENT problem from the
+ * one `src/server/db/games/sync.ts`'s `commitSyncRun` also had to guard
+ * against (Bug 3b): a stale RUN whose `new_game` proposal collides with a
+ * row a *different*, later-committed run already created. This function
+ * only collapses duplicates WITHIN one run's own snapshot.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/**
+ * Collapses played titles that share a normalized name AND platform down to
+ * ONE entry — the one with the most playtime (`hoursTenths`), on the theory
+ * that the variant with real hours on it is the one the owner actually
+ * means, not a launch-window demo click or a regional re-list. See the
+ * module-level comment above for the live evidence.
+ *
+ * Keyed by `(platform, normalizeGameTitle(name))`, not `titleId` — the
+ * title ID is exactly what makes each variant look distinct in the first
+ * place. `platform` (nullable) is part of the key because the unique index
+ * this guards against is itself scoped by platform: two titles with the
+ * same name but a genuinely different platform are never the same library
+ * row, so they must never collapse into one. Reuses `normalizeGameTitle`
+ * (`metadata.ts`) rather than a bespoke lowercase+trim, since that is
+ * already this codebase's one normalization for "is this the same game
+ * title" comparisons.
+ *
+ * Map iteration order preserves each surviving key's FIRST-SEEN position —
+ * a cosmetic property (this module and its callers never depend on played-
+ * title order), not a documented contract.
+ */
+export function dedupePlayedTitles(titles: readonly PsnPlayedTitle[]): PsnPlayedTitle[] {
+  const bestByKey = new Map<string, PsnPlayedTitle>();
+
+  for (const title of titles) {
+    const key = `${title.platform ?? ''} ${normalizeGameTitle(title.name)}`;
+    const existing = bestByKey.get(key);
+    if (existing === undefined || title.hoursTenths > existing.hoursTenths) {
+      bestByKey.set(key, title);
+    }
+  }
+
+  return [...bestByKey.values()];
+}
 
 /** The narrow projection of a library row this module needs. */
 export interface StoredGameForPsnSync {

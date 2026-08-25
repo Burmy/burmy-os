@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
-import { type StoredGameForPsnSync, planLinkedPsnGameChanges, planNewPsnGameChange } from '@/server/games/psn-plan';
+import {
+  dedupePlayedTitles,
+  planLinkedPsnGameChanges,
+  planNewPsnGameChange,
+  type StoredGameForPsnSync,
+} from '@/server/games/psn-plan';
 
 function stored(overrides: Partial<StoredGameForPsnSync> = {}): StoredGameForPsnSync {
   return {
@@ -265,5 +270,56 @@ describe('planNewPsnGameChange', () => {
   it('records zero hours for a never-played owned title rather than omitting them', () => {
     const change = planNewPsnGameChange(playedTitle({ hoursTenths: 0 }), null);
     expect(change.payload).toMatchObject({ hoursTenths: 0 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BUG 3a — three real Ghost of Tsushima variants, verified live on the
+// owner's account: CUSA11456_00 (107h), CUSA18331_00 (53min), CUSA18376_00
+// (2min), all `ps4_game`. Undeduped, staging would propose three separate
+// `new_game` changes for the same real game, and the second insert at
+// commit would violate `games_owner_title_platform_idx` — the exact 500
+// the owner hit.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('dedupePlayedTitles', () => {
+  const ghostA = playedTitle({ titleId: 'CUSA11456_00', name: 'Ghost of Tsushima', platform: 'ps4', hoursTenths: 1070 });
+  const ghostB = playedTitle({ titleId: 'CUSA18331_00', name: 'Ghost of Tsushima', platform: 'ps4', hoursTenths: 9 });
+  const ghostC = playedTitle({ titleId: 'CUSA18376_00', name: 'Ghost of Tsushima', platform: 'ps4', hoursTenths: 0 });
+
+  it('collapses three same-name, same-platform variants down to the one with the most playtime', () => {
+    const result = dedupePlayedTitles([ghostB, ghostC, ghostA]);
+    expect(result).toEqual([ghostA]);
+  });
+
+  it('is order-independent — the highest-hours variant always wins regardless of input order', () => {
+    expect(dedupePlayedTitles([ghostA, ghostB, ghostC])).toEqual([ghostA]);
+    expect(dedupePlayedTitles([ghostC, ghostB, ghostA])).toEqual([ghostA]);
+  });
+
+  it('does not collapse the same name on two different platforms', () => {
+    const ps4Version = playedTitle({ titleId: 'CUSA00001_00', name: 'Cyberpunk 2077', platform: 'ps4', hoursTenths: 100 });
+    const ps5Version = playedTitle({ titleId: 'PPSA00001_00', name: 'Cyberpunk 2077', platform: 'ps5', hoursTenths: 50 });
+
+    const result = dedupePlayedTitles([ps4Version, ps5Version]);
+    expect(result).toHaveLength(2);
+    expect(result).toEqual(expect.arrayContaining([ps4Version, ps5Version]));
+  });
+
+  it('normalizes name casing and whitespace before comparing, via normalizeGameTitle', () => {
+    const a = playedTitle({ titleId: 'CUSA00001_00', name: 'GHOST OF TSUSHIMA', platform: 'ps4', hoursTenths: 200 });
+    const b = playedTitle({ titleId: 'CUSA00002_00', name: 'ghost   of  tsushima', platform: 'ps4', hoursTenths: 5 });
+
+    expect(dedupePlayedTitles([a, b])).toEqual([a]);
+  });
+
+  it('leaves distinctly-named titles untouched', () => {
+    const a = playedTitle({ titleId: 'CUSA00001_00', name: 'Bloodborne', platform: 'ps4' });
+    const b = playedTitle({ titleId: 'CUSA00002_00', name: 'Control', platform: 'ps4' });
+
+    expect(dedupePlayedTitles([a, b])).toHaveLength(2);
+  });
+
+  it('returns [] for an empty list', () => {
+    expect(dedupePlayedTitles([])).toEqual([]);
   });
 });

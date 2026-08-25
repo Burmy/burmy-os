@@ -321,30 +321,47 @@ export async function setSyncChangeSelectedAction(changeId: string, selected: bo
 }
 
 /**
+ * `commitSyncRunAction`'s result. Deliberately its OWN type rather than the
+ * shared `ActionResult` — a successful commit has something worth telling
+ * the owner beyond a bare `ok: true`: `skipped` is how many staged
+ * `new_game` changes turned out to already exist (a different run beat this
+ * one to creating them — see `commitSyncRun`'s own doc comment, "A STALE
+ * `new_game` MUST BE SKIPPED, NOT THROWN") and were silently applied for
+ * fewer games than the owner approved without this. The review screen
+ * surfaces it so that never reads as "did everything I clicked."
+ */
+export type CommitSyncRunResult =
+  | { readonly ok: true; readonly applied: number; readonly created: number; readonly skipped: number }
+  | { readonly ok: false; readonly error: string };
+
+/**
  * Applies every selected change in a run to `games` and marks the run
  * committed. `commitSyncRun`'s own expected failure modes — the run does not
  * exist (or belongs to someone else), the run was already committed, or the
  * run is not `ready` yet (still `running`, or `failed`/`cancelled`) — come
- * back as a field-free `ActionResult` message, not a crash: all three are
+ * back as a field-free failure message, not a crash: all three are
  * expected outcomes of a button the owner can double-click or a stale tab
  * can resubmit from, not a fault in the running code. Anything else (a
  * disallowed field name reaching the whitelist check, a database fault)
- * still throws — see `action-result.ts`'s own doc comment on that split.
+ * still throws — see `action-result.ts`'s own doc comment on that split,
+ * which this action follows even though it returns `CommitSyncRunResult`,
+ * not `ActionResult` itself.
  */
-export async function commitSyncRunAction(runId: string): Promise<ActionResult> {
+export async function commitSyncRunAction(runId: string): Promise<CommitSyncRunResult> {
   const owner = await requireOwner();
 
+  let result: { readonly applied: number; readonly created: number; readonly skipped: number };
   try {
-    await commitSyncRun(owner.userId, runId);
+    result = await commitSyncRun(owner.userId, runId);
   } catch (error) {
-    if (error instanceof SyncRunNotFoundError) return fail(error.message);
-    if (error instanceof SyncRunAlreadyCommittedError) return fail(error.message);
-    if (error instanceof SyncRunNotReadyError) return fail(error.message);
+    if (error instanceof SyncRunNotFoundError) return { ok: false, error: error.message };
+    if (error instanceof SyncRunAlreadyCommittedError) return { ok: false, error: error.message };
+    if (error instanceof SyncRunNotReadyError) return { ok: false, error: error.message };
     throw error;
   }
 
   // 'layout' covers both Games tab routes in one call — see the matching
   // comment in `src/features/games/game-actions.ts`.
   revalidatePath('/games', 'layout');
-  return ok();
+  return { ok: true, applied: result.applied, created: result.created, skipped: result.skipped };
 }

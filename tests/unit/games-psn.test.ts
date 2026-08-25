@@ -137,9 +137,84 @@ describe('toPlayedTitles', () => {
     expect(title?.firstPlayedYear).toBeNull();
   });
 
-  it('maps an unrecognised category to a null platform rather than throwing', () => {
-    const [title] = toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'pspc_game' }] });
+  it('maps an unrecognised category to a null platform when the title ID prefix is also unrecognised', () => {
+    const [title] = toPlayedTitles({
+      titles: [{ ...WELL_FORMED_TITLE, category: 'pspc_game', titleId: 'XXXX00001_00' }],
+    });
     expect(title?.platform).toBeNull();
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BUG 2 — the title-ID prefix fallback. `categoryToPlatform('unknown')` is
+  // null, but the owner's real `unknown`-category titles are real PS4/PS5
+  // games (verified live: Cyberpunk 2077 is `PPSA03974_00` on PS5 under
+  // `ps5_native_game`, and `CUSA16596_00` on PS4 under `unknown`).
+  // ─────────────────────────────────────────────────────────────────────────
+  it('falls back to ps4 via the CUSA title-ID prefix when categoryToPlatform yields nothing', () => {
+    const [title] = toPlayedTitles({
+      titles: [{ ...WELL_FORMED_TITLE, category: 'unknown', titleId: 'CUSA16596_00', name: 'Cyberpunk 2077' }],
+    });
+    expect(title?.platform).toBe('ps4');
+  });
+
+  it('falls back to ps5 via the PPSA title-ID prefix when categoryToPlatform yields nothing', () => {
+    const [title] = toPlayedTitles({
+      titles: [{ ...WELL_FORMED_TITLE, category: 'unknown', titleId: 'PPSA03974_00', name: 'Cyberpunk 2077' }],
+    });
+    expect(title?.platform).toBe('ps5');
+  });
+
+  it('stays null when neither categoryToPlatform nor the title-ID prefix resolves anything', () => {
+    const [title] = toPlayedTitles({
+      titles: [{ ...WELL_FORMED_TITLE, category: 'unknown', titleId: 'NPXX00001_00' }],
+    });
+    expect(title?.platform).toBeNull();
+  });
+
+  it('never falls back to psp via the title-ID prefix', () => {
+    const [title] = toPlayedTitles({
+      titles: [{ ...WELL_FORMED_TITLE, category: 'unknown', titleId: 'UCUS90001' }],
+    });
+    expect(title?.platform).not.toBe('psp');
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // BUG 1 — media apps and unresolvable titles are not games. All six
+  // category values verified live on the owner's real account: ps4_game (36),
+  // ps5_native_game (28), unknown (13, real games), ps4_videoservice_web_app
+  // (7, apps — Netflix/YouTube/Prime Video/Spotify), ps4_nongame_mini_app
+  // (2, apps), not_found (1, unresolvable). See `isGameCategory` in psn.ts.
+  // ─────────────────────────────────────────────────────────────────────────
+  it('includes a ps4_game title', () => {
+    expect(toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'ps4_game' }] })).toHaveLength(1);
+  });
+
+  it('includes a ps5_native_game title', () => {
+    expect(toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'ps5_native_game' }] })).toHaveLength(1);
+  });
+
+  it('includes an unknown-category title as a real game, not an app', () => {
+    expect(toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'unknown' }] })).toHaveLength(1);
+  });
+
+  it('excludes a ps4_videoservice_web_app title (e.g. Netflix, YouTube)', () => {
+    expect(
+      toPlayedTitles({
+        titles: [{ ...WELL_FORMED_TITLE, category: 'ps4_videoservice_web_app', name: 'Netflix', playDuration: 'PT357H' }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('excludes a ps4_nongame_mini_app title', () => {
+    expect(toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'ps4_nongame_mini_app' }] })).toEqual([]);
+  });
+
+  it('excludes a not_found title', () => {
+    expect(toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'not_found' }] })).toEqual([]);
+  });
+
+  it('excludes a future, as-yet-unseen app category via the "app" pattern, not a fixed deny-list', () => {
+    expect(toPlayedTitles({ titles: [{ ...WELL_FORMED_TITLE, category: 'ps5_videoservice_web_app' }] })).toEqual([]);
   });
 });
 

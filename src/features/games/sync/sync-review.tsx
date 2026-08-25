@@ -90,6 +90,16 @@ export function SyncReview({
       toast.error(outcome.error);
       return;
     }
+    // `skipped` counts a staged `new_game` change that turned out to already
+    // exist — a different run created it since this one was staged (see
+    // `commitSyncRun`'s doc comment). Surfaced so the owner sees "3 already
+    // existed" instead of silently getting fewer new games than approved.
+    if (outcome.skipped > 0) {
+      toast.success(
+        `Applied ${outcome.applied + outcome.created} change${outcome.applied + outcome.created === 1 ? '' : 's'} — ` +
+          `${outcome.skipped} new game${outcome.skipped === 1 ? '' : 's'} already existed and ${outcome.skipped === 1 ? 'was' : 'were'} skipped.`,
+      );
+    }
     router.push('/games/library');
   }
 

@@ -14,7 +14,7 @@ import { getDb } from '@/server/db';
 import { games as gamesTable, gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
 import type { PlannedChange, SyncChangeKind } from '@/server/games/sync-plan';
 import { GAME_PLATFORMS, type GamePlatform } from '@/server/games/taxonomy';
-import { SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from './errors';
+import { isUniqueViolation, SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from './errors';
 
 export type SyncRunStatus = 'running' | 'ready' | 'committed' | 'failed' | 'cancelled';
 
@@ -487,12 +487,60 @@ const COMMIT_ORDER: Record<SyncChangeKind, number> = { link: 0, field_update: 1,
  * `gameId` is trusted data staged by this owner's own run, but the filter
  * costs nothing and this module never assumes a foreign key alone is
  * sufficient scoping.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A STAGED RUN IS A SNAPSHOT — THE LIBRARY CAN MOVE UNDERNEATH IT, AND A
+ * STALE `new_game` MUST BE SKIPPED, NOT THROWN
+ *
+ * A run's `new_game` changes were staged against the library as it stood
+ * when the run started. Between then and commit, a DIFFERENT run (any
+ * source) can commit and create the very same game — verified on the
+ * owner's real data: a staged run's `new_game` entries for "Half-Life:
+ * Opposing Force," "Metro Exodus Enhanced Edition" and "Forza Horizon 6"
+ * were since created by a committed Steam run. Naively inserting would hit
+ * `games_owner_title_platform_idx` (or, for a Steam/PSN identity that was
+ * independently linked, `games_owner_steam_appid_idx` /
+ * `games_owner_psn_title_id_idx`) and throw a raw unique-violation — the
+ * exact `500` the owner saw for a DIFFERENT stale-duplicate scenario
+ * (`insert into "games"`, params naming "Ghost of Tsushima, ps4"; see
+ * `psn-plan.ts`'s `dedupePlayedTitles` for that one — a duplicate WITHIN
+ * one run's own snapshot, not a collision with another run entirely).
+ *
+ * Each `new_game` insert therefore runs inside its own SAVEPOINT
+ * (`tx.transaction(...)`, which Drizzle's postgres-js driver implements as
+ * a real `SAVEPOINT`/`ROLLBACK TO SAVEPOINT` pair — verified by reading
+ * `node_modules/drizzle-orm/postgres-js/session.js`). A plain try/catch
+ * around the bare `INSERT` would NOT be sufficient: Postgres poisons the
+ * enclosing transaction the instant any statement inside it errors, so
+ * every later statement in this same `db.transaction()` — every remaining
+ * `link`/`field_update`/`new_game`, and the final `status: 'committed'`
+ * update — would itself fail with "current transaction is aborted," even
+ * though the catch block swallowed the original error. `ON CONFLICT DO
+ * NOTHING` was considered and rejected: expressing it correctly means
+ * targeting THREE different unique indexes (one plain, two partial) with
+ * different WHERE clauses, and Postgres only allows one conflict target per
+ * `INSERT` — a pre-existence `SELECT` was also considered and rejected,
+ * since replicating "would this insert's column values collide" requires
+ * re-deriving the exact same three-index logic in application code, twice.
+ * A SAVEPOINT lets Postgres itself decide "does this collide," on the
+ * REAL constraints, and isolates the failure to just this one insert:
+ * `ROLLBACK TO SAVEPOINT` undoes only the failed insert's own effects,
+ * leaving every earlier statement in the outer transaction intact and the
+ * outer transaction itself perfectly usable for what comes next.
+ *
+ * `isUniqueViolation()` (not `error.code === '23505'`) is what tells a
+ * genuine "this game already exists" apart from every other reason an
+ * insert could fail (a NOT NULL violation from a genuinely malformed
+ * payload, say) — see that function's own doc comment on why Drizzle wraps
+ * the real SQLSTATE on `error.cause`. Only a unique violation is treated as
+ * a skip; anything else still propagates and aborts the whole commit, per
+ * "WHY ONE TRANSACTION" above.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function commitSyncRun(
   ownerId: string,
   runId: string,
-): Promise<{ readonly applied: number; readonly created: number }> {
+): Promise<{ readonly applied: number; readonly created: number; readonly skipped: number }> {
   const db = getDb();
 
   return db.transaction(async (tx) => {
@@ -532,6 +580,29 @@ export async function commitSyncRun(
 
     let applied = 0;
     let created = 0;
+    let skipped = 0;
+
+    /**
+     * Inserts one `new_game` row inside its own SAVEPOINT, tolerating a
+     * unique violation as "this game already exists — a different run beat
+     * this one to it" rather than letting it poison the whole commit. See
+     * "A STALE `new_game` MUST BE SKIPPED, NOT THROWN" above for why a
+     * SAVEPOINT — not a plain try/catch, not `ON CONFLICT`, not a
+     * pre-check `SELECT` — is the right tool, and why only a genuine unique
+     * violation (`isUniqueViolation`, never `error.code === '23505'`) is
+     * swallowed here; anything else still aborts the whole commit.
+     */
+    async function insertNewGameTolerant(values: typeof gamesTable.$inferInsert): Promise<void> {
+      try {
+        await tx.transaction(async (savepointTx) => {
+          await savepointTx.insert(gamesTable).values(values);
+        });
+        created += 1;
+      } catch (error) {
+        if (!isUniqueViolation(error)) throw error;
+        skipped += 1;
+      }
+    }
 
     for (const change of ordered) {
       const kind = change.kind as SyncChangeKind;
@@ -584,7 +655,7 @@ export async function commitSyncRun(
           if (typeof hoursTenths !== 'number') {
             throw new Error('new_game change payload is missing a numeric hoursTenths');
           }
-          await tx.insert(gamesTable).values({
+          await insertNewGameTolerant({
             ownerId,
             title: change.title,
             platform: 'steam',
@@ -595,7 +666,6 @@ export async function commitSyncRun(
             // yet. New rows never land in 'playing' — sync cannot know that.
             status: hoursTenths > 0 ? 'completed' : 'backlog',
           });
-          created += 1;
           continue;
         }
 
@@ -613,7 +683,7 @@ export async function commitSyncRun(
           const achievementsTotal = payload.achievementsTotal;
           const platinum = payload.platinum;
 
-          await tx.insert(gamesTable).values({
+          await insertNewGameTolerant({
             ownerId,
             title: change.title,
             psnTitleId,
@@ -627,7 +697,6 @@ export async function commitSyncRun(
             ...(typeof achievementsTotal === 'number' ? { achievementsTotal } : {}),
             ...(typeof platinum === 'boolean' ? { platinum } : {}),
           });
-          created += 1;
           continue;
         }
 
@@ -640,6 +709,6 @@ export async function commitSyncRun(
       .set({ status: 'committed', updatedAt: new Date() })
       .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)));
 
-    return { applied, created };
+    return { applied, created, skipped };
   });
 }

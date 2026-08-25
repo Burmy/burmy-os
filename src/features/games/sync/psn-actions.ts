@@ -66,7 +66,12 @@ import {
 } from '@/server/db/games/sync';
 import { bestTitleMatchAmong } from '@/server/games/metadata';
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
-import { planLinkedPsnGameChanges, planNewPsnGameChange, type StoredGameForPsnSync } from '@/server/games/psn-plan';
+import {
+  dedupePlayedTitles,
+  planLinkedPsnGameChanges,
+  planNewPsnGameChange,
+  type StoredGameForPsnSync,
+} from '@/server/games/psn-plan';
 import { psnTokenAge, type PsnTokenAge } from '@/server/games/psn-token-age';
 import type { PlannedChange } from '@/server/games/sync-plan';
 import type { GamePlatform } from '@/server/games/taxonomy';
@@ -259,19 +264,30 @@ function psnStartFailure(reason: 'not_configured' | 'token_expired' | 'unavailab
  * here, after both fetches have already succeeded — recording "this token
  * actually worked," never merely "this token was configured." See
  * `psn-client.ts`'s doc comment on the fingerprint itself.
+ *
+ * `dedupePlayedTitles` (`psn-plan.ts`) runs exactly ONCE here, before the
+ * snapshot is ever persisted — see that function's own doc comment for why
+ * PSN legitimately returns the same real game more than once (Ghost of
+ * Tsushima, three times, on the owner's real account) and why undeduped
+ * data staged a `new_game` change per variant that then collided at commit.
+ * Every later reader of this run's snapshot (the per-chunk matching loop,
+ * the end-of-run new-game sweep) sees only the deduped list — there is
+ * nothing left for them to dedupe themselves.
  */
 export async function startPsnSyncAction(): Promise<PsnSyncStartResult> {
   const owner = await requireOwner();
 
-  const playedTitles = await fetchPlayedTitles();
-  if (playedTitles === 'not_configured' || playedTitles === 'token_expired' || playedTitles === 'unavailable') {
-    return psnStartFailure(playedTitles);
+  const rawPlayedTitles = await fetchPlayedTitles();
+  if (rawPlayedTitles === 'not_configured' || rawPlayedTitles === 'token_expired' || rawPlayedTitles === 'unavailable') {
+    return psnStartFailure(rawPlayedTitles);
   }
 
   const trophyTitles = await fetchTrophyTitles();
   if (trophyTitles === 'not_configured' || trophyTitles === 'token_expired' || trophyTitles === 'unavailable') {
     return psnStartFailure(trophyTitles);
   }
+
+  const playedTitles = dedupePlayedTitles(rawPlayedTitles);
 
   const total = await countPsnGames(owner.userId);
   const snapshot: PsnSnapshot = { playedTitles, trophyTitles };
