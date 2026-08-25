@@ -1052,6 +1052,23 @@ export const gameSyncRuns = pgTable(
      */
     steamLibrary: jsonb('steam_library'),
     errorMessage: text('error_message'),
+    /**
+     * A SHA-256 fingerprint of the `PSN_NPSSO` value that made THIS run
+     * possible — hex, truncated to 16 chars, computed by
+     * `currentPsnTokenFingerprint()` in `src/server/db/games/psn-client.ts`.
+     * One-way: this is a hash, not the token, so it never lets anyone
+     * recover the secret from the database, and it never leaves the
+     * database — no Server Action returns it to the client. It exists
+     * purely so the app can tell "the owner is still using the same PSN
+     * token" apart from "a new one was just pasted," without storing the
+     * token itself or a raw "issued at" date: pasting a new token changes
+     * its fingerprint, which is what lets "in use since" naturally restart
+     * from the token that is actually active now. Set only on a
+     * SUCCESSFULLY created `source: 'psn'` run — never for Steam, and never
+     * merely because `PSN_NPSSO` was configured. `null` for every run that
+     * predates this column, and for every Steam run.
+     */
+    psnTokenFingerprint: text('psn_token_fingerprint'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

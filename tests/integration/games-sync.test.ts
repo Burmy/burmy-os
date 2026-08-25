@@ -202,3 +202,145 @@ describe('sync run data access', () => {
     expect(await sync.listSyncChanges(owner, run.id)).toEqual([]);
   });
 });
+
+/** Backdates a run's `created_at`/`updated_at` directly — the data-access layer never exposes writing these. */
+async function backdateRun(runId: string, at: Date): Promise<void> {
+  const { sql } = await harness();
+  await sql`update game_sync_runs set created_at = ${at.toISOString()}, updated_at = ${at.toISOString()} where id = ${runId}`;
+}
+
+describe('getLastSuccessfulSyncTimes', () => {
+  it('is absent for a source with no successful run at all', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const run = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.finishSyncRun(owner, run.id, 'failed', 'boom');
+
+    const times = await sync.getLastSuccessfulSyncTimes(owner);
+
+    expect(times.has('steam')).toBe(false);
+  });
+
+  it('ignores running and failed runs even when they are more recent than a successful one', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+
+    const ready = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.finishSyncRun(owner, ready.id, 'ready');
+    const readyAt = new Date('2026-01-01T00:00:00.000Z');
+    await backdateRun(ready.id, readyAt);
+
+    const failed = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.finishSyncRun(owner, failed.id, 'failed', 'boom');
+    await backdateRun(failed.id, new Date('2026-08-01T00:00:00.000Z')); // later, but not successful
+
+    const running = await sync.createSyncRun(owner, 'steam', 1, []); // still running, never finished
+    await backdateRun(running.id, new Date('2026-08-20T00:00:00.000Z'));
+
+    const times = await sync.getLastSuccessfulSyncTimes(owner);
+
+    expect(times.get('steam')?.toISOString()).toBe(readyAt.toISOString());
+  });
+
+  it('returns the MOST RECENT successful run per source, tracking steam and psn independently', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+
+    const olderSteam = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.finishSyncRun(owner, olderSteam.id, 'ready');
+    await backdateRun(olderSteam.id, new Date('2026-01-01T00:00:00.000Z'));
+
+    const newerSteam = await sync.createSyncRun(owner, 'steam', 1, []);
+    await sync.finishSyncRun(owner, newerSteam.id, 'committed');
+    const newerSteamAt = new Date('2026-08-10T00:00:00.000Z');
+    await backdateRun(newerSteam.id, newerSteamAt);
+
+    const psnRun = await sync.createSyncRun(owner, 'psn', 1, {});
+    await sync.finishSyncRun(owner, psnRun.id, 'ready');
+    const psnAt = new Date('2026-08-15T00:00:00.000Z');
+    await backdateRun(psnRun.id, psnAt);
+
+    const times = await sync.getLastSuccessfulSyncTimes(owner);
+
+    expect(times.get('steam')?.toISOString()).toBe(newerSteamAt.toISOString());
+    expect(times.get('psn')?.toISOString()).toBe(psnAt.toISOString());
+  });
+
+  it('never returns another owner run', async () => {
+    const mine = await makeOwner('mine@example.invalid');
+    const theirs = await makeOwner('theirs@example.invalid');
+
+    const theirRun = await sync.createSyncRun(theirs, 'steam', 1, []);
+    await sync.finishSyncRun(theirs, theirRun.id, 'ready');
+
+    const times = await sync.getLastSuccessfulSyncTimes(mine);
+
+    expect(times.has('steam')).toBe(false);
+  });
+});
+
+describe('getPsnTokenInUseSince', () => {
+  it('returns null when the given fingerprint has never completed a successful sync', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+
+    expect(await sync.getPsnTokenInUseSince(owner, 'fingerprint-a')).toBeNull();
+  });
+
+  it('ignores a run whose fingerprint is null — a null fingerprint never matches any real one', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    // No fingerprint passed — mirrors every row that predates the column.
+    const run = await sync.createSyncRun(owner, 'psn', 1, {});
+    await sync.finishSyncRun(owner, run.id, 'ready');
+
+    expect(await sync.getPsnTokenInUseSince(owner, 'fingerprint-a')).toBeNull();
+  });
+
+  it('ignores runs still running or failed, even with a matching fingerprint', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const run = await sync.createSyncRun(owner, 'psn', 1, {}, 'fingerprint-a');
+    await sync.finishSyncRun(owner, run.id, 'failed', 'boom');
+
+    expect(await sync.getPsnTokenInUseSince(owner, 'fingerprint-a')).toBeNull();
+  });
+
+  it('returns the EARLIEST successful run for a matching fingerprint, not the latest', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+
+    const earliest = await sync.createSyncRun(owner, 'psn', 1, {}, 'fingerprint-a');
+    await sync.finishSyncRun(owner, earliest.id, 'ready');
+    const earliestAt = new Date('2026-06-01T00:00:00.000Z');
+    await backdateRun(earliest.id, earliestAt);
+
+    const later = await sync.createSyncRun(owner, 'psn', 1, {}, 'fingerprint-a');
+    await sync.finishSyncRun(owner, later.id, 'committed');
+    await backdateRun(later.id, new Date('2026-08-01T00:00:00.000Z'));
+
+    const inUseSince = await sync.getPsnTokenInUseSince(owner, 'fingerprint-a');
+
+    expect(inUseSince?.toISOString()).toBe(earliestAt.toISOString());
+  });
+
+  it('restarts the clock when the fingerprint changes — an old fingerprint\'s history never counts toward a new one', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+
+    const oldToken = await sync.createSyncRun(owner, 'psn', 1, {}, 'fingerprint-old');
+    await sync.finishSyncRun(owner, oldToken.id, 'ready');
+    await backdateRun(oldToken.id, new Date('2026-01-01T00:00:00.000Z'));
+
+    const newToken = await sync.createSyncRun(owner, 'psn', 1, {}, 'fingerprint-new');
+    await sync.finishSyncRun(owner, newToken.id, 'ready');
+    const newTokenAt = new Date('2026-08-20T00:00:00.000Z');
+    await backdateRun(newToken.id, newTokenAt);
+
+    const inUseSince = await sync.getPsnTokenInUseSince(owner, 'fingerprint-new');
+
+    expect(inUseSince?.toISOString()).toBe(newTokenAt.toISOString());
+  });
+
+  it('never returns another owner run', async () => {
+    const mine = await makeOwner('mine@example.invalid');
+    const theirs = await makeOwner('theirs@example.invalid');
+
+    const theirRun = await sync.createSyncRun(theirs, 'psn', 1, {}, 'fingerprint-a');
+    await sync.finishSyncRun(theirs, theirRun.id, 'ready');
+
+    expect(await sync.getPsnTokenInUseSince(mine, 'fingerprint-a')).toBeNull();
+  });
+});

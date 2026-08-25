@@ -36,6 +36,7 @@ import {
   commitSyncRun,
   createSyncRun,
   finishSyncRun,
+  getLastSuccessfulSyncTimes,
   getSyncRun,
   getSyncRunLibrary,
   listSyncChanges,
@@ -150,6 +151,25 @@ function steamCredentialsConfigured(): boolean {
 export async function isSteamConfiguredAction(): Promise<boolean> {
   await requireOwner();
   return steamCredentialsConfigured();
+}
+
+/** The most recent successful sync time for each source, or `null` for a source that has never successfully synced. */
+export interface LastSyncedTimes {
+  readonly steam: Date | null;
+  readonly psn: Date | null;
+}
+
+/**
+ * Feeds the small "Synced …" line under both Sync buttons. Shared here
+ * (rather than split across `sync-actions.ts`/`psn-actions.ts`) because
+ * `getLastSuccessfulSyncTimes` itself is source-agnostic — one query,
+ * grouped by `source` — and the Library page wants both sources' timestamps
+ * from one round trip rather than two nearly-identical action calls.
+ */
+export async function getLastSyncedTimesAction(): Promise<LastSyncedTimes> {
+  const owner = await requireOwner();
+  const times = await getLastSuccessfulSyncTimes(owner.userId);
+  return { steam: times.get('steam') ?? null, psn: times.get('psn') ?? null };
 }
 
 /**

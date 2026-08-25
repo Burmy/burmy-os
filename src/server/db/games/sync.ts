@@ -8,7 +8,7 @@
  * the selected ones is a later task's job.
  */
 
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable, gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
@@ -67,16 +67,31 @@ function rowToSyncChange(row: typeof gameSyncChanges.$inferSelect): SyncChange {
  * migration for what is genuinely the same "one third-party fetch per run,
  * held for every chunk to match against" role Steam already gave it.
  */
+/**
+ * `psnTokenFingerprint` is meaningful only for `source: 'psn'` — see the
+ * column's own doc comment in `schema.ts`. Deliberately OPTIONAL and left
+ * out of the insert entirely when omitted (rather than defaulting to
+ * `undefined`/`null` explicitly), matching the `exactOptionalPropertyTypes`
+ * convention `appendSyncChanges`' own `nextLastGameId` param already uses
+ * in this file. Every Steam call site simply never passes it.
+ */
 export async function createSyncRun(
   ownerId: string,
   source: 'steam' | 'psn',
   total: number,
   librarySnapshot: unknown,
+  psnTokenFingerprint?: string,
 ): Promise<SyncRun> {
   const db = getDb();
   const rows = await db
     .insert(gameSyncRuns)
-    .values({ ownerId, source, total, steamLibrary: librarySnapshot })
+    .values({
+      ownerId,
+      source,
+      total,
+      steamLibrary: librarySnapshot,
+      ...(psnTokenFingerprint !== undefined ? { psnTokenFingerprint } : {}),
+    })
     .returning();
 
   const row = rows[0];
@@ -207,6 +222,70 @@ export async function finishSyncRun(
       ...(errorMessage !== undefined ? { errorMessage } : {}),
     })
     .where(and(eq(gameSyncRuns.id, runId), eq(gameSyncRuns.ownerId, ownerId)));
+}
+
+/** The two run statuses that mean "this run actually reached the API and finished successfully." */
+const SUCCESSFUL_SYNC_STATUSES = ['ready', 'committed'] as const;
+
+/**
+ * The most recent time each source successfully finished syncing for this
+ * owner — `'ready'` or `'committed'` runs only. `'running'`, `'failed'` and
+ * `'cancelled'` runs never reached the API successfully and are excluded, so
+ * a sync that is mid-flight or that just failed can never make a stale
+ * success look more recent than it was.
+ *
+ * A source with no successful run at all is simply ABSENT from the returned
+ * map — never present with a `null` or placeholder value — so the UI can
+ * render nothing for it rather than a permanent "never synced" line (see
+ * `getLastSyncedTimesAction` in `src/features/games/sync/sync-actions.ts`).
+ */
+export async function getLastSuccessfulSyncTimes(ownerId: string): Promise<ReadonlyMap<'steam' | 'psn', Date>> {
+  const db = getDb();
+  const rows = await db
+    .select({ source: gameSyncRuns.source, lastAt: sql<string>`max(${gameSyncRuns.updatedAt})` })
+    .from(gameSyncRuns)
+    .where(and(eq(gameSyncRuns.ownerId, ownerId), inArray(gameSyncRuns.status, SUCCESSFUL_SYNC_STATUSES)))
+    .groupBy(gameSyncRuns.source);
+
+  const result = new Map<'steam' | 'psn', Date>();
+  for (const row of rows) {
+    if (row.lastAt !== null) result.set(row.source, new Date(row.lastAt));
+  }
+  return result;
+}
+
+/**
+ * The earliest successful (`'ready'` or `'committed'`) PSN run whose stored
+ * `psnTokenFingerprint` matches `fingerprint` — i.e. how long the token
+ * that produced `fingerprint` has actually been working, for this owner.
+ *
+ * Pasting a fresh `PSN_NPSSO` changes its fingerprint, so calling this with
+ * the NEW fingerprint naturally "restarts the clock": no run staged under
+ * the previous token can ever match the new fingerprint string, by
+ * construction. A `null` stored `psnTokenFingerprint` — every run that
+ * predates the column, and every Steam run — can likewise never equal a
+ * real fingerprint under SQL equality (`NULL = 'x'` is never true), so
+ * those rows are silently excluded rather than miscounted as evidence for
+ * the current token. Returns `null` when the token behind `fingerprint` has
+ * never completed a successful sync yet — genuinely unknown, not "just
+ * issued."
+ */
+export async function getPsnTokenInUseSince(ownerId: string, fingerprint: string): Promise<Date | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ earliest: sql<string>`min(${gameSyncRuns.createdAt})` })
+    .from(gameSyncRuns)
+    .where(
+      and(
+        eq(gameSyncRuns.ownerId, ownerId),
+        eq(gameSyncRuns.source, 'psn'),
+        inArray(gameSyncRuns.status, SUCCESSFUL_SYNC_STATUSES),
+        eq(gameSyncRuns.psnTokenFingerprint, fingerprint),
+      ),
+    );
+
+  const value = rows[0]?.earliest;
+  return value ? new Date(value) : null;
 }
 
 export async function listSyncChanges(ownerId: string, runId: string): Promise<SyncChange[]> {

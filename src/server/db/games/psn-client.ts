@@ -80,6 +80,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { createHash } from 'node:crypto';
+
 import {
   exchangeAccessCodeForAuthTokens,
   exchangeNpssoForAccessCode,
@@ -101,6 +103,25 @@ export type PsnFailure = 'not_configured' | 'token_expired' | 'unavailable';
 export function psnConfigured(): boolean {
   const npsso = process.env.PSN_NPSSO;
   return npsso !== undefined && npsso !== '';
+}
+
+/**
+ * A SHA-256 fingerprint of the currently configured `PSN_NPSSO`, hex,
+ * truncated to 16 characters — never the token itself, and one-way: there
+ * is no way to recover the token from this value. Stored on
+ * `game_sync_runs.psn_token_fingerprint` (see that column's own doc comment
+ * in `schema.ts`) purely so the app can tell "the owner is still using the
+ * same PSN token" apart from "a new one was just pasted" without ever
+ * persisting or exposing the secret itself. The hash never leaves the
+ * database and no Server Action returns it to the client — it exists only
+ * to be compared against itself, in SQL, in `getPsnTokenInUseSince`
+ * (`src/server/db/games/sync.ts`). `null` when `PSN_NPSSO` is unset,
+ * mirroring `psnConfigured()`'s own check.
+ */
+export function currentPsnTokenFingerprint(): string | null {
+  const npsso = process.env.PSN_NPSSO;
+  if (npsso === undefined || npsso === '') return null;
+  return createHash('sha256').update(npsso).digest('hex').slice(0, 16);
 }
 
 interface CachedAuth {

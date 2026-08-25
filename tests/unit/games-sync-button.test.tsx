@@ -100,4 +100,16 @@ describe('SyncButton', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Steam did not respond. Try again in a moment.'));
     expect(advanceSteamSyncAction).not.toHaveBeenCalled();
   });
+
+  it('shows a "Synced …" line when a last-successful-sync time is provided', () => {
+    render(<SyncButton configured={true} lastSyncedAt={new Date(Date.now() - 60_000)} />);
+
+    expect(screen.getByText(/synced 1 minute ago/i)).toBeInTheDocument();
+  });
+
+  it('renders no synced line at all when the source has never synced', () => {
+    render(<SyncButton configured={true} lastSyncedAt={null} />);
+
+    expect(screen.queryByText(/synced/i)).not.toBeInTheDocument();
+  });
 });

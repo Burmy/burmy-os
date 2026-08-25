@@ -31,8 +31,19 @@ vi.mock('next/cache', () => ({
 const fetchPlayedTitles = vi.fn(async (): Promise<unknown> => []);
 const fetchTrophyTitles = vi.fn(async (): Promise<unknown> => []);
 const psnConfigured = vi.fn(() => true);
+// This suite is not about token-fingerprint behaviour — see
+// `tests/integration/games-sync.test.ts`'s `getPsnTokenInUseSince` describe
+// block for that — so a fixed, non-null stub is enough to let
+// `startPsnSyncAction` (which now calls this on every successful start)
+// proceed without every existing test here having to know about it.
+const currentPsnTokenFingerprint = vi.fn(() => 'fixed-test-fingerprint');
 
-vi.mock('@/server/db/games/psn-client', () => ({ fetchPlayedTitles, fetchTrophyTitles, psnConfigured }));
+vi.mock('@/server/db/games/psn-client', () => ({
+  fetchPlayedTitles,
+  fetchTrophyTitles,
+  psnConfigured,
+  currentPsnTokenFingerprint,
+}));
 
 type PsnActions = typeof import('@/features/games/sync/psn-actions');
 type Games = typeof import('@/server/db/games/games');

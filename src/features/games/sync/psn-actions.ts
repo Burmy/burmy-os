@@ -54,11 +54,12 @@
 import { requireOwner } from '@/server/auth/owner';
 import { countPsnGames, listPsnGamesChunk, listPsnGamesForMatching } from '@/server/db/games/games';
 import { sumPlayYearsForGames } from '@/server/db/games/play-years';
-import { fetchPlayedTitles, fetchTrophyTitles, psnConfigured } from '@/server/db/games/psn-client';
+import { currentPsnTokenFingerprint, fetchPlayedTitles, fetchTrophyTitles, psnConfigured } from '@/server/db/games/psn-client';
 import {
   appendSyncChanges,
   createSyncRun,
   finishSyncRun,
+  getPsnTokenInUseSince,
   getSyncRun,
   getSyncRunLibrary,
   listSyncChanges,
@@ -66,9 +67,9 @@ import {
 import { bestTitleMatchAmong } from '@/server/games/metadata';
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
 import { planLinkedPsnGameChanges, planNewPsnGameChange, type StoredGameForPsnSync } from '@/server/games/psn-plan';
+import { psnTokenAge, type PsnTokenAge } from '@/server/games/psn-token-age';
 import type { PlannedChange } from '@/server/games/sync-plan';
 import type { GamePlatform } from '@/server/games/taxonomy';
-import { type ActionResult, fail } from '../action-result';
 
 /**
  * Library games processed per `advancePsnSyncAction` call. Identical to
@@ -221,6 +222,29 @@ export async function isPsnConfiguredAction(): Promise<boolean> {
 }
 
 /**
+ * `startPsnSyncAction`'s result. Failure carries both a ready-to-display
+ * `error` message AND the structured `reason` it came from — the message is
+ * for the toast (`psn-sync-button.tsx`'s existing "never collapsed into one
+ * generic blob" path), and `reason` is what lets the button additionally
+ * switch to a PERSISTENT notice for `'token_expired'` (see that component's
+ * own doc comment): a toast alone cannot carry the clickable Sony retrieval
+ * link this reason needs, since it disappears after a few seconds.
+ */
+export type PsnSyncStartResult =
+  | { readonly ok: true; readonly runId: string }
+  | { readonly ok: false; readonly error: string; readonly reason: 'not_configured' | 'token_expired' | 'unavailable' };
+
+function psnStartFailure(reason: 'not_configured' | 'token_expired' | 'unavailable'): PsnSyncStartResult {
+  const error =
+    reason === 'not_configured'
+      ? 'PlayStation is not configured — set PSN_NPSSO to sync.'
+      : reason === 'token_expired'
+        ? PSN_TOKEN_EXPIRED_MESSAGE
+        : 'PlayStation did not respond. Try again in a moment.';
+  return { ok: false, error, reason };
+}
+
+/**
  * Starts a run: fetches the owner's full PSN played-titles and trophy-titles
  * lists ONCE, snapshots them together, and creates a `game_sync_runs` row
  * (`source: 'psn'`) covering every PlayStation-platform library game.
@@ -230,37 +254,49 @@ export async function isPsnConfiguredAction(): Promise<boolean> {
  * distinct, actionable message for each — collapsing them into one generic
  * "sync failed" would erase exactly the distinction the owner needs ("paste
  * a new NPSSO" is not the same instruction as "try again later").
+ *
+ * `currentPsnTokenFingerprint()` is read and stored on the new run ONLY
+ * here, after both fetches have already succeeded — recording "this token
+ * actually worked," never merely "this token was configured." See
+ * `psn-client.ts`'s doc comment on the fingerprint itself.
  */
-export async function startPsnSyncAction(): Promise<ActionResult & { readonly runId?: string }> {
+export async function startPsnSyncAction(): Promise<PsnSyncStartResult> {
   const owner = await requireOwner();
 
   const playedTitles = await fetchPlayedTitles();
-  if (playedTitles === 'not_configured') {
-    return fail('PlayStation is not configured — set PSN_NPSSO to sync.');
-  }
-  if (playedTitles === 'token_expired') {
-    return fail(PSN_TOKEN_EXPIRED_MESSAGE);
-  }
-  if (playedTitles === 'unavailable') {
-    return fail('PlayStation did not respond. Try again in a moment.');
+  if (playedTitles === 'not_configured' || playedTitles === 'token_expired' || playedTitles === 'unavailable') {
+    return psnStartFailure(playedTitles);
   }
 
   const trophyTitles = await fetchTrophyTitles();
-  if (trophyTitles === 'not_configured') {
-    return fail('PlayStation is not configured — set PSN_NPSSO to sync.');
-  }
-  if (trophyTitles === 'token_expired') {
-    return fail(PSN_TOKEN_EXPIRED_MESSAGE);
-  }
-  if (trophyTitles === 'unavailable') {
-    return fail('PlayStation did not respond. Try again in a moment.');
+  if (trophyTitles === 'not_configured' || trophyTitles === 'token_expired' || trophyTitles === 'unavailable') {
+    return psnStartFailure(trophyTitles);
   }
 
   const total = await countPsnGames(owner.userId);
   const snapshot: PsnSnapshot = { playedTitles, trophyTitles };
-  const run = await createSyncRun(owner.userId, 'psn', total, snapshot);
+  const fingerprint = currentPsnTokenFingerprint();
+  const run = await createSyncRun(owner.userId, 'psn', total, snapshot, fingerprint ?? undefined);
 
   return { ok: true, runId: run.id };
+}
+
+/**
+ * PSN token age for the Library screen's status line — see
+ * `psnTokenAge`'s own doc comment in `src/server/games/psn-token-age.ts`
+ * for the classification itself. `'unknown'` immediately, with no query at
+ * all, when `PSN_NPSSO` is unset; otherwise looked up via
+ * `getPsnTokenInUseSince`, which naturally returns `null` (also
+ * `'unknown'`) for a token that has never yet completed a successful sync.
+ */
+export async function getPsnTokenAgeAction(): Promise<PsnTokenAge> {
+  const owner = await requireOwner();
+
+  const fingerprint = currentPsnTokenFingerprint();
+  if (fingerprint === null) return { status: 'unknown', ageDays: null };
+
+  const inUseSince = await getPsnTokenInUseSince(owner.userId, fingerprint);
+  return psnTokenAge(inUseSince);
 }
 
 /**
@@ -362,6 +398,8 @@ export async function advancePsnSyncAction(runId: string): Promise<PsnSyncProgre
 // reuses those two Server Actions completely unchanged; adding PSN-named
 // duplicates here would be a second copy of logic with nothing PSN-specific
 // in it, exactly the kind of speculative abstraction CLAUDE.md asks this
-// codebase to avoid. Only staging (`startPsnSyncAction`/
-// `advancePsnSyncAction` above) is genuinely PSN-specific.
+// codebase to avoid. Staging (`startPsnSyncAction`/`advancePsnSyncAction`
+// above) and token-fingerprint tracking (`getPsnTokenAgeAction`, also
+// above) are genuinely PSN-specific — Steam has no NPSSO-style expiring
+// credential, so there is nothing for `sync-actions.ts` to share here.
 // ─────────────────────────────────────────────────────────────────────────────

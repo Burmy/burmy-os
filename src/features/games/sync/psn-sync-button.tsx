@@ -6,12 +6,67 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
+import type { PsnTokenAge } from '@/server/games/psn-token-age';
 import { advancePsnSyncAction, startPsnSyncAction } from './psn-actions';
+import { formatRelativeTime } from './relative-time';
+
+/**
+ * Sony's NPSSO retrieval endpoint. Only ever useful while already logged in
+ * to PlayStation IN THIS BROWSER (it reads that session's cookie) — every
+ * caller below pairs the link with that one-line caveat rather than leaving
+ * the owner to click through and wonder why it didn't work.
+ */
+const PSN_TOKEN_URL = 'https://ca.account.sony.com/api/v1/ssocookie';
 
 type SyncState =
   | { readonly phase: 'idle' }
   | { readonly phase: 'starting' }
-  | { readonly phase: 'running'; readonly cursor: number; readonly total: number };
+  | { readonly phase: 'running'; readonly cursor: number; readonly total: number }
+  | { readonly phase: 'token_expired' };
+
+/** Opens in a new tab so the owner never loses this page mid-retrieval. */
+function SonyTokenLink(): React.ReactElement {
+  return (
+    <a href={PSN_TOKEN_URL} target="_blank" rel="noreferrer" className="underline">
+      ca.account.sony.com
+    </a>
+  );
+}
+
+/**
+ * The small status line under an enabled, non-expired button — "Synced …"
+ * and the token-age note, joined into ONE quiet line rather than two (see
+ * `PsnSyncButton`'s own doc comment on keeping this chrome minimal).
+ *
+ * `lastSyncedAt` is omitted (never printed as "never synced") when PSN has
+ * no successful run at all — same honesty rule `SyncButton` follows for
+ * Steam. The token-age half always renders SOMETHING, including "token age
+ * unknown" when the current token has never itself completed a successful
+ * sync: `psnTokenAge`'s own doc comment explains why that is stated
+ * plainly rather than left blank — a blank field would read as "fresh,"
+ * which is not a known fact.
+ */
+function PsnStatusLine({
+  lastSyncedAt,
+  tokenAge,
+}: {
+  readonly lastSyncedAt: Date | null;
+  readonly tokenAge: PsnTokenAge;
+}): React.ReactElement {
+  const tokenText =
+    tokenAge.status === 'unknown'
+      ? 'token age unknown'
+      : tokenAge.status === 'warning'
+        ? `token ${tokenAge.ageDays}d old — may expire soon`
+        : `token ${tokenAge.ageDays}d old`;
+
+  return (
+    <p className={tokenAge.status === 'warning' ? 'text-xs text-amber-600 dark:text-amber-500' : 'text-muted-foreground text-xs'}>
+      {lastSyncedAt ? `Synced ${formatRelativeTime(lastSyncedAt)} · ` : ''}
+      {tokenText}
+    </p>
+  );
+}
 
 /**
  * "Sync with PlayStation" — a SEPARATE entry point from `SyncButton`
@@ -29,15 +84,29 @@ type SyncState =
  *
  * `configured` only reflects whether `PSN_NPSSO` is SET, not whether it
  * still works — there is no way to check that without actually calling
- * Sony. A configured-but-expired token surfaces at click time as a
- * `startPsnSyncAction` failure, not as a disabled button: `psn-client.ts`'s
- * three-way `'not_configured' | 'token_expired' | 'unavailable'` contract
- * comes back as three differently-worded messages (see `psn-actions.ts`),
- * shown through the same `toast.error` path `SyncButton` already uses for
- * Steam's failures — never collapsed into one generic "sync failed" blob,
- * and never thrown.
+ * Sony. A configured-but-expired token is discovered only at click time, as
+ * a `startPsnSyncAction` failure: `psn-client.ts`'s three-way
+ * `'not_configured' | 'token_expired' | 'unavailable'` contract comes back
+ * as three differently-worded messages (see `psn-actions.ts`), always shown
+ * through the same `toast.error` path `SyncButton` uses for Steam's
+ * failures — never collapsed into one generic "sync failed" blob, and never
+ * thrown. `'token_expired'` ADDITIONALLY switches this button into a
+ * persistent `token_expired` phase (below) rather than staying in `idle`:
+ * the toast alone cannot carry a real, clickable link to Sony's retrieval
+ * page (it is plain text and dismisses itself after a few seconds), and
+ * this is the one failure the owner needs a durable pointer to act on.
  */
-export function PsnSyncButton({ configured }: { readonly configured: boolean }): React.ReactElement {
+export function PsnSyncButton({
+  configured,
+  lastSyncedAt = null,
+  tokenAge = { status: 'unknown', ageDays: null },
+}: {
+  readonly configured: boolean;
+  /** The most recent time a PSN sync run reached `ready`/`committed`, or `null` if PSN has never successfully synced. */
+  readonly lastSyncedAt?: Date | null;
+  /** How long the CURRENT `PSN_NPSSO` has been in use, from `getPsnTokenAgeAction` — see `psn-token-age.ts`. */
+  readonly tokenAge?: PsnTokenAge;
+}): React.ReactElement {
   const router = useRouter();
   const [state, setState] = useState<SyncState>({ phase: 'idle' });
 
@@ -47,7 +116,7 @@ export function PsnSyncButton({ configured }: { readonly configured: boolean }):
     const start = await startPsnSyncAction();
     if (!start.ok) {
       toast.error(start.error);
-      setState({ phase: 'idle' });
+      setState(start.reason === 'token_expired' ? { phase: 'token_expired' } : { phase: 'idle' });
       return;
     }
 
@@ -78,20 +147,28 @@ export function PsnSyncButton({ configured }: { readonly configured: boolean }):
       // The explanation stays VISIBLE, not tooltip-only. A silently disabled
       // button leaves the owner with no idea why PlayStation sync does
       // nothing, and a `title` is hover-only — invisible on touch entirely.
-      // It is kept to one short line so it stops dominating the header, with
-      // the full sentence available on hover.
       <div className="flex flex-col items-end gap-1">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled
-          title="Set PSN_NPSSO to enable PlayStation sync."
-        >
+        <Button size="sm" variant="outline" disabled title="Set PSN_NPSSO to enable PlayStation sync.">
           <RefreshCw className="size-4" aria-hidden />
           Sync with PlayStation
         </Button>
         <p className="text-muted-foreground text-xs">
-          Needs <code className="font-mono">PSN_NPSSO</code>
+          Needs <code className="font-mono">PSN_NPSSO</code> — get one from <SonyTokenLink /> while logged in to
+          PlayStation in this browser
+        </p>
+      </div>
+    );
+  }
+
+  if (state.phase === 'token_expired') {
+    return (
+      <div className="flex flex-col items-end gap-1">
+        <Button size="sm" variant="outline" disabled title="Your PSN_NPSSO token expired — paste a new one.">
+          <RefreshCw className="size-4" aria-hidden />
+          Sync with PlayStation
+        </Button>
+        <p className="text-muted-foreground text-xs">
+          Token expired — get a new one from <SonyTokenLink /> while logged in to PlayStation in this browser
         </p>
       </div>
     );
@@ -100,13 +177,16 @@ export function PsnSyncButton({ configured }: { readonly configured: boolean }):
   const busy = state.phase !== 'idle';
 
   return (
-    <Button size="sm" variant="outline" onClick={run} disabled={busy}>
-      {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
-      {state.phase === 'running'
-        ? `${state.cursor} of ${state.total} games checked`
-        : state.phase === 'starting'
-          ? 'Starting…'
-          : 'Sync with PlayStation'}
-    </Button>
+    <div className="flex flex-col items-end gap-1">
+      <Button size="sm" variant="outline" onClick={run} disabled={busy}>
+        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
+        {state.phase === 'running'
+          ? `${state.cursor} of ${state.total} games checked`
+          : state.phase === 'starting'
+            ? 'Starting…'
+            : 'Sync with PlayStation'}
+      </Button>
+      <PsnStatusLine lastSyncedAt={lastSyncedAt} tokenAge={tokenAge} />
+    </div>
   );
 }
