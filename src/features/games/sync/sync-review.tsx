@@ -9,6 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/components/ui/toast';
 import type { SyncChange, SyncRun } from '@/server/db/games/sync';
 import { formatHours, hours } from '@/server/games/hours';
+import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import type { GamePlatform } from '@/server/games/taxonomy';
 import { commitSyncRunAction, setSyncChangeSelectedAction } from './sync-actions';
 
 /**
@@ -23,8 +25,12 @@ import { commitSyncRunAction, setSyncChangeSelectedAction } from './sync-actions
 const NEW_GAME_VOLUME_WARNING_THRESHOLD = 100;
 
 /**
- * The Steam sync review screen — the owner's last word before anything a
- * sync run proposed reaches `games`.
+ * The sync review screen — the owner's last word before anything a sync run
+ * proposed reaches `games`. Shared verbatim between Steam and PSN runs
+ * (`run.source`): both engines produce the exact same `PlannedChange` shape
+ * (`sync-plan.ts` / `psn-plan.ts`), so this is one screen, not two — only
+ * the handful of source-specific words below (`sourceLabel`, the Links
+ * column, a field's display value) branch on `run.source` at all.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * SELECTION IS THE SAME OPTIMISTIC-PATCH-THEN-REVERT IDIOM AS FINANCE'S
@@ -87,12 +93,14 @@ export function SyncReview({
     router.push('/games/library');
   }
 
+  const sourceLabel = run.source === 'psn' ? 'PlayStation' : 'Steam';
+
   if (changes.length === 0) {
     return (
       <div className="mt-8 max-w-md space-y-3 rounded-md border p-4 text-sm">
         <p className="font-medium">Nothing to review.</p>
         <p className="text-muted-foreground">
-          This sync run found no changes — your library already matches Steam.
+          This sync run found no changes — your library already matches {sourceLabel}.
         </p>
         <Button size="sm" onClick={() => router.push('/games/library')}>
           Back to library
@@ -169,7 +177,7 @@ export function SyncReview({
       ) : null}
 
       {fieldUpdates.length > 0 ? (
-        <ChangeGroup title="Field updates" description="Steam's numbers differ from what's stored.">
+        <ChangeGroup title="Field updates" description={`${sourceLabel}'s numbers differ from what's stored.`}>
           <Table>
             <TableHeader>
               <TableRow>
@@ -199,13 +207,16 @@ export function SyncReview({
       ) : null}
 
       {links.length > 0 ? (
-        <ChangeGroup title="Links" description="Matched to a Steam app for the first time.">
+        <ChangeGroup
+          title="Links"
+          description={`Matched to a ${run.source === 'psn' ? 'PlayStation title' : 'Steam app'} for the first time.`}
+        >
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">Select</TableHead>
                 <TableHead>Title</TableHead>
-                <TableHead>Steam app</TableHead>
+                <TableHead>{run.source === 'psn' ? 'PlayStation IDs' : 'Steam app'}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -215,9 +226,7 @@ export function SyncReview({
                   <TableRow key={change.id}>
                     <SelectCell change={change} disabled={pending} onChange={setSelected} />
                     <TableCell className="font-medium">{change.title}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {payload.steamAppid === null ? '—' : `#${payload.steamAppid}`}
-                    </TableCell>
+                    <TableCell className="text-muted-foreground">{formatLinkPayload(payload)}</TableCell>
                   </TableRow>
                 );
               })}
@@ -296,27 +305,55 @@ const FIELD_LABELS: Record<string, string> = {
   achievementsUnlocked: 'Achievements unlocked',
   achievementsTotal: 'Achievements total',
   steamAppid: 'Steam app',
+  // PSN-only fields — see `planLinkedPsnGameChanges` in `psn-plan.ts`.
+  firstPlayedYear: 'First played',
+  platform: 'Platform',
+  lastPlayedAt: 'Last played',
+  platinum: 'Platinum',
 };
 
 function asNumber(value: unknown): number | null {
   return typeof value === 'number' ? value : null;
 }
 
-function formatFieldValue(field: string, value: number | null): string {
+/**
+ * A `field_update`'s `from`/`to` value, narrowed to the three primitive
+ * shapes a staged change ever actually carries: `hoursTenths`/achievement
+ * counts/`firstPlayedYear` are numbers, `platform`/`lastPlayedAt` are
+ * strings, and `platinum` (PSN-only — see `psn-plan.ts`) is a boolean.
+ * Anything else collapses to `null`, matching this section's "malformed
+ * payload degrades to a placeholder" rule.
+ */
+type FieldValue = number | string | boolean | null;
+
+function asFieldValue(value: unknown): FieldValue {
+  if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return value;
+  return null;
+}
+
+function formatFieldValue(field: string, value: FieldValue): string {
   if (value === null) return '—';
-  if (field === 'hoursTenths') return formatHours(hours(value));
+  if (field === 'hoursTenths' && typeof value === 'number') return formatHours(hours(value));
+  if (field === 'platform' && typeof value === 'string') {
+    return value in PLATFORM_LABELS ? PLATFORM_LABELS[value as GamePlatform] : value;
+  }
+  if (field === 'lastPlayedAt' && typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  }
+  if (field === 'platinum' && typeof value === 'boolean') return value ? 'Yes' : 'No';
   return String(value);
 }
 
 function parseFieldUpdatePayload(payload: Record<string, unknown>): {
   readonly field: string;
-  readonly from: number | null;
-  readonly to: number | null;
+  readonly from: FieldValue;
+  readonly to: FieldValue;
 } {
   return {
     field: typeof payload.field === 'string' ? payload.field : 'field',
-    from: asNumber(payload.from),
-    to: asNumber(payload.to),
+    from: asFieldValue(payload.from),
+    to: asFieldValue(payload.to),
   };
 }
 
@@ -324,8 +361,32 @@ function parseNewGamePayload(payload: Record<string, unknown>): { readonly hours
   return { hoursTenths: asNumber(payload.hoursTenths) };
 }
 
-function parseLinkPayload(payload: Record<string, unknown>): { readonly steamAppid: number | null } {
-  return { steamAppid: asNumber(payload.steamAppid) };
+function parseLinkPayload(payload: Record<string, unknown>): {
+  readonly steamAppid: number | null;
+  readonly psnTitleId: string | null;
+  readonly psnNpCommunicationId: string | null;
+} {
+  return {
+    steamAppid: asNumber(payload.steamAppid),
+    psnTitleId: typeof payload.psnTitleId === 'string' ? payload.psnTitleId : null,
+    psnNpCommunicationId: typeof payload.psnNpCommunicationId === 'string' ? payload.psnNpCommunicationId : null,
+  };
+}
+
+/**
+ * A `link` change's identity value(s), formatted for display. A Steam link
+ * carries exactly one field (`steamAppid`); a PSN link can carry either or
+ * both `psnTitleId`/`psnNpCommunicationId` in the SAME change — see
+ * `planLinkedPsnGameChanges`'s doc comment in `psn-plan.ts` on why the
+ * played-title id and the trophy-title id can resolve in the same change —
+ * so both are shown when present rather than picking one.
+ */
+function formatLinkPayload(payload: ReturnType<typeof parseLinkPayload>): string {
+  if (payload.steamAppid !== null) return `#${payload.steamAppid}`;
+  const parts: string[] = [];
+  if (payload.psnTitleId !== null) parts.push(`Title ${payload.psnTitleId}`);
+  if (payload.psnNpCommunicationId !== null) parts.push(`Trophy ${payload.psnNpCommunicationId}`);
+  return parts.length > 0 ? parts.join(' · ') : '—';
 }
 
 function reconcileDescription(payload: Record<string, unknown>): string {

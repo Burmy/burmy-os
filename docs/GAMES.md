@@ -124,20 +124,30 @@ cross-referenced with an actual purchase transaction. See "Out of scope" below.
 no per-achievement child table anywhere in the schema — the source spreadsheet's "Trophies" column was
 always a single number, never a list, and the module doesn't invent structure the data never had.
 
-### Platinum is the owner's own claim, never derived
+### Platinum is the owner's own claim by hand — except where PSN sync owns it
 
 `platinum` is a plain `boolean`, edited via a checkbox in the add/edit dialog — not computed from
 `achievementsUnlocked === achievementsTotal`. Two reasons: the source spreadsheet only ever recorded
 trophies *earned*, never the total, so a platinum could not be derived for any of the 160 imported
 games even retroactively; and on Steam, 100% achievement completion is not a platinum at all — the
-concept is PlayStation-specific and has no Steam equivalent to derive it from.
+concept is PlayStation-specific and has no Steam equivalent to derive it from. This is why the Steam
+sync (in-app and CLI alike) never touches this column — see "Steam owns hours and achievements for a
+linked game" below.
+
+**The in-app PSN sync reverses that rule for a PSN-linked game.** Sony's own trophy list is the actual
+system of record for whether a platinum was earned — not the owner's memory — so `psn-plan.ts` is the
+one and only place in the sync feature that proposes a `platinum` change, gated on a confident trophy-
+title match. See "PlayStation sync" below for the full reasoning; nothing here makes the two sync
+engines symmetric, and they are correct to disagree.
 
 The Server Action path (`createGameAction`/`updateGameAction` in `game-actions.ts`) treats this field
 differently from every other optional field `parse()` handles: an HTML checkbox submits **no** key in
 `FormData` at all when unchecked, so `platinum` is written unconditionally on every submit, in both
 create and update, rather than following the create-omits/update-clears-to-null pattern the rest of
 `parse()` uses. Gating it behind that pattern would mean a platinum, once set, could never be turned
-back off from the editor.
+back off from the editor. This is the hand-editing path only — a PSN sync run writes `platinum`
+through the staged `field_update`/commit path described in "PlayStation sync" below, not through this
+form submit at all.
 
 ---
 
@@ -221,10 +231,10 @@ where `games.id` values differ, and a title-keyed write inside a migration is fr
 ### Neither Steam nor PSN can ever supply this
 
 Steam's `GetOwnedGames` returns only `playtime_forever` and `playtime_2weeks` — no per-year
-breakdown exists in the API at all. PSN's `getUserPlayedGames` (research only; never built — see
-"Steam library sync" below) returns a single cumulative `playDuration`, same limitation. Per-year
-attribution is permanently a hand-entered fact, not something a future sync could ever fill in
-automatically the way it fills in the total.
+breakdown exists in the API at all. PSN's `getUserPlayedGames` (built — see "PlayStation sync" below)
+returns a single cumulative `playDuration` per title, same limitation. Per-year attribution is
+permanently a hand-entered fact, not something a sync could ever fill in automatically the way it
+fills in the total.
 
 ---
 
@@ -416,9 +426,13 @@ no `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` present.**
 games automatically, via the official Steam Web API, replacing hand entry for those columns going
 forward. See `.superpowers/sdd/2026-08-20-game-tracker/psn-integration-research.md` for the evaluation
 that led here: Steam's API is official, documented, and has a credential that never expires, where the
-PSN equivalent would mean either scraping PSNProfiles (a scraper of a scraper, actively resisted by
-Cloudflare) or driving Sony's own undocumented API through a ~60-day manual re-authentication chore —
-PSN stayed a research note, not code.
+only PSN options known at the time were scraping PSNProfiles (a scraper of a scraper, actively
+resisted by Cloudflare) or driving Sony's own undocumented API by hand through a ~60-day manual
+re-authentication chore — PSN stayed a research note here, not code, and this script has no PSN
+counterpart. **That changed once `psn-api` (`achievements-app/psn-api`) turned up** — an actively
+maintained MIT library calling PlayStation's own official endpoints rather than scraping — which is
+what the separate in-app PSN sync below is actually built on; see "PlayStation sync" below for that
+integration in full. This script itself was never extended to PSN and stays Steam-only.
 
 ### A stable external id, matched once
 
@@ -442,16 +456,18 @@ estimate), gated behind the script's separate, explicit `--overwrite-hours` flag
 `achievements_unlocked`/`achievements_total` have no overwrite path — a differing achievement count is
 reported and left alone, full stop.
 
-**`platinum` is never touched by this script**, deliberately — see "Platinum is the owner's own claim,
-never derived" above. A Steam game at 100% achievements is not a PlayStation platinum trophy; the two
-concepts don't map onto each other, and the script's own header comment says so explicitly so nobody
-wires this up by mistake later.
+**`platinum` is never touched by this script**, deliberately — see "Platinum is the owner's own claim
+by hand — except where PSN sync owns it" above. A Steam game at 100% achievements is not a PlayStation
+platinum trophy; the two concepts don't map onto each other, and the script's own header comment says
+so explicitly so nobody wires this up by mistake later. (The in-app PSN sync below is the one place
+`platinum` IS written automatically — a different engine, on purpose; this script still never touches
+it.)
 
-**The 40 PSP games get nothing from this, ever, and are out of scope by construction** — they are not
-`platform = 'steam'` rows, and trophies/achievements postdate the PSP entirely (trophies launched with
-PS3 in 2008; PSP has no client-side trophy support). The PSN side of the original research (28 PS5 + 45
-PS4 games) was evaluated and set aside as a recurring ~60-day manual chore not worth the product surface
-for a single-user tool — see the research doc for the full reasoning. It was never built.
+**The 40 PSP games get nothing from this script, ever, and are out of scope by construction** — they
+are not `platform = 'steam'` rows, and trophies/achievements postdate the PSP entirely (trophies
+launched with PS3 in 2008; PSP has no client-side trophy support). The in-app PSN sync below walks PSP
+rows too, but PSN can supply no data for them either, for the same historical reason — see "PSP is
+permanently manual" under "PlayStation sync."
 
 A Steam-owned game with no matching library row is listed in the script's report (title, appid, hours)
 and **never imported** as a new row — the library is curated by the owner, and importing an entire Steam
@@ -618,6 +634,136 @@ where it would have appeared. It is picked up cleanly on the next run (the next 
 keyset walk from the beginning), so nothing is lost permanently; it just doesn't appear until the owner
 syncs again. A game added mid-run whose id sorts AFTER the bookmark is picked up normally, in the same
 run.
+
+---
+
+## PlayStation sync
+
+A second, independent in-app sync engine — `src/features/games/sync/psn-actions.ts` and
+`src/server/games/psn-plan.ts` — reusing the SAME staging, review, and commit machinery as Steam's
+(`game_sync_runs`/`game_sync_changes` with `source: 'psn'`, the same `SyncReview` screen at
+`/games/sync/[runId]`), talking to PlayStation via `psn-api`
+(`achievements-app/psn-api` — see "Steam library sync" above for why this library, and not an earlier-
+rejected scraper, is what made this worth building at all). "Sync with PlayStation" is its own button
+on the Library screen, **deliberately separate from "Sync with Steam"** — the owner's explicit choice,
+so a dead or expired PSN token can never block a working Steam sync. Everything about chunking,
+resumability, the no-delete invariant, and `done` coming from an empty chunk rather than
+`cursor >= total` is identical to the Steam engine described above; this section covers only what is
+actually different.
+
+### What PSN supplies
+
+Two PSN endpoints, fetched once per run and snapshotted together: `getUserPlayedGames` (play data,
+keyed by `titleId`) and `getUserTitles` (trophy data, keyed by `npCommunicationId`). Together they
+fill:
+
+- **Play time** — a cumulative `playDuration` ISO-8601 duration, converted to the same tenths-of-an-
+  hour unit everything else in Games uses (`parsePlayDuration` in `src/server/games/psn.ts` — not
+  `hours.ts`'s minutes-based converter, since PSN's input shape is different; see that function's own
+  doc comment).
+- **First-played year** — from `firstPlayedDateTime`, the same `first_played_year` column Steam sync
+  never touches (Steam's API has no such field at all).
+- **PS4-vs-PS5 platform** — from the played title's `category`, mapped through `categoryToPlatform`.
+  Only `ps4_game` → `ps4` and `ps5_native_game` → `ps5` are confirmed; every other value, `pspc_game`
+  included, maps to `null` (see "An unconfirmed category value" below).
+- **Last-played** — `lastPlayedDateTime`, stored on `games.last_played_at`.
+- **Trophy counts and platinum** — `earned`/`total` (summing `TrophyCounts`' four grades — `bronze`,
+  `silver`, `gold`, and `platinum` as a `0 | 1` flag, never a count, since a title can only ever have
+  one platinum) and a `platinum: boolean` derived from `earnedTrophies.platinum === 1`.
+
+A `null` from any of these — a `category` PSN doesn't report, no `lastPlayedDateTime` on a title
+that's shown as owned but never actually launched — means "PSN did not tell us something usable," not
+"the value is empty," and is never proposed as a change (same discipline `planLinkedGameChanges`
+applies to a `null` Steam field).
+
+### Trophy data is matched by NAME, across two identifier spaces with no join key
+
+`titleId` (`CUSA…`, played-game data) and `npCommunicationId` (`NPWR…`, trophy data) are two entirely
+separate PSN identifier spaces. **There is no field anywhere in either API response that maps one to
+the other** — the only thing they share is the human-readable title name. `psn-actions.ts` resolves
+each independently: `resolvePlayedTitle` looks up a stored `psnTitleId` (or falls back to a fresh title
+match), and `resolveTrophyTitle` does the same for `psnNpCommunicationId` against `bestTitleMatchAmong`
+— the same `SIMILARITY_FLOOR`-gated matcher IGDB and Steam matching both use, never bypassed or
+lowered here. Once a game is linked, its STORED id always wins over a fresh match, for both id spaces
+independently — the same controller invariant `sync-actions.ts`'s `resolveAppid` documents for Steam.
+
+**A title with no confident trophy-name match gets its play data (hours, platform, first/last played)
+and NO trophy data — this is never recorded as "zero trophies earned."** `planLinkedPsnGameChanges`
+gates every trophy-shaped proposal (`achievementsUnlocked`, `achievementsTotal`, `platinum`) on
+`trophyTitle !== null`; a `null` trophy title produces no trophy-field changes at all, not zeros. See
+the matching `CLAUDE.md` gotcha — conflating these two id spaces, or treating an unmatched trophy title
+as "confirmed zero," are both real ways to corrupt this data.
+
+### `platinum` is PSN-owned — the one field the two sync engines actively disagree on
+
+See "Platinum is the owner's own claim by hand — except where PSN sync owns it" in "Data model" above
+for the full reasoning. In short: Steam has no platinum concept, so the Steam sync (in-app and CLI
+alike) never writes this column and the owner's own checkbox is the only source of truth for a
+Steam-linked or manually-entered game. PlayStation's trophy system IS the actual system of record for
+a platinum trophy — Sony knows whether one was earned, the owner's memory doesn't have to — so
+`planLinkedPsnGameChanges` is the one place in the whole sync feature that proposes a `platinum`
+`field_update`, gated on a confident trophy-title match like every other trophy field above. The two
+planners are correct to disagree; this is not an inconsistency to "fix" toward symmetry.
+
+### The NPSSO token — a real chore, roughly every two months, that cannot be automated
+
+`PSN_NPSSO` is retrieved by hand from `https://ca.account.sony.com/api/v1/ssocookie` while logged in
+to PlayStation in a browser, and pasted into the environment. `psn-api` exchanges it for a short-lived
+access/refresh token pair that `psn-client.ts` caches in-process and refreshes automatically — but the
+NPSSO itself still expires roughly every two months regardless, and refreshing the derived tokens does
+nothing to extend it. **This cannot be automated**: it requires an authenticated interactive browser
+session against Sony's own login flow, not an API call this codebase could ever drive headlessly.
+
+`psn-client.ts` reports one of three distinct outcomes — `'not_configured' | 'token_expired' |
+'unavailable'` — never collapsed into one generic failure:
+
+- **Not configured** (`PSN_NPSSO` unset) — the Library screen's "Sync with PlayStation" button renders
+  disabled, with a standing explanation naming `PSN_NPSSO`, exactly like the Steam button's own
+  disabled state.
+- **Token expired** (Sony's OAuth rejects the NPSSO) — surfaced as its own distinct message at click
+  time, naming the ~2-month cadence and the retrieval URL above, because "something went wrong" gives
+  the owner no way to know a fresh token is the actual fix.
+- **Unavailable** (network error, timeout, non-2xx, malformed response) — "PlayStation did not
+  respond, try again."
+
+The full test suite passes with `PSN_NPSSO` unset, the same optional-credential contract IGDB and
+Steam both already hold.
+
+### PSP is permanently manual
+
+PlayStation Portable predates PSN's trophy system entirely (trophies launched with the PS3 in 2008;
+the PSP has no client-side trophy support at all), so PSN can never return play or trophy data for a
+PSP title under any circumstances. The sync engine still WALKS every PSP-platform library row rather
+than filtering them out as an "optimisation" (`PSN_PLATFORMS` in `src/server/db/games/games.ts` covers
+`ps5`/`ps4`/`psp` together, on purpose) — each one resolves no played title, stages nothing, and is
+left byte-identical, proving the no-delete invariant for exactly the games the owner is most protective
+of, rather than leaving it unproven by carving PSP out of the walk entirely. In the owner's real
+library this means **every PSP game stays permanently hand-maintained, indefinitely, across every
+future PSN sync run** — never flagged, never excluded from view, and never silently skipped in a way
+that would make its absence from every run's changes ambiguous with "nothing changed" versus "never
+checked."
+
+### An unconfirmed category value never becomes a guess
+
+PSN's played-title `category` field includes a `pspc_game` value whose meaning was not confirmed
+anywhere in the installed `psn-api` package — no comment, README section, or runtime code says what it
+stands for (see `src/server/games/psn.ts`'s module header for the verification that was actually done,
+not assumed). `categoryToPlatform` maps only the two confirmed values (`ps4_game` → `ps4`,
+`ps5_native_game` → `ps5`); `pspc_game` and every other unrecognized value map to `null` — a signal to
+leave the stored platform alone — and **`pspc_game` must never map to `'psp'`**, which would corrupt
+the platform of the owner's genuinely-PSP games the moment a PS-title-on-PC entry happened to sync.
+
+### The volume reality: PSN returns more than the owner's curated library
+
+A curated ~160-game library synced against a full PSN played-titles list can come back with several
+hundred `new_game` proposals — demos, PS Plus monthly claims, and anything else the account has ever
+launched or claimed, none of which the owner necessarily wants added. This is expected, not a bug:
+`SyncReview`'s `NEW_GAME_VOLUME_WARNING_THRESHOLD` (100, source-agnostic — a large Steam library could
+cross it too) renders the count and a visible warning in the "New games" group header itself, before
+the owner scrolls to a single row, and **nothing is written to `games` without the owner's own
+"Apply N selected changes" click** — every `new_game` change still has to be individually reviewed and
+left checked (or unchecked) like any other staged change; the volume warning does not change what gets
+committed, only how hard it is to miss before approving.
 
 ---
 

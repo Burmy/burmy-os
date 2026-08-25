@@ -340,6 +340,15 @@ These are verified, not folklore. Do not "fix" them back.
   has to stay a single number an API can write while the split stays owner-entered. Do not
   "normalize" this by deriving the total from the rows — a sync would then have nowhere to write,
   and 157 of 160 games have no rows at all. See `docs/GAMES.md`, "Play-year attribution."
+- **`titleId` and `npCommunicationId` are different PSN identifier spaces and must never be
+  conflated.** `titleId` (`CUSA…`) identifies played-game data (`getUserPlayedGames`);
+  `npCommunicationId` (`NPWR…`) identifies trophy data (`getUserTitles`) — there is no field in
+  either PSN response that maps one to the other. `psn-actions.ts` joins them only by NAME, via the
+  same `bestTitleMatchAmong`/`SIMILARITY_FLOOR` matcher IGDB and Steam matching already use, which is
+  exactly why `games` has two separate nullable columns (`psn_title_id`, `psn_np_communication_id`)
+  instead of one: a game can resolve one without the other. A title with no confident trophy-name
+  match gets play data and NO trophy fields proposed at all — never a zero. See `docs/GAMES.md`,
+  "PlayStation sync."
 
 ---
 

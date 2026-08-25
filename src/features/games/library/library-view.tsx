@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { GAME_PLATFORMS, GAME_STATUSES, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
+import { PsnSyncButton } from '../sync/psn-sync-button';
 import { SyncButton } from '../sync/sync-button';
 import { GameDialog } from './game-dialog';
 import { GameGrid } from './game-grid';
@@ -31,6 +32,7 @@ type SourceFilter = 'all' | 'steam' | 'manual';
 export function LibraryView({
   games,
   steamConfigured = false,
+  psnConfigured = false,
 }: {
   readonly games: readonly Game[];
   /**
@@ -41,6 +43,15 @@ export function LibraryView({
    * keep working unchanged.
    */
   readonly steamConfigured?: boolean;
+  /**
+   * Whether `PSN_NPSSO` is set, computed server-side by the Library page
+   * (`isPsnConfiguredAction`) — same reasoning as `steamConfigured` above,
+   * and the same safe `false` default. Kept as its OWN prop rather than
+   * folded into `steamConfigured`: the two Sync buttons are deliberately
+   * independent (see `PsnSyncButton`'s own doc comment), so their configured
+   * states must be independent too.
+   */
+  readonly psnConfigured?: boolean;
 }): React.ReactElement {
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -132,6 +143,7 @@ export function LibraryView({
           </Button>
 
           <SyncButton configured={steamConfigured} />
+          <PsnSyncButton configured={psnConfigured} />
         </div>
       </div>
 

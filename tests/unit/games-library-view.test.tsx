@@ -18,10 +18,11 @@ vi.mock('@/features/games/metadata-actions', () => ({
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-// The header renders `SyncButton` (Task 6) unconditionally now, which calls
-// `useRouter()` even when its own click handler is never exercised — these
-// tests don't render inside a real Next.js app router, so it needs a mock
-// like every other `next/navigation` usage in this suite.
+// The header renders `SyncButton` and `PsnSyncButton` (Tasks 6 and PSN Task 4)
+// unconditionally now, and both call `useRouter()` even when their own click
+// handler is never exercised — these tests don't render inside a real
+// Next.js app router, so it needs a mock like every other `next/navigation`
+// usage in this suite.
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 const { LibraryView } = await import('@/features/games/library/library-view');
@@ -234,5 +235,24 @@ describe('LibraryView', () => {
   it('formats hours as the owner writes them, not as raw tenths', () => {
     render(<LibraryView games={[game({ hoursTenths: 1360 })]} />);
     expect(screen.getByText('136h')).toBeInTheDocument();
+  });
+
+  // Task 4 (PSN integration): a SEPARATE PlayStation sync button sits beside
+  // the Steam one, disabled by default (the safe state) exactly like
+  // `steamConfigured` defaults to `false` above.
+  it('renders a separate, disabled-by-default PlayStation sync button beside the Steam one', () => {
+    render(<LibraryView games={[]} />);
+
+    expect(screen.getByRole('button', { name: /sync with steam/i })).toBeInTheDocument();
+    const psnButton = screen.getByRole('button', { name: /sync with playstation/i });
+    expect(psnButton).toBeInTheDocument();
+    expect(psnButton).toBeDisabled();
+  });
+
+  it('enables the PlayStation sync button independently of the Steam one', () => {
+    render(<LibraryView games={[]} steamConfigured={false} psnConfigured={true} />);
+
+    expect(screen.getByRole('button', { name: /sync with steam/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /sync with playstation/i })).not.toBeDisabled();
   });
 });

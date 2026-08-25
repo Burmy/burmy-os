@@ -69,6 +69,20 @@ import { type ActionResult, fail } from '../action-result';
  */
 const CHUNK_SIZE = 5;
 
+/**
+ * The one message shown for a `'token_expired'` result, from either
+ * `fetchPlayedTitles` or `fetchTrophyTitles` — distinct from both
+ * `'not_configured'` ("set PSN_NPSSO") and `'unavailable'` ("try again"),
+ * per `psn-client.ts`'s three-way failure contract. Names the cadence (the
+ * NPSSO expires roughly every two months and there is no way to detect that
+ * without actually calling Sony — see `psnConfigured()`'s own doc comment)
+ * and the exact retrieval URL, because "something went wrong" here gives
+ * the owner no way to know a fresh token is the fix.
+ */
+const PSN_TOKEN_EXPIRED_MESSAGE =
+  'Your PlayStation token expired (this happens roughly every two months) — get a new one from ' +
+  'https://ca.account.sony.com/api/v1/ssocookie while logged in to PlayStation, then set PSN_NPSSO.';
+
 // The "412 new games" volume warning for a large `new_game` count is a
 // REVIEW-SCREEN concern, not a staging one — its threshold lives in
 // `sync-review.tsx` itself, not here. (A `'use server'` file may only export
@@ -185,7 +199,7 @@ export async function startPsnSyncAction(): Promise<ActionResult & { readonly ru
     return fail('PlayStation is not configured — set PSN_NPSSO to sync.');
   }
   if (playedTitles === 'token_expired') {
-    return fail('Your PlayStation token expired — paste a new PSN_NPSSO to sync.');
+    return fail(PSN_TOKEN_EXPIRED_MESSAGE);
   }
   if (playedTitles === 'unavailable') {
     return fail('PlayStation did not respond. Try again in a moment.');
@@ -196,7 +210,7 @@ export async function startPsnSyncAction(): Promise<ActionResult & { readonly ru
     return fail('PlayStation is not configured — set PSN_NPSSO to sync.');
   }
   if (trophyTitles === 'token_expired') {
-    return fail('Your PlayStation token expired — paste a new PSN_NPSSO to sync.');
+    return fail(PSN_TOKEN_EXPIRED_MESSAGE);
   }
   if (trophyTitles === 'unavailable') {
     return fail('PlayStation did not respond. Try again in a moment.');

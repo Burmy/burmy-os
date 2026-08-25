@@ -196,4 +196,108 @@ describe('SyncReview', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'New games (101)' })).toBeInTheDocument();
     expect(screen.getByText(/101 new games found — review carefully before applying/i)).toBeInTheDocument();
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Task 4: PSN-aware labels. `run.source === 'psn'` changes the same
+  // screen's wording and the Links column, and PSN's field_update payloads
+  // carry string/boolean values the pre-existing number-only formatter
+  // never had to handle.
+  // ───────────────────────────────────────────────────────────────────────
+
+  it('shows a PlayStation title id (not a Steam appid) for a PSN link change', () => {
+    render(
+      <SyncReview
+        run={makeRun({ source: 'psn' })}
+        changes={[
+          makeChange({
+            id: 'link-1',
+            kind: 'link',
+            title: 'Bloodborne',
+            payload: { psnTitleId: 'CUSA00552_00' },
+            selected: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'PlayStation IDs' })).toBeInTheDocument();
+    expect(screen.getByText('Title CUSA00552_00')).toBeInTheDocument();
+  });
+
+  it('shows both the title and trophy ids when a PSN link change carries both', () => {
+    render(
+      <SyncReview
+        run={makeRun({ source: 'psn' })}
+        changes={[
+          makeChange({
+            id: 'link-1',
+            kind: 'link',
+            title: 'Bloodborne',
+            payload: { psnTitleId: 'CUSA00552_00', psnNpCommunicationId: 'NPWR10388_00' },
+            selected: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Title CUSA00552_00 · Trophy NPWR10388_00')).toBeInTheDocument();
+  });
+
+  it('formats a platinum field update as Yes/No, not the raw boolean', () => {
+    render(
+      <SyncReview
+        run={makeRun({ source: 'psn' })}
+        changes={[
+          makeChange({
+            id: 'field-1',
+            kind: 'field_update',
+            title: 'Bloodborne',
+            payload: { field: 'platinum', from: false, to: true },
+            selected: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Platinum')).toBeInTheDocument();
+    expect(screen.getByText('No → Yes')).toBeInTheDocument();
+  });
+
+  it('formats a platform field update through PLATFORM_LABELS, not the raw enum value', () => {
+    render(
+      <SyncReview
+        run={makeRun({ source: 'psn' })}
+        changes={[
+          makeChange({
+            id: 'field-1',
+            kind: 'field_update',
+            title: 'Returnal',
+            payload: { field: 'platform', from: 'ps4', to: 'ps5' },
+            selected: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('PS4 → PS5')).toBeInTheDocument();
+  });
+
+  it("labels the field updates group with PlayStation's wording for a PSN run", () => {
+    render(
+      <SyncReview
+        run={makeRun({ source: 'psn' })}
+        changes={[
+          makeChange({
+            id: 'field-1',
+            kind: 'field_update',
+            title: 'Returnal',
+            payload: { field: 'firstPlayedYear', from: 2022, to: 2023 },
+            selected: true,
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("PlayStation's numbers differ from what's stored.")).toBeInTheDocument();
+  });
 });

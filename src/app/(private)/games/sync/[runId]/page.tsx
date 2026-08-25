@@ -6,12 +6,14 @@ import { SyncReview } from '@/features/games/sync/sync-review';
 import { requireOwner } from '@/server/auth/owner';
 import { getSyncRun, listSyncChanges, type SyncRun } from '@/server/db/games/sync';
 
-export const metadata: Metadata = { title: 'Review Steam sync — Burmy' };
+export const metadata: Metadata = { title: 'Review sync — Burmy' };
 
 /**
- * The Steam sync review screen. A run belonging to someone else, or a
- * missing run — a bad link, a run from before the database was reset — both
- * render `notFound()` rather than distinguishing the two: same "don't let a
+ * The sync review screen — shared between Steam and PSN runs, distinguished
+ * only by `run.source` (see `SyncReview`'s own doc comment in
+ * `sync-review.tsx`). A run belonging to someone else, or a missing run — a
+ * bad link, a run from before the database was reset — both render
+ * `notFound()` rather than distinguishing the two: same "don't let a
  * crafted id probe for another owner's data" reasoning `docs/SECURITY.md`
  * documents for every other owner-scoped page.
  *
@@ -37,7 +39,7 @@ export default async function SyncRunPage({
       <Link href="/games/library" className="text-muted-foreground hover:text-foreground text-sm">
         ← Games
       </Link>
-      <h1 className="mt-2 text-xl font-semibold">Review Steam sync</h1>
+      <h1 className="mt-2 text-xl font-semibold">Review {run.source === 'psn' ? 'PlayStation' : 'Steam'} sync</h1>
 
       {run.status === 'ready' ? (
         <>
