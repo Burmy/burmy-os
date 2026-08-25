@@ -12,6 +12,17 @@ import { formatHours, hours } from '@/server/games/hours';
 import { commitSyncRunAction, setSyncChangeSelectedAction } from './sync-actions';
 
 /**
+ * `new_game` changes at or above this count get a visibly prominent count
+ * and warning in the "New games" group header below — a curated ~160-game
+ * PlayStation library can have PSN report back several hundred demos and PS
+ * Plus claims, and the owner asked for that volume to be impossible to miss
+ * BEFORE approving a run, not just documented as a risk. Source-agnostic on
+ * purpose: nothing stops a large Steam library from crossing it too, and the
+ * warning is equally correct either way.
+ */
+const NEW_GAME_VOLUME_WARNING_THRESHOLD = 100;
+
+/**
  * The Steam sync review screen — the owner's last word before anything a
  * sync run proposed reaches `games`.
  *
@@ -124,7 +135,15 @@ export function SyncReview({
       ) : null}
 
       {newGames.length > 0 ? (
-        <ChangeGroup title="New games" description="Owned on Steam, not yet in your library.">
+        <ChangeGroup
+          title={`New games (${newGames.length})`}
+          description={
+            newGames.length > NEW_GAME_VOLUME_WARNING_THRESHOLD
+              ? `${newGames.length} new games found — review carefully before applying. A full library mirror can include demos and claimed-but-unplayed titles.`
+              : 'Owned, not yet in your library.'
+          }
+          warn={newGames.length > NEW_GAME_VOLUME_WARNING_THRESHOLD}
+        >
           <Table>
             <TableHeader>
               <TableRow>
@@ -219,17 +238,22 @@ export function SyncReview({
 function ChangeGroup({
   title,
   description,
+  warn = false,
   children,
 }: {
   readonly title: string;
   readonly description: string;
+  /** Renders the description in the app's standing "needs attention" amber, for a volume the owner should not skim past. */
+  readonly warn?: boolean;
   readonly children: React.ReactNode;
 }): React.ReactElement {
   return (
     <section className="space-y-2">
       <div>
         <h2 className="text-base font-semibold">{title}</h2>
-        <p className="text-muted-foreground text-sm">{description}</p>
+        <p className={warn ? 'text-sm font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground text-sm'}>
+          {description}
+        </p>
       </div>
       {children}
     </section>

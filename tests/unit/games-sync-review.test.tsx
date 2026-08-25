@@ -156,4 +156,44 @@ describe('SyncReview', () => {
     expect(screen.getByText(/nothing to review/i)).toBeInTheDocument();
     expect(screen.queryByRole('table')).toBeNull();
   });
+
+  it('shows the new-game count in the group header without a warning under the volume threshold', () => {
+    const changes = Array.from({ length: 5 }, (_, i) =>
+      makeChange({
+        id: `new-${i}`,
+        kind: 'new_game',
+        gameId: null,
+        title: `Game ${i}`,
+        payload: { hoursTenths: 0 },
+        selected: true,
+      }),
+    );
+
+    render(<SyncReview run={makeRun()} changes={changes} />);
+
+    expect(screen.getByRole('heading', { level: 2, name: 'New games (5)' })).toBeInTheDocument();
+    expect(screen.queryByText(/review carefully before applying/i)).toBeNull();
+  });
+
+  it('states the count prominently BEFORE approval when a run stages more than 100 new games', () => {
+    // The owner's stated fear: a full PSN mirror returning demos and PS Plus
+    // claims must never be silently approvable — the volume has to be
+    // visible in the group header itself, not just discoverable by scrolling
+    // the table.
+    const changes = Array.from({ length: 101 }, (_, i) =>
+      makeChange({
+        id: `new-${i}`,
+        kind: 'new_game',
+        gameId: null,
+        title: `Game ${i}`,
+        payload: { hoursTenths: 0 },
+        selected: true,
+      }),
+    );
+
+    render(<SyncReview run={makeRun()} changes={changes} />);
+
+    expect(screen.getByRole('heading', { level: 2, name: 'New games (101)' })).toBeInTheDocument();
+    expect(screen.getByText(/101 new games found — review carefully before applying/i)).toBeInTheDocument();
+  });
 });

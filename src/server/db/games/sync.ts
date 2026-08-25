@@ -13,6 +13,7 @@ import { and, asc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/server/db';
 import { games as gamesTable, gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
 import type { PlannedChange, SyncChangeKind } from '@/server/games/sync-plan';
+import { GAME_PLATFORMS, type GamePlatform } from '@/server/games/taxonomy';
 import { SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from './errors';
 
 export type SyncRunStatus = 'running' | 'ready' | 'committed' | 'failed' | 'cancelled';
@@ -57,15 +58,26 @@ function rowToSyncChange(row: typeof gameSyncChanges.$inferSelect): SyncChange {
   };
 }
 
-/** Starts a run at cursor 0, holding the library snapshot it will be matched against. */
+/**
+ * Starts a run at cursor 0, holding the library snapshot it will be matched
+ * against. `librarySnapshot` is stored in the `steamLibrary` jsonb column
+ * regardless of `source` — that column is a transient, run-scoped blob (see
+ * its own doc comment in `schema.ts`), not a Steam-specific contract, and
+ * reusing it for PSN's `{ playedTitles, trophyTitles }` snapshot avoids a
+ * migration for what is genuinely the same "one third-party fetch per run,
+ * held for every chunk to match against" role Steam already gave it.
+ */
 export async function createSyncRun(
   ownerId: string,
-  source: 'steam',
+  source: 'steam' | 'psn',
   total: number,
-  steamLibrary: unknown,
+  librarySnapshot: unknown,
 ): Promise<SyncRun> {
   const db = getDb();
-  const rows = await db.insert(gameSyncRuns).values({ ownerId, source, total, steamLibrary }).returning();
+  const rows = await db
+    .insert(gameSyncRuns)
+    .values({ ownerId, source, total, steamLibrary: librarySnapshot })
+    .returning();
 
   const row = rows[0];
   if (!row) throw new Error('Sync run insert returned no row');
@@ -84,7 +96,15 @@ export async function getSyncRun(ownerId: string, runId: string): Promise<SyncRu
   return row ? rowToSyncRun(row) : null;
 }
 
-/** The library snapshot the run started with, or `null` if the run does not exist or belongs to someone else. */
+/**
+ * The library snapshot the run started with — a Steam `OwnedSteamGame[]` for
+ * a `source: 'steam'` run, or a `{ playedTitles, trophyTitles }` object for
+ * `source: 'psn'` (see `createSyncRun`'s doc comment) — or `null` if the run
+ * does not exist or belongs to someone else. Returned as `unknown` on
+ * purpose: this is a stored third-party snapshot, not a typed contract, so
+ * each engine parses it defensively (`parseSteamLibrary` /
+ * `parsePsnSnapshot`) rather than trusting its shape.
+ */
 export async function getSyncRunLibrary(ownerId: string, runId: string): Promise<unknown> {
   const db = getDb();
   const rows = await db
@@ -210,14 +230,26 @@ export async function setSyncChangeSelected(ownerId: string, changeId: string, s
 }
 
 /**
- * The four `games` columns a `field_update` change is allowed to touch.
+ * The `games` columns a `field_update` change is allowed to touch.
  * Whitelisted BY NAME rather than trusted from the payload — `payload.field`
  * is JSONB staged by a sync run, not a compile-time-checked value — so a
  * field name outside this set is a bug in the staging code, and
  * `assertSyncableField` throws rather than let it anywhere near a dynamic
- * `.set()` key.
+ * `.set()` key. Extended for the PSN sync (Part 3): `firstPlayedYear`,
+ * `platform`, `lastPlayedAt` and `platinum` join the original four —
+ * `platinum` deliberately, since PSN is the one caller allowed to write it
+ * (see `psn-plan.ts`'s module header).
  */
-const SYNCABLE_FIELDS = ['hoursTenths', 'achievementsUnlocked', 'achievementsTotal', 'steamAppid'] as const;
+const SYNCABLE_FIELDS = [
+  'hoursTenths',
+  'achievementsUnlocked',
+  'achievementsTotal',
+  'steamAppid',
+  'firstPlayedYear',
+  'platform',
+  'lastPlayedAt',
+  'platinum',
+] as const;
 type SyncableField = (typeof SYNCABLE_FIELDS)[number];
 
 function assertSyncableField(field: unknown): SyncableField {
@@ -227,23 +259,82 @@ function assertSyncableField(field: unknown): SyncableField {
   throw new Error(`field_update named a non-syncable column: ${JSON.stringify(field)}`);
 }
 
+function isGamePlatform(value: unknown): value is GamePlatform {
+  return typeof value === 'string' && (GAME_PLATFORMS as readonly string[]).includes(value);
+}
+
 /**
  * The `.set()` patch for one `field_update`, built with an explicit switch —
  * never `{ [field]: to }`. A computed key would still typecheck today, which
  * is exactly why it is not used: the switch, not the whitelist check alone,
  * is what makes "interpolate an arbitrary column name" structurally
- * impossible to reintroduce later.
+ * impossible to reintroduce later. `to` is `unknown`, not `number`, because
+ * the PSN fields added in Part 3 are not all numeric (`platform` is an enum
+ * string, `lastPlayedAt` an ISO date string, `platinum` a boolean) — each
+ * case validates its OWN expected shape rather than relying on one shared
+ * pre-check the way the Steam-only version of this function used to.
  */
-function fieldUpdatePatch(field: SyncableField, to: number): Partial<typeof gamesTable.$inferInsert> {
+function fieldUpdatePatch(field: SyncableField, to: unknown): Partial<typeof gamesTable.$inferInsert> {
   switch (field) {
     case 'hoursTenths':
+      if (typeof to !== 'number') throw new Error('field_update "hoursTenths" payload is missing a numeric "to"');
       return { hoursTenths: to };
     case 'achievementsUnlocked':
+      if (typeof to !== 'number') throw new Error('field_update "achievementsUnlocked" payload is missing a numeric "to"');
       return { achievementsUnlocked: to };
     case 'achievementsTotal':
+      if (typeof to !== 'number') throw new Error('field_update "achievementsTotal" payload is missing a numeric "to"');
       return { achievementsTotal: to };
     case 'steamAppid':
+      if (typeof to !== 'number') throw new Error('field_update "steamAppid" payload is missing a numeric "to"');
       return { steamAppid: to };
+    case 'firstPlayedYear':
+      if (typeof to !== 'number') throw new Error('field_update "firstPlayedYear" payload is missing a numeric "to"');
+      return { firstPlayedYear: to };
+    case 'platform':
+      if (!isGamePlatform(to)) throw new Error('field_update "platform" payload is missing a valid platform "to"');
+      return { platform: to };
+    case 'lastPlayedAt': {
+      if (typeof to !== 'string') throw new Error('field_update "lastPlayedAt" payload is missing a string "to"');
+      const parsed = new Date(to);
+      if (Number.isNaN(parsed.getTime())) throw new Error('field_update "lastPlayedAt" payload has an unparseable date "to"');
+      return { lastPlayedAt: parsed };
+    }
+    case 'platinum':
+      if (typeof to !== 'boolean') throw new Error('field_update "platinum" payload is missing a boolean "to"');
+      return { platinum: to };
+  }
+}
+
+/**
+ * The `games` columns a `link` change is allowed to set — Steam's single
+ * `steamAppid` plus PSN's two separate identifier spaces (`psnTitleId` for
+ * played-game data, `psnNpCommunicationId` for trophy data; see
+ * `schema.ts`'s doc comment on why both exist). A PSN `link` payload may
+ * carry ONE of these or BOTH at once (first-time link with a confident
+ * trophy match already found) — see `planLinkedPsnGameChanges`.
+ */
+const LINK_FIELDS = ['steamAppid', 'psnTitleId', 'psnNpCommunicationId'] as const;
+type LinkField = (typeof LINK_FIELDS)[number];
+
+/**
+ * The `.set()` patch for ONE identity field named in a `link` payload — same
+ * switch-not-computed-key discipline as `fieldUpdatePatch` above, for the
+ * same reason: a field name reaching this function has already been checked
+ * against `LINK_FIELDS`, but the switch is what makes an arbitrary column
+ * name structurally impossible to write, not just checked-against-a-list.
+ */
+function linkFieldPatch(field: LinkField, value: unknown): Partial<typeof gamesTable.$inferInsert> {
+  switch (field) {
+    case 'steamAppid':
+      if (typeof value !== 'number') throw new Error('link payload has a non-numeric steamAppid');
+      return { steamAppid: value };
+    case 'psnTitleId':
+      if (typeof value !== 'string' || value === '') throw new Error('link payload has an invalid psnTitleId');
+      return { psnTitleId: value };
+    case 'psnNpCommunicationId':
+      if (typeof value !== 'string' || value === '') throw new Error('link payload has an invalid psnNpCommunicationId');
+      return { psnNpCommunicationId: value };
   }
 }
 
@@ -371,13 +462,22 @@ export async function commitSyncRun(
 
       if (kind === 'link') {
         if (change.gameId === null) throw new Error('link change is missing a gameId');
-        const steamAppid = payload.steamAppid;
-        if (typeof steamAppid !== 'number') {
-          throw new Error('link change payload is missing a numeric steamAppid');
+        // A link payload names one or more identity fields BY KEY PRESENCE,
+        // not by trusting an arbitrary key — only keys in the fixed
+        // `LINK_FIELDS` tuple are ever read off `payload`, and each one is
+        // routed through `linkFieldPatch`'s switch. See that function's doc
+        // comment for why this is safe even though it is now data-driven.
+        const presentFields = LINK_FIELDS.filter((field) => Object.hasOwn(payload, field));
+        if (presentFields.length === 0) throw new Error('link change payload named no linkable identity field');
+
+        let patch: Partial<typeof gamesTable.$inferInsert> = {};
+        for (const field of presentFields) {
+          patch = { ...patch, ...linkFieldPatch(field, payload[field]) };
         }
+
         await tx
           .update(gamesTable)
-          .set({ steamAppid, updatedAt: new Date() })
+          .set({ ...patch, updatedAt: new Date() })
           .where(and(eq(gamesTable.id, change.gameId), eq(gamesTable.ownerId, ownerId)));
         applied += 1;
         continue;
@@ -386,35 +486,73 @@ export async function commitSyncRun(
       if (kind === 'field_update') {
         if (change.gameId === null) throw new Error('field_update change is missing a gameId');
         const field = assertSyncableField(payload.field);
-        const to = payload.to;
-        if (typeof to !== 'number') throw new Error('field_update change payload is missing a numeric "to"');
         await tx
           .update(gamesTable)
-          .set({ ...fieldUpdatePatch(field, to), updatedAt: new Date() })
+          .set({ ...fieldUpdatePatch(field, payload.to), updatedAt: new Date() })
           .where(and(eq(gamesTable.id, change.gameId), eq(gamesTable.ownerId, ownerId)));
         applied += 1;
         continue;
       }
 
       if (kind === 'new_game') {
-        const steamAppid = payload.steamAppid;
-        const hoursTenths = payload.hoursTenths;
-        if (typeof steamAppid !== 'number' || typeof hoursTenths !== 'number') {
-          throw new Error('new_game change payload is missing a numeric steamAppid or hoursTenths');
+        // Branches on WHICH identity field the payload carries, not on the
+        // run's own `source` column — `steamAppid` (number) and
+        // `psnTitleId` (string) are each other's proof of which shape this
+        // is, and neither planner ever produces a payload naming both.
+        if (typeof payload.steamAppid === 'number') {
+          const steamAppid = payload.steamAppid;
+          const hoursTenths = payload.hoursTenths;
+          if (typeof hoursTenths !== 'number') {
+            throw new Error('new_game change payload is missing a numeric hoursTenths');
+          }
+          await tx.insert(gamesTable).values({
+            ownerId,
+            title: change.title,
+            platform: 'steam',
+            steamAppid,
+            hoursTenths,
+            // A game arriving with recorded hours is already underway or
+            // done; one at zero was just discovered and has not been played
+            // yet. New rows never land in 'playing' — sync cannot know that.
+            status: hoursTenths > 0 ? 'completed' : 'backlog',
+          });
+          created += 1;
+          continue;
         }
-        await tx.insert(gamesTable).values({
-          ownerId,
-          title: change.title,
-          platform: 'steam',
-          steamAppid,
-          hoursTenths,
-          // A game arriving with recorded hours is already underway or done;
-          // one at zero was just discovered on Steam and has not been played
-          // yet. New rows never land in 'playing' — sync cannot know that.
-          status: hoursTenths > 0 ? 'completed' : 'backlog',
-        });
-        created += 1;
-        continue;
+
+        if (typeof payload.psnTitleId === 'string' && payload.psnTitleId !== '') {
+          const psnTitleId = payload.psnTitleId;
+          const hoursTenths = payload.hoursTenths;
+          if (typeof hoursTenths !== 'number') {
+            throw new Error('new_game change payload is missing a numeric hoursTenths');
+          }
+          const platform = payload.platform;
+          const firstPlayedYear = payload.firstPlayedYear;
+          const lastPlayedAt = payload.lastPlayedAt;
+          const psnNpCommunicationId = payload.psnNpCommunicationId;
+          const achievementsUnlocked = payload.achievementsUnlocked;
+          const achievementsTotal = payload.achievementsTotal;
+          const platinum = payload.platinum;
+
+          await tx.insert(gamesTable).values({
+            ownerId,
+            title: change.title,
+            psnTitleId,
+            hoursTenths,
+            status: hoursTenths > 0 ? 'completed' : 'backlog',
+            ...(isGamePlatform(platform) ? { platform } : {}),
+            ...(typeof firstPlayedYear === 'number' ? { firstPlayedYear } : {}),
+            ...(typeof lastPlayedAt === 'string' ? { lastPlayedAt: new Date(lastPlayedAt) } : {}),
+            ...(typeof psnNpCommunicationId === 'string' && psnNpCommunicationId !== '' ? { psnNpCommunicationId } : {}),
+            ...(typeof achievementsUnlocked === 'number' ? { achievementsUnlocked } : {}),
+            ...(typeof achievementsTotal === 'number' ? { achievementsTotal } : {}),
+            ...(typeof platinum === 'boolean' ? { platinum } : {}),
+          });
+          created += 1;
+          continue;
+        }
+
+        throw new Error('new_game change payload is missing a steamAppid or psnTitleId');
       }
     }
 

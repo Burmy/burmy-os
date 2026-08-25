@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -359,4 +359,125 @@ export async function listSteamGamesForMatching(
     .select({ id: gamesTable.id, title: gamesTable.title, steamAppid: gamesTable.steamAppid })
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PSN sync (src/features/games/sync/psn-actions.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Every PlayStation-platform game — `ps5`, `ps4`, AND `psp`. PSP is
+ * deliberately included even though PSN's API can never return data for a
+ * PSP title (it predates PSN's trophy system entirely): the sync engine must
+ * walk every PSP row and find nothing to match, staging no change and
+ * leaving the row completely untouched, rather than being special-cased out
+ * as an "optimisation" that would leave the no-delete invariant unproven for
+ * exactly the games the owner is most worried about. See
+ * `tests/integration/games-psn-actions.test.ts`'s named invariant test.
+ */
+const PSN_PLATFORMS = ['ps5', 'ps4', 'psp'] as const;
+
+/** The narrow projection the PSN sync engine needs to plan changes for one game. */
+export interface PsnSyncGame {
+  readonly id: string;
+  readonly title: string;
+  readonly platform: GamePlatform;
+  readonly psnTitleId: string | null;
+  readonly psnNpCommunicationId: string | null;
+  readonly hoursTenths: number | null;
+  readonly firstPlayedYear: number | null;
+  /** ISO 8601, or `null` — converted from the stored `Date` here so `psn-plan.ts` stays a plain-string comparison. */
+  readonly lastPlayedAt: string | null;
+  readonly achievementsUnlocked: number | null;
+  readonly achievementsTotal: number | null;
+  readonly platinum: boolean;
+}
+
+function rowToPsnSyncGame(row: {
+  readonly id: string;
+  readonly title: string;
+  readonly platform: string;
+  readonly psnTitleId: string | null;
+  readonly psnNpCommunicationId: string | null;
+  readonly hoursTenths: number | null;
+  readonly firstPlayedYear: number | null;
+  readonly lastPlayedAt: Date | null;
+  readonly achievementsUnlocked: number | null;
+  readonly achievementsTotal: number | null;
+  readonly platinum: boolean;
+}): PsnSyncGame {
+  return {
+    id: row.id,
+    title: row.title,
+    platform: row.platform as GamePlatform,
+    psnTitleId: row.psnTitleId,
+    psnNpCommunicationId: row.psnNpCommunicationId,
+    hoursTenths: row.hoursTenths,
+    firstPlayedYear: row.firstPlayedYear,
+    lastPlayedAt: row.lastPlayedAt ? row.lastPlayedAt.toISOString() : null,
+    achievementsUnlocked: row.achievementsUnlocked,
+    achievementsTotal: row.achievementsTotal,
+    platinum: row.platinum,
+  };
+}
+
+/** How many PlayStation-platform games the owner has — a sync run's `total`. */
+export async function countPsnGames(ownerId: string): Promise<number> {
+  const rows = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)));
+
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * One page of the owner's PlayStation-platform games, KEYSET-paginated by
+ * `id` — identical rationale to `listSteamGamesChunk`'s own doc comment
+ * (random UUID primary key, not a monotonic sequence; a mid-run insert or
+ * delete can neither strand nor duplicate a keyset walk the way OFFSET/LIMIT
+ * would).
+ */
+export async function listPsnGamesChunk(ownerId: string, afterId: string | null, limit: number): Promise<PsnSyncGame[]> {
+  const filters = [eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)];
+  if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
+
+  const rows = await getDb()
+    .select({
+      id: gamesTable.id,
+      title: gamesTable.title,
+      platform: gamesTable.platform,
+      psnTitleId: gamesTable.psnTitleId,
+      psnNpCommunicationId: gamesTable.psnNpCommunicationId,
+      hoursTenths: gamesTable.hoursTenths,
+      firstPlayedYear: gamesTable.firstPlayedYear,
+      lastPlayedAt: gamesTable.lastPlayedAt,
+      achievementsUnlocked: gamesTable.achievementsUnlocked,
+      achievementsTotal: gamesTable.achievementsTotal,
+      platinum: gamesTable.platinum,
+    })
+    .from(gamesTable)
+    .where(and(...filters))
+    .orderBy(asc(gamesTable.id))
+    .limit(limit);
+
+  return rows.map(rowToPsnSyncGame);
+}
+
+/**
+ * Every PlayStation-platform game's id/title/psnTitleId, unpaged — the PSN
+ * sync engine's finalization step re-matches every one of these (not just
+ * the ones in a given chunk) to decide which PSN-owned played titles
+ * genuinely have no library counterpart. Same reasoning as
+ * `listSteamGamesForMatching`: staging never writes to `games`, so a title
+ * match staged several chunks ago is still invisible in the `psnTitleId`
+ * column here.
+ */
+export async function listPsnGamesForMatching(
+  ownerId: string,
+): Promise<{ readonly id: string; readonly title: string; readonly psnTitleId: string | null }[]> {
+  return getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title, psnTitleId: gamesTable.psnTitleId })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)));
 }

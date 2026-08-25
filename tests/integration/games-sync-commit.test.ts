@@ -486,4 +486,223 @@ describe('commitSyncRun', () => {
     const created = (await games.listGames(owner)).filter((game) => game.title === 'Portal 2');
     expect(created).toHaveLength(1);
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // PSN FIELDS (Part 3) — the whitelist and the link/new_game branches
+  // extended for `psnTitleId`/`psnNpCommunicationId`/`platform`/
+  // `lastPlayedAt`/`firstPlayedYear`/`platinum`. `platinum` is written HERE
+  // deliberately — see `psn-plan.ts`'s module header for why PSN, and only
+  // PSN, is allowed to touch it (the Steam planner never proposes it).
+  // ───────────────────────────────────────────────────────────────────────
+
+  it('applies a link naming psnTitleId and psnNpCommunicationId together', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Bloodborne', { platform: 'ps4', psnTitleId: null, hoursTenths: 900 });
+    const runId = await makeReadyRun(owner, 1);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        {
+          kind: 'link',
+          gameId,
+          title: 'Bloodborne',
+          payload: { psnTitleId: 'CUSA00552_00', psnNpCommunicationId: 'NPWR10388_00' },
+        },
+      ],
+      1,
+    );
+
+    await sync.commitSyncRun(owner, runId);
+
+    const after = await games.getGame(owner, gameId);
+    expect(after.psnTitleId).toBe('CUSA00552_00');
+    expect(after.psnNpCommunicationId).toBe('NPWR10388_00');
+  });
+
+  it('applies field updates for platform, firstPlayedYear, lastPlayedAt and platinum', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Bloodborne', { platform: 'ps4', platinum: false });
+    const runId = await makeReadyRun(owner, 1);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        { kind: 'field_update', gameId, title: 'Bloodborne', payload: { field: 'platform', from: 'ps4', to: 'ps5' } },
+        {
+          kind: 'field_update',
+          gameId,
+          title: 'Bloodborne',
+          payload: { field: 'firstPlayedYear', from: null, to: 2015 },
+        },
+        {
+          kind: 'field_update',
+          gameId,
+          title: 'Bloodborne',
+          payload: { field: 'lastPlayedAt', from: null, to: '2026-08-01T00:00:00.000Z' },
+        },
+        { kind: 'field_update', gameId, title: 'Bloodborne', payload: { field: 'platinum', from: false, to: true } },
+      ],
+      1,
+    );
+
+    await sync.commitSyncRun(owner, runId);
+
+    const after = await games.getGame(owner, gameId);
+    expect(after.platform).toBe('ps5');
+    expect(after.firstPlayedYear).toBe(2015);
+    expect(after.lastPlayedAt?.toISOString()).toBe('2026-08-01T00:00:00.000Z');
+    expect(after.platinum).toBe(true);
+  });
+
+  it('rejects a link payload naming no linkable identity field', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Bloodborne', { platform: 'ps4' });
+    const runId = await makeReadyRun(owner, 1);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [{ kind: 'link', gameId, title: 'Bloodborne', payload: { somethingElse: 'x' } }],
+      1,
+    );
+
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
+  });
+
+  it('rejects a field_update naming psnTitleId — an identity field, not a plain data field', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Bloodborne', { platform: 'ps4' });
+    const runId = await makeReadyRun(owner, 1);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        {
+          kind: 'field_update',
+          gameId,
+          title: 'Bloodborne',
+          payload: { field: 'psnTitleId', from: null, to: 'CUSA00552_00' },
+        },
+      ],
+      1,
+    );
+
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
+
+    const after = await games.getGame(owner, gameId);
+    expect(after.psnTitleId).toBeNull();
+  });
+
+  it('rejects a field_update whose "to" does not match the field\'s own type', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const gameId = await makeGame(owner, 'Bloodborne', { platform: 'ps4' });
+    const runId = await makeReadyRun(owner, 1);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [{ kind: 'field_update', gameId, title: 'Bloodborne', payload: { field: 'platinum', from: false, to: 'yes' } }],
+      1,
+    );
+
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
+
+    const after = await games.getGame(owner, gameId);
+    expect(after.platinum).toBe(false);
+  });
+
+  it('creates a new game for a PSN new_game change, including trophy fields when matched', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const runId = await makeReadyRun(owner, 0);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        {
+          kind: 'new_game',
+          gameId: null,
+          title: 'Returnal',
+          payload: {
+            psnTitleId: 'CUSA99999_00',
+            hoursTenths: 300,
+            platform: 'ps5',
+            firstPlayedYear: 2023,
+            lastPlayedAt: '2026-08-01T00:00:00.000Z',
+            psnNpCommunicationId: 'NPWR99999_00',
+            achievementsUnlocked: 12,
+            achievementsTotal: 48,
+            platinum: false,
+          },
+        },
+      ],
+      0,
+    );
+
+    await sync.commitSyncRun(owner, runId);
+
+    const all = await games.listGames(owner);
+    const created = all.find((game) => game.title === 'Returnal');
+    expect(created).toMatchObject({
+      psnTitleId: 'CUSA99999_00',
+      hoursTenths: 300,
+      platform: 'ps5',
+      firstPlayedYear: 2023,
+      psnNpCommunicationId: 'NPWR99999_00',
+      achievementsUnlocked: 12,
+      achievementsTotal: 48,
+      platinum: false,
+      status: 'completed',
+    });
+  });
+
+  it('creates a new game for a PSN new_game change with no trophy match, carrying no trophy fields', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const runId = await makeReadyRun(owner, 0);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [
+        {
+          kind: 'new_game',
+          gameId: null,
+          title: 'Some Demo',
+          payload: { psnTitleId: 'CUSA00001_00', hoursTenths: 0 },
+        },
+      ],
+      0,
+    );
+
+    await sync.commitSyncRun(owner, runId);
+
+    const all = await games.listGames(owner);
+    const created = all.find((game) => game.title === 'Some Demo');
+    expect(created?.psnNpCommunicationId).toBeNull();
+    expect(created?.achievementsUnlocked).toBeNull();
+    expect(created?.achievementsTotal).toBeNull();
+    expect(created?.platinum).toBe(false);
+    expect(created?.status).toBe('backlog');
+  });
+
+  it('rejects a new_game payload naming neither steamAppid nor psnTitleId', async () => {
+    const owner = await makeOwner('owner@example.invalid');
+    const runId = await makeReadyRun(owner, 0);
+
+    await sync.appendSyncChanges(
+      owner,
+      runId,
+      [{ kind: 'new_game', gameId: null, title: 'Mystery Game', payload: { hoursTenths: 10 } }],
+      0,
+    );
+
+    await expect(sync.commitSyncRun(owner, runId)).rejects.toThrow();
+
+    const all = await games.listGames(owner);
+    expect(all.find((game) => game.title === 'Mystery Game')).toBeUndefined();
+  });
 });
