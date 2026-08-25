@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type GameStatRow,
   buildDistribution,
+  buildLeaderboard,
   buildFinancialSummary,
   buildLibrarySummary,
   buildYearlyBreakdown,
@@ -18,6 +19,7 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
     developer: 'FromSoftware, Inc.',
     publisher: 'Bandai Namco Entertainment',
     genre: 'Action RPG',
+    coverUrl: null,
     status: 'completed',
     rating: 5,
     hoursTenths: 1360,
@@ -302,14 +304,6 @@ describe('buildDistribution', () => {
 });
 
 describe('findCallouts', () => {
-  it('finds the longest game by hours', () => {
-    const callouts = findCallouts(
-      [game({ id: 'a', title: 'Short', hoursTenths: 100 }), game({ id: 'b', title: 'Long', hoursTenths: 1700 })],
-      [],
-    );
-    expect(callouts.longestGame?.title).toBe('Long');
-  });
-
   it('finds the most-played developer by summed hours, not by game count', () => {
     // Two short FromSoftware games vs one very long Rockstar game.
     const callouts = findCallouts(
@@ -371,8 +365,132 @@ describe('findCallouts', () => {
 
   it('returns nulls rather than throwing on an empty library', () => {
     const callouts = findCallouts([], []);
-    expect(callouts.longestGame).toBeNull();
     expect(callouts.topDeveloper).toBeNull();
     expect(callouts.bestYear).toBeNull();
+  });
+});
+
+/**
+ * `buildLeaderboard` powers the Top 3 panels. Its load-bearing property is
+ * EXCLUSION: a game with no value for a metric must be left out, never ranked
+ * as a zero. An unrated game is not a one-star game.
+ */
+describe('buildLeaderboard', () => {
+  it('ranks by hours, highest first', () => {
+    const top = buildLeaderboard(
+      [
+        game({ id: 'a', title: 'Short', hoursTenths: 100 }),
+        game({ id: 'b', title: 'Long', hoursTenths: 1700 }),
+        game({ id: 'c', title: 'Middling', hoursTenths: 600 }),
+      ],
+      'hours',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Long', 'Middling', 'Short']);
+  });
+
+  it('honours the limit', () => {
+    const rows = [1, 2, 3, 4, 5].map((n) => game({ id: `g${n}`, title: `G${n}`, hoursTenths: n * 100 }));
+    expect(buildLeaderboard(rows, 'hours', 3)).toHaveLength(3);
+  });
+
+  it('excludes unplayed games from the hours board rather than ranking them zero', () => {
+    const top = buildLeaderboard(
+      [game({ id: 'a', title: 'Played', hoursTenths: 100 }), game({ id: 'b', title: 'Never', hoursTenths: 0 })],
+      'hours',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Played']);
+  });
+
+  it('excludes unrated games from the rating board rather than treating null as zero', () => {
+    const top = buildLeaderboard(
+      [game({ id: 'a', title: 'Rated', rating: 4 }), game({ id: 'b', title: 'Unrated', rating: null })],
+      'rating',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Rated']);
+  });
+
+  it('excludes games with no trophies earned', () => {
+    const top = buildLeaderboard(
+      [
+        game({ id: 'a', title: 'Some', achievementsUnlocked: 12 }),
+        game({ id: 'b', title: 'None', achievementsUnlocked: 0 }),
+        game({ id: 'c', title: 'Unknown', achievementsUnlocked: null }),
+      ],
+      'trophies',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Some']);
+  });
+
+  it('ranks cost per hour LOWEST first, because cheap per hour is the good end', () => {
+    // $60 over 60h = 100 cents/h; $20 over 40h = 50 cents/h.
+    const top = buildLeaderboard(
+      [
+        game({ id: 'a', title: 'Pricey', priceCents: 6000, hoursTenths: 600 }),
+        game({ id: 'b', title: 'Bargain', priceCents: 2000, hoursTenths: 400 }),
+      ],
+      'costPerHour',
+      3,
+    );
+    expect(top.map((e) => [e.title, e.value])).toEqual([
+      ['Bargain', 50],
+      ['Pricey', 100],
+    ]);
+  });
+
+  it('excludes a free game from the value board rather than calling it infinitely good', () => {
+    const top = buildLeaderboard(
+      [
+        game({ id: 'a', title: 'Free', priceCents: 0, hoursTenths: 600 }),
+        game({ id: 'b', title: 'Paid', priceCents: 2000, hoursTenths: 400 }),
+      ],
+      'costPerHour',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Paid']);
+  });
+
+  it('excludes an unplayed game from the value board rather than dividing by zero', () => {
+    const top = buildLeaderboard([game({ id: 'a', title: 'Shelf', priceCents: 6000, hoursTenths: 0 })], 'costPerHour', 3);
+    expect(top).toEqual([]);
+  });
+
+  it('breaks a rating tie on hours played, not the alphabet', () => {
+    // A 160-game library has dozens of 5-star entries; alphabetical would
+    // render "your favourites" as "the 5-star games nearest A".
+    const top = buildLeaderboard(
+      [
+        game({ id: 'a', title: 'Zebra', rating: 5, hoursTenths: 9000 }),
+        game({ id: 'b', title: 'Alpha', rating: 5, hoursTenths: 10 }),
+      ],
+      'rating',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Zebra', 'Alpha']);
+  });
+
+  it('falls back to the alphabet when the metric AND hours both tie', () => {
+    const top = buildLeaderboard(
+      [game({ id: 'a', title: 'Zebra', hoursTenths: 500 }), game({ id: 'b', title: 'Alpha', hoursTenths: 500 })],
+      'hours',
+      3,
+    );
+    expect(top.map((e) => e.title)).toEqual(['Alpha', 'Zebra']);
+  });
+
+  it('carries the cover and platform through for rendering', () => {
+    const top = buildLeaderboard(
+      [game({ id: 'a', title: 'X', hoursTenths: 100, coverUrl: 'https://example.invalid/x.jpg', platform: 'ps4' })],
+      'hours',
+      3,
+    );
+    expect(top[0]).toMatchObject({ id: 'a', coverUrl: 'https://example.invalid/x.jpg', platform: 'ps4' });
+  });
+
+  it('returns an empty board for an empty library', () => {
+    expect(buildLeaderboard([], 'hours', 3)).toEqual([]);
   });
 });

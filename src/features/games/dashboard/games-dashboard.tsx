@@ -4,6 +4,7 @@ import type { PlayYearRow } from '@/server/games/play-years';
 import {
   type GameStatRow,
   buildDistribution,
+  buildLeaderboard,
   buildFinancialSummary,
   buildLibrarySummary,
   buildYearlyBreakdown,
@@ -15,6 +16,7 @@ import { GamesPerYearChart } from './charts/games-per-year-chart';
 import { HoursPerYearChart } from './charts/hours-per-year-chart';
 import { RatingDistributionChart } from './charts/rating-distribution-chart';
 import { TrophiesPerYearChart } from './charts/trophies-per-year-chart';
+import { TopGames } from './top-games';
 import { YearlyBreakdownTable } from './yearly-breakdown-table';
 
 export function GamesDashboard({
@@ -128,15 +130,37 @@ export function GamesDashboard({
         </div>
       </div>
 
-      <Section title="Highlights">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <StatCard
-            label="Longest game"
-            value={callouts.longestGame?.title ?? '—'}
-            {...(callouts.longestGame === null
-              ? {}
-              : { hint: formatHours(hours(callouts.longestGame.hoursTenths)) })}
+      <Section title="Top 3">
+        <div className="grid gap-3 lg:grid-cols-2">
+          <TopGames
+            title="Most played"
+            hint="By total hours"
+            metric="hours"
+            entries={buildLeaderboard(rows, 'hours', 3)}
           />
+          <TopGames
+            title="Highest rated"
+            hint="Your own rating"
+            metric="rating"
+            entries={buildLeaderboard(rows, 'rating', 3)}
+          />
+          <TopGames
+            title="Most trophies"
+            hint="Achievements earned"
+            metric="trophies"
+            entries={buildLeaderboard(rows, 'trophies', 3)}
+          />
+          <TopGames
+            title="Best value"
+            hint="Lowest cost per hour played"
+            metric="costPerHour"
+            entries={buildLeaderboard(rows, 'costPerHour', 3)}
+          />
+        </div>
+      </Section>
+
+      <Section title="Highlights">
+        <div className="grid gap-3 sm:grid-cols-2">
           <StatCard
             label="Most-played developer"
             value={callouts.topDeveloper?.name ?? '—'}

@@ -30,6 +30,7 @@ export interface GameStatRow {
   readonly developer: string | null;
   readonly publisher: string | null;
   readonly genre: string | null;
+  readonly coverUrl: string | null;
   readonly status: GameStatus;
   readonly rating: number | null;
   readonly hoursTenths: number | null;
@@ -102,7 +103,6 @@ export interface DistributionSlice {
 }
 
 export interface Callouts {
-  readonly longestGame: { readonly title: string; readonly hoursTenths: number } | null;
   readonly topDeveloper: { readonly name: string; readonly hoursTenths: number } | null;
   readonly bestYear: { readonly year: number; readonly hoursTenths: number } | null;
 }
@@ -261,7 +261,7 @@ export function buildDistribution(
 }
 
 /**
- * `longestGame` and `topDeveloper` aggregate TOTAL hours per game/developer —
+ * `topDeveloper` aggregates TOTAL hours per developer —
  * not year-scoped, so they read straight off `rows`. `bestYear` IS
  * year-scoped, and used to build its own `yearHours` map keyed on
  * `firstPlayedYear`, crediting a game's FULL total to a single year — the
@@ -278,11 +278,6 @@ export function buildDistribution(
 export function findCallouts(rows: readonly GameStatRow[], yearlyRows: readonly YearlyBreakdownRow[]): Callouts {
   const played = rows.filter((row) => (row.hoursTenths ?? 0) > 0);
 
-  const longest = played.reduce<GameStatRow | null>(
-    (best, row) => (best === null || (row.hoursTenths ?? 0) > (best.hoursTenths ?? 0) ? row : best),
-    null,
-  );
-
   const developerHours = new Map<string, number>();
   for (const row of played) {
     if (row.developer === null || row.developer === '') continue;
@@ -296,9 +291,96 @@ export function findCallouts(rows: readonly GameStatRow[], yearlyRows: readonly 
   );
 
   return {
-    longestGame: longest === null ? null : { title: longest.title, hoursTenths: longest.hoursTenths ?? 0 },
     topDeveloper:
       topDeveloperEntry === undefined ? null : { name: topDeveloperEntry[0], hoursTenths: topDeveloperEntry[1] },
     bestYear: bestYearRow === null ? null : { year: bestYearRow.year, hoursTenths: bestYearRow.hoursTenths },
   };
+}
+
+/** Which stat a leaderboard ranks by. */
+export type LeaderboardMetric = 'hours' | 'rating' | 'trophies' | 'costPerHour';
+
+export interface LeaderboardEntry {
+  readonly id: string;
+  readonly title: string;
+  readonly coverUrl: string | null;
+  readonly platform: GamePlatform;
+  /**
+   * Raw, in the metric's own unit — tenths of an hour, a 1-5 rating, a trophy
+   * count, or cents per hour. Formatting belongs to the caller, so this module
+   * stays free of display concerns.
+   */
+  readonly value: number;
+}
+
+/**
+ * The top `limit` games by one stat, best first.
+ *
+ * Every metric EXCLUDES games that have no value for it rather than ranking
+ * them as zero. An unrated game is not a one-star game, a game nobody has
+ * played is not the worst value, and treating a missing figure as a real
+ * bottom-of-the-table score is exactly how a leaderboard starts lying. Ties
+ * break alphabetically so a panel does not reshuffle between renders.
+ *
+ * Ties break on hours played before the title, so an equally-rated pair
+ * surfaces the one actually played more.
+ *
+ * `costPerHour` is the one metric where LOWER is better, and it is
+ * deliberately cents-per-hour rather than hours-per-dollar: it formats with
+ * `money.ts`'s existing helper, and "$0.42 an hour" is how people actually
+ * talk about whether a game was worth it. It requires BOTH a real price and
+ * real play time — a free game has no cost per hour, and an unplayed one
+ * would divide by zero.
+ */
+export function buildLeaderboard(
+  rows: readonly GameStatRow[],
+  metric: LeaderboardMetric,
+  limit: number,
+): LeaderboardEntry[] {
+  const scored: { readonly row: GameStatRow; readonly value: number }[] = [];
+
+  for (const row of rows) {
+    const hoursTenths = row.hoursTenths ?? 0;
+
+    if (metric === 'hours') {
+      if (hoursTenths <= 0) continue;
+      scored.push({ row, value: hoursTenths });
+    } else if (metric === 'rating') {
+      if (row.rating === null) continue;
+      scored.push({ row, value: row.rating });
+    } else if (metric === 'trophies') {
+      if (row.achievementsUnlocked === null || row.achievementsUnlocked <= 0) continue;
+      scored.push({ row, value: row.achievementsUnlocked });
+    } else {
+      if (row.priceCents === null || row.priceCents <= 0 || hoursTenths <= 0) continue;
+      // cents per hour = priceCents / (hoursTenths / 10)
+      scored.push({ row, value: Math.round((row.priceCents * 10) / hoursTenths) });
+    }
+  }
+
+  const lowerIsBetter = metric === 'costPerHour';
+  scored.sort((a, b) => {
+    const diff = lowerIsBetter ? a.value - b.value : b.value - a.value;
+    if (diff !== 0) return diff;
+
+    // Ties break on HOURS before falling back to the title. This matters most
+    // for `rating`, where a 160-game library has dozens of 5-star entries and
+    // an alphabetical tie-break would render "your three favourite games" as
+    // "the three 5-star games nearest the top of the alphabet" — deterministic
+    // but useless. Most-played-among-equally-loved is the answer someone
+    // actually wants. The title remains the final tie-break so the order is
+    // still stable when hours tie too.
+    const byHours = (b.row.hoursTenths ?? 0) - (a.row.hoursTenths ?? 0);
+    if (byHours !== 0) return byHours;
+
+    return a.row.title.localeCompare(b.row.title);
+  });
+
+  return scored.slice(0, limit).map(({ row, value }) => ({
+    id: row.id,
+    title: row.title,
+    coverUrl: row.coverUrl,
+    platform: row.platform,
+    value,
+  }));
 }

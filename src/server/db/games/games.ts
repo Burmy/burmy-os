@@ -263,6 +263,7 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
       developer: gamesTable.developer,
       publisher: gamesTable.publisher,
       genre: gamesTable.genre,
+      coverUrl: gamesTable.coverUrl,
       status: gamesTable.status,
       rating: gamesTable.rating,
       hoursTenths: gamesTable.hoursTenths,
