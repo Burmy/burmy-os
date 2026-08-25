@@ -45,7 +45,6 @@ export function YearlyBreakdownTable({
             Played
           </TableHead>
           <TableHead className="text-right">Hours</TableHead>
-          <TableHead className="text-right">vs. prev</TableHead>
           <TableHead className="text-right">Achievements</TableHead>
         </TableRow>
       </TableHeader>
@@ -59,20 +58,6 @@ export function YearlyBreakdownTable({
             <TableCell className="tabular text-right">{row.startedCount}</TableCell>
             <TableCell className="tabular text-right">{row.playedCount}</TableCell>
             <TableCell className="tabular text-right">{formatHours(hours(row.hoursTenths))}</TableCell>
-            <TableCell
-              className={cn(
-                'tabular text-right text-xs',
-                row.hoursChangeTenths === null
-                  ? 'text-muted-foreground'
-                  : row.hoursChangeTenths >= 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-destructive',
-              )}
-            >
-              {row.hoursChangeTenths === null
-                ? '—'
-                : `${row.hoursChangeTenths >= 0 ? '+' : '−'}${formatHours(hours(Math.abs(row.hoursChangeTenths)))}`}
-            </TableCell>
             <TableCell className="tabular text-right">{row.achievements}</TableCell>
           </TableRow>
         ))}
@@ -90,7 +75,6 @@ export function YearlyBreakdownTable({
               {unattributedTenths < 0 ? '−' : ''}
               {formatHours(hours(Math.abs(unattributedTenths)))}
             </TableCell>
-            <TableCell />
             <TableCell className="tabular text-right">—</TableCell>
           </TableRow>
         )}
@@ -99,7 +83,6 @@ export function YearlyBreakdownTable({
           <TableCell className="tabular text-right">{totals.startedCount}</TableCell>
           <TableCell className="tabular text-right">—</TableCell>
           <TableCell className="tabular text-right">{formatHours(hours(totals.hoursTenths))}</TableCell>
-          <TableCell />
           <TableCell className="tabular text-right">{totals.achievements}</TableCell>
         </TableRow>
       </TableBody>

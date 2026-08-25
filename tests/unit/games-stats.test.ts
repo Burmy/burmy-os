@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type DistributionSlice,
   type GameStatRow,
   buildDistribution,
   buildLeaderboard,
   buildFinancialSummary,
+  buildGenreDistribution,
   buildLibrarySummary,
   buildYearlyBreakdown,
+  capDistributionSlices,
   findCallouts,
+  splitGenres,
 } from '@/server/games/stats';
 
 function game(overrides: Partial<GameStatRow>): GameStatRow {
@@ -296,6 +300,123 @@ describe('buildDistribution', () => {
 
   it('skips rows whose key is null instead of inventing an "unknown" bucket', () => {
     expect(buildDistribution([game({ genre: null })], (g) => g.genre, (k) => k)).toEqual([]);
+  });
+});
+
+/**
+ * `games.genre` is a single comma-joined `text` column (`joinGenres`,
+ * `metadata.ts`) — this is the fix for the worst offender the stats page
+ * had: without splitting, `"Shooter, Adventure"` and `"Adventure"` render as
+ * two unrelated bars, and a 180-game library produces dozens of one-off
+ * genre COMBINATIONS instead of a real per-genre count.
+ */
+describe('splitGenres', () => {
+  it('splits a comma-joined genre string, trimming each part', () => {
+    expect(splitGenres('Shooter, Adventure')).toEqual(['Shooter', 'Adventure']);
+  });
+
+  it('handles inconsistent whitespace around the comma', () => {
+    expect(splitGenres('Shooter ,  Adventure ,RPG')).toEqual(['Shooter', 'Adventure', 'RPG']);
+  });
+
+  it('returns a single-element array for a game with one genre', () => {
+    expect(splitGenres('Adventure')).toEqual(['Adventure']);
+  });
+
+  it('drops empty segments from a stray leading, trailing, or doubled comma', () => {
+    expect(splitGenres(',Shooter,, Adventure,')).toEqual(['Shooter', 'Adventure']);
+  });
+
+  it('excludes a null genre entirely rather than returning an "Unknown" bucket', () => {
+    expect(splitGenres(null)).toEqual([]);
+  });
+
+  it('returns nothing for a blank or whitespace-only genre', () => {
+    expect(splitGenres('')).toEqual([]);
+    expect(splitGenres('   ')).toEqual([]);
+  });
+});
+
+describe('buildGenreDistribution', () => {
+  it('counts a multi-genre game once per individual genre, not once per combination', () => {
+    const slices = buildGenreDistribution([
+      game({ id: 'a', genre: 'Shooter, Adventure' }),
+      game({ id: 'b', genre: 'Adventure' }),
+    ]);
+
+    const byLabel = new Map(slices.map((s) => [s.label, s.count]));
+    expect(byLabel.get('Shooter')).toBe(1);
+    // Two DISTINCT source strings ("Shooter, Adventure" and "Adventure")
+    // both count toward the same "Adventure" bucket — the exact merge the
+    // old exact-string bucketing failed to do.
+    expect(byLabel.get('Adventure')).toBe(2);
+    expect(slices).toHaveLength(2);
+  });
+
+  it('excludes a game with no genre recorded rather than bucketing it as "Unknown"', () => {
+    const slices = buildGenreDistribution([game({ genre: null }), game({ id: 'b', genre: 'Adventure' })]);
+    expect(slices).toEqual([{ key: 'Adventure', label: 'Adventure', count: 1, percent: 100 }]);
+  });
+
+  it('returns nothing for a library with no genres recorded at all', () => {
+    expect(buildGenreDistribution([game({ genre: null })])).toEqual([]);
+  });
+
+  it('caps at the top 8 genres plus one "Other" bucket for a long tail', () => {
+    // 12 distinct genres, one game each except "Action" (5 games) so the
+    // ranking is unambiguous: Action first, then 8 more real genres, with
+    // the remaining 3 folded into "Other".
+    const rows = [
+      ...Array.from({ length: 5 }, (_unused, i) => game({ id: `action-${i}`, genre: 'Action' })),
+      game({ id: 'g2', genre: 'Adventure' }),
+      game({ id: 'g3', genre: 'RPG' }),
+      game({ id: 'g4', genre: 'Shooter' }),
+      game({ id: 'g5', genre: 'Platformer' }),
+      game({ id: 'g6', genre: 'Puzzle' }),
+      game({ id: 'g7', genre: 'Racing' }),
+      game({ id: 'g8', genre: 'Simulation' }),
+      game({ id: 'g9', genre: 'Strategy' }),
+      game({ id: 'g10', genre: 'Fighting' }),
+      game({ id: 'g11', genre: 'Sports' }),
+      game({ id: 'g12', genre: 'Rhythm' }),
+    ];
+
+    const slices = buildGenreDistribution(rows);
+
+    expect(slices).toHaveLength(9); // top 8 + Other
+    expect(slices[0]).toMatchObject({ label: 'Action', count: 5 });
+    const other = slices.find((s) => s.label === 'Other');
+    expect(other).toBeDefined();
+    // 12 distinct genres total, top 8 kept individually -> 4 folded into Other.
+    expect(other?.count).toBe(4);
+    // The capped list must still add up to the same total as the input.
+    expect(slices.reduce((sum, s) => sum + s.count, 0)).toBe(16);
+  });
+});
+
+describe('capDistributionSlices', () => {
+  function slice(key: string, count: number): DistributionSlice {
+    return { key, label: key, count, percent: count };
+  }
+
+  it('leaves a list at or under the limit unchanged', () => {
+    const slices = [slice('a', 3), slice('b', 2)];
+    expect(capDistributionSlices(slices, 5)).toEqual(slices);
+  });
+
+  it('folds everything past the limit into one "Other" bucket, preserving totals', () => {
+    const slices = [slice('a', 10), slice('b', 8), slice('c', 5), slice('d', 3), slice('e', 1)];
+    const capped = capDistributionSlices(slices, 2);
+
+    expect(capped).toEqual([
+      { key: 'a', label: 'a', count: 10, percent: 10 },
+      { key: 'b', label: 'b', count: 8, percent: 8 },
+      { key: '__other__', label: 'Other', count: 9, percent: 9 },
+    ]);
+  });
+
+  it('is a no-op on an empty list', () => {
+    expect(capDistributionSlices([], 8)).toEqual([]);
   });
 });
 

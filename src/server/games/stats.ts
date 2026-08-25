@@ -253,6 +253,80 @@ export function buildDistribution(
 }
 
 /**
+ * `games.genre` is a single `text` column holding a comma-joined list —
+ * `joinGenres` in `metadata.ts` writes `"Shooter, Adventure"` for a
+ * multi-genre game, because that is the shape IGDB returns and the editor's
+ * free-text field accepts. Splitting it back out at read time (never
+ * migrating the column) is what turns "one bar per genre COMBINATION" —
+ * `"Shooter, Adventure"`, `"Role-playing (RPG), Adventure"` and `"Adventure"`
+ * rendering as three unrelated categories — into one bar per genre.
+ *
+ * `null` (no genre recorded) returns nothing, matching `buildDistribution`'s
+ * own rule elsewhere: missing data is skipped, never bucketed as "Unknown".
+ */
+export function splitGenres(genre: string | null): readonly string[] {
+  if (genre === null) return [];
+  return genre
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+/**
+ * Genre counts, one increment per individual genre a game lists rather than
+ * per genre combination — see `splitGenres`. A game tagged `"Shooter,
+ * Adventure"` contributes one count to Shooter and one to Adventure, so
+ * `percent` here is share of genre TAGS, not share of games: a two-genre
+ * game is counted twice, and shares are not expected to sum to 100% of the
+ * library. Capped at the top `GENRE_CHART_LIMIT` genres plus one "Other"
+ * bucket so a long tail of one-off genres can never blow the chart back up
+ * the way the uncapped combination list used to.
+ */
+
+/** How many individual genres `buildGenreDistribution` shows before folding the rest into "Other". */
+export const GENRE_CHART_LIMIT = 8;
+
+export function buildGenreDistribution(rows: readonly GameStatRow[]): DistributionSlice[] {
+  const counts = new Map<string, number>();
+
+  for (const row of rows) {
+    for (const genre of splitGenres(row.genre)) {
+      counts.set(genre, (counts.get(genre) ?? 0) + 1);
+    }
+  }
+
+  const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+  if (total === 0) return [];
+
+  const slices = [...counts.entries()]
+    .map(([key, count]) => ({ key, label: key, count, percent: (count / total) * 100 }))
+    .sort((a, b) => b.count - a.count);
+
+  return capDistributionSlices(slices, GENRE_CHART_LIMIT);
+}
+
+/**
+ * Keeps the top `limit` slices (already sorted, largest first, by whatever
+ * produced them) and folds everything past that into one "Other" bucket —
+ * `count` and `percent` both sum across the folded slices, so the capped
+ * list still adds up to the same total. Used both by `buildGenreDistribution`
+ * and, independently, by `DistributionChart` itself as a structural backstop:
+ * capping only where genre counts are built would leave platform/ownership
+ * (or any future caller of `buildDistribution`) free to blow the chart back
+ * up the same way genre once did.
+ */
+export function capDistributionSlices(slices: readonly DistributionSlice[], limit: number): DistributionSlice[] {
+  if (slices.length <= limit) return [...slices];
+
+  const kept = slices.slice(0, limit);
+  const folded = slices.slice(limit);
+  const otherCount = folded.reduce((sum, slice) => sum + slice.count, 0);
+  const otherPercent = folded.reduce((sum, slice) => sum + slice.percent, 0);
+
+  return [...kept, { key: '__other__', label: 'Other', count: otherCount, percent: otherPercent }];
+}
+
+/**
  * `topDeveloper` aggregates TOTAL hours per developer —
  * not year-scoped, so they read straight off `rows`. `bestYear` IS
  * year-scoped, and used to build its own `yearHours` map keyed on
