@@ -71,7 +71,15 @@ export function GameTable({
                 {game.title}
               </button>
             </TableCell>
-            <TableCell className="text-muted-foreground">{PLATFORM_LABELS[game.platform]}</TableCell>
+            <TableCell className="text-muted-foreground">
+              {PLATFORM_LABELS[game.platform]}
+              {/* Same provenance mark as game-card.tsx, folded into the existing
+                  Platform cell rather than a new column — compact, and this is
+                  specifically "does Steam own this game's data," independent of
+                  the `platform` field itself (a `steam` platform game can still
+                  be unlinked). */}
+              {game.steamAppid === null ? '' : ' · Steam'}
+            </TableCell>
             <TableCell>
               <StatusBadge status={game.status} />
             </TableCell>

@@ -313,7 +313,10 @@ describe('updateGameAction — Steam-owned fields', () => {
       hoursTenths: 500,
     });
 
-    const result = await actions.updateGameAction(created.id, baseFormData({ hours: '999' }));
+    const result = await actions.updateGameAction(
+      created.id,
+      baseFormData({ title: 'Hades', platform: 'steam', hours: '999' }),
+    );
 
     expect(result.ok).toBe(true);
     const updated = await games.getGame(ownerId, created.id);
@@ -332,7 +335,7 @@ describe('updateGameAction — Steam-owned fields', () => {
 
     const result = await actions.updateGameAction(
       created.id,
-      baseFormData({ achievementsUnlocked: '99', achievementsTotal: '100' }),
+      baseFormData({ title: 'Hades', platform: 'steam', achievementsUnlocked: '99', achievementsTotal: '100' }),
     );
 
     expect(result.ok).toBe(true);
