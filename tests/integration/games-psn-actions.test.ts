@@ -151,10 +151,10 @@ describe('startPsnSyncAction', () => {
 
   it('creates a run covering every PlayStation-platform library game, not other platforms', async () => {
     const ownerId = await provisionOwner();
-    await games.createGame(ownerId, { title: 'PS5 Game', platform: 'ps5', status: 'completed' });
-    await games.createGame(ownerId, { title: 'PS4 Game', platform: 'ps4', status: 'completed' });
-    await games.createGame(ownerId, { title: 'PSP Game', platform: 'psp', status: 'completed' });
-    await games.createGame(ownerId, { title: 'Steam Game', platform: 'steam', status: 'completed' });
+    await games.createGame(ownerId, { title: 'PS5 Game', platform: 'ps5', status: 'played' });
+    await games.createGame(ownerId, { title: 'PS4 Game', platform: 'ps4', status: 'played' });
+    await games.createGame(ownerId, { title: 'PSP Game', platform: 'psp', status: 'played' });
+    await games.createGame(ownerId, { title: 'Steam Game', platform: 'steam', status: 'played' });
     await games.createGame(ownerId, { title: 'Other Game', platform: 'other', status: 'backlog' });
 
     const runId = await startRun();
@@ -177,7 +177,7 @@ describe('advancePsnSyncAction — the no-delete invariant (the owner\'s stated 
       const created = await games.createGame(ownerId, {
         title: `PSP Game ${index}`,
         platform: 'psp',
-        status: 'completed',
+        status: 'played',
         hoursTenths: 100 + index,
         rating: (index % 5) + 1,
       });
@@ -231,7 +231,7 @@ describe('advancePsnSyncAction — the no-delete invariant (the owner\'s stated 
     const psp = await games.createGame(ownerId, {
       title: 'Persona 3 Portable',
       platform: 'psp',
-      status: 'completed',
+      status: 'played',
       hoursTenths: 800,
       rating: 5,
     });
@@ -365,7 +365,7 @@ describe('advancePsnSyncAction — matching and staging', () => {
     const created = await games.createGame(ownerId, {
       title: 'Returnal',
       platform: 'ps5',
-      status: 'completed',
+      status: 'played',
       psnTitleId: 'CUSA00001_00',
       hoursTenths: 300,
     });

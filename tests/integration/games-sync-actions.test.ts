@@ -144,11 +144,11 @@ describe('startSteamSyncAction', () => {
 
   it('creates a run covering every Steam-platform library game, not other platforms', async () => {
     const ownerId = await provisionOwner();
-    await games.createGame(ownerId, { title: 'Steam Game A', platform: 'steam', status: 'completed' });
-    await games.createGame(ownerId, { title: 'Steam Game B', platform: 'steam', status: 'completed' });
-    await games.createGame(ownerId, { title: 'Steam Game C', platform: 'steam', status: 'completed' });
-    await games.createGame(ownerId, { title: 'PSP Game D', platform: 'psp', status: 'completed' });
-    await games.createGame(ownerId, { title: 'PSP Game E', platform: 'psp', status: 'completed' });
+    await games.createGame(ownerId, { title: 'Steam Game A', platform: 'steam', status: 'played' });
+    await games.createGame(ownerId, { title: 'Steam Game B', platform: 'steam', status: 'played' });
+    await games.createGame(ownerId, { title: 'Steam Game C', platform: 'steam', status: 'played' });
+    await games.createGame(ownerId, { title: 'PSP Game D', platform: 'psp', status: 'played' });
+    await games.createGame(ownerId, { title: 'PSP Game E', platform: 'psp', status: 'played' });
 
     const runId = await startRun();
     const run = await sync.getSyncRun(ownerId, runId);
@@ -163,7 +163,7 @@ describe('advanceSteamSyncAction — the no-delete invariant', () => {
     const created = await games.createGame(ownerId, {
       title: 'Twisted Metal 2',
       platform: 'steam',
-      status: 'completed',
+      status: 'played',
       hoursTenths: 340,
       achievementsUnlocked: 12,
       achievementsTotal: 20,
@@ -213,7 +213,7 @@ describe('advanceSteamSyncAction — matching and staging', () => {
     const created = await games.createGame(ownerId, {
       title: 'Returnal',
       platform: 'steam',
-      status: 'completed',
+      status: 'played',
       steamAppid: 367520,
       hoursTenths: 490,
     });

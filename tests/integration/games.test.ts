@@ -88,12 +88,12 @@ describe('updateGame', () => {
     const updated = await games.updateGame(owner, created.id, {
       title: 'Prey',
       platform: 'ps5',
-      status: 'completed',
+      status: 'played',
       hoursTenths: 240,
       rating: 3,
     });
 
-    expect(updated.status).toBe('completed');
+    expect(updated.status).toBe('played');
     expect(updated.hoursTenths).toBe(240);
     // Strict: proves updateGame's manual `updatedAt: new Date()` actually ran.
     // A dropped manual set would leave this byte-identical to created.updatedAt,
@@ -284,7 +284,7 @@ describe('listGameStatRows', () => {
     await games.createGame(owner, {
       title: 'Ghost of Tsushima',
       platform: 'ps4',
-      status: 'completed',
+      status: 'played',
       hoursTenths: 1080,
       firstPlayedYear: 2020,
       rating: 5,
@@ -307,7 +307,7 @@ describe('listGameStatRows', () => {
     const owned = await games.createGame(owner, {
       title: 'Ghost of Tsushima',
       platform: 'ps4',
-      status: 'completed',
+      status: 'played',
       hoursTenths: 1080,
       firstPlayedYear: 2020,
       rating: 5,

@@ -47,7 +47,7 @@ guess.
 | `developer`, `publisher` | text | |
 | `ownership` | enum, nullable | `physical \| digital` |
 | `price_cents` | signed bigint | Same convention as `finance_transactions.amount_cents`. No FK to Finance — see "Out of scope" |
-| `status` | enum, not null, default `backlog` | `backlog \| playing \| completed \| paused_dropped` |
+| `status` | enum, not null, default `backlog` | App-reachable: `backlog \| playing \| played \| wanted`. The Postgres type also still contains `paused_dropped`, a dead label kept only because Postgres cannot drop an enum value — see "Lifecycle statuses" below |
 | `rating` | smallint, nullable | 1–5. Null means "no opinion yet," not zero |
 | `hours_tenths` | integer, nullable | Tenths of an hour. 235 = 23.5h. See "Hours" below. The authoritative total — see "Play-year attribution" below for how it's optionally split across years |
 | `first_played_year` | smallint, nullable | Sparse by design. Also where hours land by default when no `game_play_years` split exists — see "Play-year attribution" below |
@@ -240,16 +240,33 @@ fills in the total.
 
 ## Lifecycle statuses
 
-Five states, driving the library's filter chips and the dashboard's backlog/playing/completed
-breakdown:
+Three VISIBLE states, plus one invisible default, driving the library's filter chips and the
+dashboard's backlog/playing/played breakdown:
 
 | Status | Meaning |
 | --- | --- |
 | `backlog` | Owned, not started |
 | `playing` | Currently in progress |
-| `completed` | Finished |
-| `paused_dropped` | Started, then set aside — for any reason |
+| `played` | Simply been played — the **invisible default**: `StatusBadge` renders no badge at all for it, in either variant |
 | `wanted` | Wishlisted, not released or not bought yet — see "Upcoming games" below |
+
+**Real usage is why `played` renders nothing.** Of 180 games, 171 sat in this one status (then called
+`completed`) and `playing`/the old `paused_dropped` had never been used at all — a status describing
+95% of the library carries no information, so as of migration `0013` it is the library's *default
+assumption* rather than a fourth badge to scan past on every card. `played` is a deliberate non-null
+SENTINEL, not a nullable column: modelling "no status" as `NULL` would turn every `WHERE status = …`,
+every count, and the `wanted` exclusion below into null-aware SQL, real bug surface for what stays a
+plain non-null comparison everywhere else.
+
+**`paused_dropped` still exists in the Postgres `game_status` type, but is unreachable from the app.**
+It had zero rows at the same audit that motivated the change above, and Postgres has no `DROP VALUE`
+for an enum — removing it from the type would mean creating a new type, swapping the column, and
+re-pointing the default and its indexes, a fiddly migration for a value nothing ever writes. It was
+removed from `GAME_STATUSES` (`src/server/games/taxonomy.ts`) instead, which is what every picker,
+filter and `Record<GameStatus, …>` map in the app actually iterates — the dead label in Postgres is
+inert. The original reasoning for keeping "paused" and "dropped" as one state, not two, still applies
+to whatever the owner wants to say about a `backlog` game they started and set aside: that is a sentence
+in `notes`, not a schema decision.
 
 **`wanted` is excluded from every computed number**, in exactly one place: `listGameStatRows`
 (`src/server/db/games/games.ts`) filters it out at the query boundary. The six stat functions were
@@ -258,16 +275,10 @@ function added later would silently miss it. Filtering at the read boundary make
 future stat correct by construction. A wishlisted game is also hidden from the Library screen unless
 its own chip is active.
 
-**`paused_dropped` is deliberately ONE state, not two.** The difference between "I'll come back to
-this" and "I'm never finishing this" is a sentence in `notes`, not a fact worth a schema column and a
-permanent extra branch in every filter, chart and status-count query in the module. Splitting it would
-buy two nearly-identical buckets everywhere a status is grouped, for a distinction the owner can
-already express in free text when it matters.
-
-`completionRatePercent` (in `buildLibrarySummary`, see below) is computed over **started** games only
-— `completed / (completed + paused_dropped)` — specifically so a forty-game backlog the owner hasn't
-touched yet doesn't read as a 5% completion rate. Games still sitting in `backlog` or `playing` are
-excluded from both sides of that ratio.
+**The library's gallery view pins `playing` games first and renders them larger** (`LibraryView`,
+`GameGrid`, `GameCard`'s `size` prop) — the one status the owner is actively acting on is also the one
+most worth surfacing without scrolling. The table view is untouched: a taller row in a dense list is
+noise, not a feature.
 
 ---
 
@@ -290,11 +301,13 @@ for the money figures below) as their first argument. Two take a second: `buildY
 takes the owner's `game_play_years` rows, and `findCallouts` also takes `buildYearlyBreakdown`'s own
 output — see below and "Play-year attribution" above.
 
-- **`buildLibrarySummary`** — total games, total hours, backlog/playing/completed counts, average
-  rating (mean of rated games only — unrated games don't pull the average toward zero), the
-  started-games-only completion rate above, platinum count, average hours per game (mean over games
-  that HAVE hours logged, not counting an unplayed backlog entry as a zero), and average Metacritic
-  (mean over games that have one).
+- **`buildLibrarySummary`** — total games, total hours, backlog/playing/played counts, average
+  rating (mean of rated games only — unrated games don't pull the average toward zero), platinum
+  count, average hours per game (mean over games that HAVE hours logged, not counting an unplayed
+  backlog entry as a zero), and average Metacritic (mean over games that have one). There is no
+  completion rate: with `completed`/`paused_dropped` gone, `completed / (completed + paused_dropped)`
+  has no definition — the old figure was already misleading, pinning to 100% whenever nothing was
+  marked dropped regardless of backlog size.
 - **`buildFinancialSummary`** — total spend, average price per game (mean over games with a price
   recorded), cost per hour played (total spend ÷ total WHOLE hours, not tenths), backlog count, and
   the money sitting unplayed in the backlog (`priceCents` summed across `backlog`-status games only).

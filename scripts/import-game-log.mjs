@@ -311,7 +311,7 @@ export function parseStarRating(raw) {
 }
 
 /**
- * Whether a row reads as `'completed'` or `'backlog'`.
+ * Whether a row reads as `'played'` or `'backlog'`.
  *
  * `hoursTenths === null` alone is NOT "never started" — every pre-2015 retro
  * row has null hours by definition (the sheet records every field but Title
@@ -320,7 +320,7 @@ export function parseStarRating(raw) {
  * first real import. A 1-5 rating is only meaningful for a game that was
  * actually played, so hours OR a stored rating is treated as evidence of
  * having played it. This is an inference, not a certainty — a game played
- * but not finished still reads as `'completed'`, and a row with neither
+ * but not finished still reads as `'played'`, and a row with neither
  * hours nor a rating (a genuine unplayed backlog entry, which the real sheet
  * also has) correctly stays `'backlog'`. The owner can correct individual
  * rows in the UI after import. `ratingValue` must be the CLAMPED value that
@@ -328,7 +328,7 @@ export function parseStarRating(raw) {
  * nulled for storage should not count as evidence either.
  */
 export function deriveStatus(hoursTenths, ratingValue) {
-  return hoursTenths !== null || ratingValue !== null ? 'completed' : 'backlog';
+  return hoursTenths !== null || ratingValue !== null ? 'played' : 'backlog';
 }
 
 /**

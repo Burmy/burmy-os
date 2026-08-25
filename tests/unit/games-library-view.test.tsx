@@ -38,7 +38,7 @@ function game(overrides: Partial<Game>): Game {
     publisher: 'Bandai Namco',
     ownership: 'physical',
     priceCents: 6565,
-    status: 'completed',
+    status: 'played',
     rating: 5,
     hoursTenths: 1360,
     firstPlayedYear: 2022,
@@ -96,7 +96,7 @@ describe('LibraryView', () => {
     render(
       <LibraryView
         games={[
-          game({ id: 'a', title: 'Finished Game', status: 'completed' }),
+          game({ id: 'a', title: 'Finished Game', status: 'played' }),
           game({ id: 'b', title: 'Queued Game', status: 'backlog' }),
         ]}
       />,
@@ -128,14 +128,14 @@ describe('LibraryView', () => {
     render(
       <LibraryView
         games={[
-          game({ id: 'a', title: 'Match', status: 'completed', platform: 'steam' }),
+          game({ id: 'a', title: 'Match', status: 'played', platform: 'steam' }),
           game({ id: 'b', title: 'Wrong status', status: 'backlog', platform: 'steam' }),
-          game({ id: 'c', title: 'Wrong platform', status: 'completed', platform: 'ps5' }),
+          game({ id: 'c', title: 'Wrong platform', status: 'played', platform: 'ps5' }),
         ]}
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /^completed/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^played/i }));
     await userEvent.click(screen.getByRole('button', { name: /^steam/i }));
 
     expect(screen.getByText('Match')).toBeInTheDocument();
@@ -147,7 +147,7 @@ describe('LibraryView', () => {
     render(
       <LibraryView
         games={[
-          game({ id: 'a', title: 'Finished Game', status: 'completed' }),
+          game({ id: 'a', title: 'Finished Game', status: 'played' }),
           game({ id: 'b', title: 'Queued Game', status: 'backlog' }),
         ]}
       />,
@@ -172,12 +172,12 @@ describe('LibraryView', () => {
   });
 
   it('does not render a status filter chip for a status with zero games', () => {
-    render(<LibraryView games={[game({ id: 'a', status: 'completed' })]} />);
+    render(<LibraryView games={[game({ id: 'a', status: 'played' })]} />);
 
-    expect(screen.getByRole('button', { name: /^completed/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^played/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^paused/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^wanted/i })).not.toBeInTheDocument();
   });
 
   it('labels the steam platform chip "Steam / PC"', () => {
@@ -278,7 +278,7 @@ describe('LibraryView', () => {
       render(
         <LibraryView
           games={[
-            game({ id: 'a', title: 'Owned Game', status: 'completed' }),
+            game({ id: 'a', title: 'Owned Game', status: 'played' }),
             game({ id: 'b', title: 'Wishlisted Game', status: 'wanted' }),
           ]}
         />,
@@ -292,7 +292,7 @@ describe('LibraryView', () => {
       render(
         <LibraryView
           games={[
-            game({ id: 'a', title: 'Owned Game', status: 'completed' }),
+            game({ id: 'a', title: 'Owned Game', status: 'played' }),
             game({ id: 'b', title: 'Wishlisted Game', status: 'wanted' }),
           ]}
         />,
@@ -308,7 +308,7 @@ describe('LibraryView', () => {
       render(
         <LibraryView
           games={[
-            game({ id: 'a', title: 'Owned Game', status: 'completed', platform: 'ps5' }),
+            game({ id: 'a', title: 'Owned Game', status: 'played', platform: 'ps5' }),
             game({ id: 'b', title: 'Wishlisted Game', status: 'wanted', platform: 'ps5' }),
           ]}
         />,
@@ -323,7 +323,7 @@ describe('LibraryView', () => {
       render(
         <LibraryView
           games={[
-            game({ id: 'a', status: 'completed' }),
+            game({ id: 'a', status: 'played' }),
             game({ id: 'b', status: 'wanted' }),
             game({ id: 'c', status: 'wanted' }),
           ]}
@@ -331,6 +331,69 @@ describe('LibraryView', () => {
       );
 
       expect(screen.getByRole('button', { name: /^wanted/i })).toHaveTextContent('Wanted2');
+    });
+  });
+
+  /**
+   * "Playing pinned and larger" — the status model change made `played`
+   * invisible (95% of a real library was sitting in one undifferentiated
+   * status), and in exchange `playing` — the one game actually being acted
+   * on — gets pinned to the front and, in the gallery, a wider card.
+   */
+  describe('playing pinned first', () => {
+    it('sorts a playing game first while leaving every other status in its existing relative order', () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', title: 'Alpha', status: 'backlog' }),
+            game({ id: 'b', title: 'Bravo', status: 'playing' }),
+            game({ id: 'c', title: 'Charlie', status: 'backlog' }),
+          ]}
+        />,
+      );
+
+      // GameCard's `aria-label` is "Title — Status[— Platinum]" — the em
+      // dash is present on every card and nothing else on the page, so this
+      // selects exactly the rendered cards, in DOM order.
+      const cards = screen.getAllByRole('button', { name: /—/ });
+      expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+        'Bravo — Playing',
+        'Alpha — Backlog',
+        'Charlie — Backlog',
+      ]);
+    });
+
+    it('pins playing first in the table view too, not just the gallery', async () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', title: 'Alpha', status: 'backlog' }),
+            game({ id: 'b', title: 'Bravo', status: 'playing' }),
+          ]}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: /table view/i }));
+
+      const rows = screen.getAllByRole('row').slice(1); // drop the header row
+      expect(rows[0]).toHaveTextContent('Bravo');
+      expect(rows[1]).toHaveTextContent('Alpha');
+    });
+
+    it('renders the playing card larger than the rest in the gallery view, and does not resize the table row', () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', title: 'Alpha', status: 'backlog' }),
+            game({ id: 'b', title: 'Bravo', status: 'playing' }),
+          ]}
+        />,
+      );
+
+      const playingCard = screen.getByRole('button', { name: 'Bravo — Playing' });
+      const backlogCard = screen.getByRole('button', { name: 'Alpha — Backlog' });
+      expect(playingCard.className).toMatch(/\bcol-span-2\b/);
+      expect(backlogCard.className).not.toMatch(/\bcol-span-2\b/);
     });
   });
 });

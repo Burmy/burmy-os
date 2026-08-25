@@ -101,6 +101,17 @@ export function LibraryView({
     });
   }, [games, status, platform, search]);
 
+  // `playing` pinned first, within the existing order otherwise — a stable
+  // sort (guaranteed by the spec since ES2019) that only ever compares "is
+  // this the one game currently in progress," so every other status keeps
+  // whatever relative order `visible` already had. The gallery additionally
+  // renders a `playing` card larger (`GameGrid`/`GameCard`'s `size` prop);
+  // the table gets the reordering but NOT a taller row — a dense list has no
+  // room for a "featured" row without becoming noise.
+  const sortedVisible = useMemo(() => {
+    return [...visible].sort((a, b) => (a.status === 'playing' ? 0 : 1) - (b.status === 'playing' ? 0 : 1));
+  }, [visible]);
+
   const counts = useMemo(() => {
     const byStatus = new Map<GameStatus, number>();
     for (const game of games) byStatus.set(game.status, (byStatus.get(game.status) ?? 0) + 1);
@@ -247,9 +258,9 @@ export function LibraryView({
           No games match this filter.
         </p>
       ) : view === 'gallery' ? (
-        <GameGrid games={visible} onOpen={setEditing} />
+        <GameGrid games={sortedVisible} onOpen={setEditing} />
       ) : (
-        <GameTable games={visible} onOpen={setEditing} />
+        <GameTable games={sortedVisible} onOpen={setEditing} />
       )}
 
       <GameDialog

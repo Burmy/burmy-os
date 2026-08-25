@@ -20,7 +20,7 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
     publisher: 'Bandai Namco Entertainment',
     genre: 'Action RPG',
     coverUrl: null,
-    status: 'completed',
+    status: 'played',
     rating: 5,
     hoursTenths: 1360,
     firstPlayedYear: 2022,
@@ -133,14 +133,16 @@ describe('buildYearlyBreakdown', () => {
 describe('buildLibrarySummary', () => {
   it('counts totals across the whole library regardless of year', () => {
     const summary = buildLibrarySummary([
-      game({ id: 'a', status: 'completed', hoursTenths: 500, rating: 5 }),
+      game({ id: 'a', status: 'played', hoursTenths: 500, rating: 5 }),
       game({ id: 'b', status: 'backlog', hoursTenths: null, rating: null }),
-      game({ id: 'c', status: 'paused_dropped', hoursTenths: 100, rating: 3 }),
+      game({ id: 'c', status: 'playing', hoursTenths: 100, rating: 3 }),
     ]);
 
     expect(summary.totalGames).toBe(3);
     expect(summary.totalHoursTenths).toBe(600);
     expect(summary.backlogCount).toBe(1);
+    expect(summary.playingCount).toBe(1);
+    expect(summary.playedCount).toBe(1);
   });
 
   it('averages rating over rated games only, ignoring unrated ones', () => {
@@ -156,19 +158,14 @@ describe('buildLibrarySummary', () => {
     expect(buildLibrarySummary([game({ rating: null })]).averageRating).toBeNull();
   });
 
-  it('computes completion rate over STARTED games, excluding the backlog', () => {
-    // 2 completed, 1 dropped, 1 never started -> 2/3, not 2/4.
-    const summary = buildLibrarySummary([
-      game({ id: 'a', status: 'completed' }),
-      game({ id: 'b', status: 'completed' }),
-      game({ id: 'c', status: 'paused_dropped' }),
-      game({ id: 'd', status: 'backlog' }),
-    ]);
-    expect(summary.completionRatePercent).toBeCloseTo(66.67, 1);
-  });
-
-  it('has no completion rate when nothing has been started', () => {
-    expect(buildLibrarySummary([game({ status: 'backlog' })]).completionRatePercent).toBeNull();
+  // `completionRatePercent` was deleted: with `completed`/`paused_dropped`
+  // gone from the status model, `completed / (completed + paused_dropped)`
+  // has no definition any more, and the old figure was already misleading —
+  // it pinned to 100% whenever nothing was marked dropped, regardless of
+  // backlog size. `LibrarySummary` no longer carries the field at all.
+  it('does not carry a completion rate field any more', () => {
+    const summary = buildLibrarySummary([game({ status: 'played' }), game({ status: 'backlog' })]);
+    expect(summary).not.toHaveProperty('completionRatePercent');
   });
 
   it('counts platinums by the owner-set flag, not by achievement completion', () => {
@@ -222,7 +219,6 @@ describe('buildLibrarySummary', () => {
     expect(summary.averageRating).toBeNull();
     expect(summary.averageHoursTenthsPerGame).toBeNull();
     expect(summary.averageMetacritic).toBeNull();
-    expect(summary.completionRatePercent).toBeNull();
     for (const value of Object.values(summary)) {
       expect(typeof value === 'number' ? Number.isNaN(value) : false).toBe(false);
     }
@@ -268,7 +264,7 @@ describe('buildFinancialSummary', () => {
     const financial = buildFinancialSummary([
       game({ id: 'a', status: 'backlog', priceCents: 3000 }),
       game({ id: 'b', status: 'backlog', priceCents: 2000 }),
-      game({ id: 'c', status: 'completed', priceCents: 9999 }),
+      game({ id: 'c', status: 'played', priceCents: 9999 }),
     ]);
     expect(financial.backlogCount).toBe(2);
     expect(financial.backlogValueCents).toBe(5000);

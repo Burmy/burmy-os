@@ -14,7 +14,7 @@ function game(overrides: Partial<Game> = {}): Game {
     publisher: 'Bandai Namco',
     ownership: 'physical',
     priceCents: 6565,
-    status: 'completed',
+    status: 'played',
     rating: 5,
     hoursTenths: 1360,
     firstPlayedYear: 2022,

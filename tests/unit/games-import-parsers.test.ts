@@ -382,17 +382,17 @@ describe('resolvePlatform', () => {
 });
 
 describe('deriveStatus', () => {
-  it('reads as completed when hours are logged', () => {
-    expect(deriveStatus(590, null)).toBe('completed');
+  it('reads as played when hours are logged', () => {
+    expect(deriveStatus(590, null)).toBe('played');
   });
 
-  it('reads as completed when a rating is on record even with no hours', () => {
+  it('reads as played when a rating is on record even with no hours', () => {
     // This is the retro-library case: every pre-2015 row has null hours by
     // definition (all fields but Title/Rating are "-"), but a 1-5 rating is
     // only meaningful for a game the owner actually played. Using
     // hours-null alone as "backlog" would mislabel the whole retro block as
     // never-started.
-    expect(deriveStatus(null, 4)).toBe('completed');
+    expect(deriveStatus(null, 4)).toBe('played');
   });
 
   it('reads as backlog only when neither hours nor a rating is on record', () => {
@@ -508,9 +508,9 @@ describe('the synthetic fixture, parsed end to end', () => {
     expect(parseStarRating(row[columnIndex.Rating])).toBe(3);
     // The end-to-end proof for the status fix: this row has null hours (like
     // every retro row) but DOES carry a rating, and must import as
-    // 'completed', not 'backlog' — the whole retro library hinges on this.
+    // 'played', not 'backlog' — the whole retro library hinges on this.
     expect(deriveStatus(parseHoursTenths(row[columnIndex.Hours]), parseStarRating(row[columnIndex.Rating]))).toBe(
-      'completed',
+      'played',
     );
   });
 

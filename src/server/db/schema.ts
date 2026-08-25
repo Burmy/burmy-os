@@ -128,11 +128,24 @@ export const gameOwnershipEnum = pgEnum('game_ownership', ['physical', 'digital'
  * difference between "I'll come back" and "I won't" is a sentence in `notes`,
  * not a schema decision, and splitting it would put two nearly-identical
  * buckets in every filter.
+ *
+ * `completed` was renamed to `played` in migration 0013 (`ALTER TYPE …
+ * RENAME VALUE`) once real usage showed 171 of 180 games sat in that one
+ * bucket — a status describing 95% of the library carries no information.
+ * `played` is the app's invisible default for "this game has simply been
+ * played" (see `StatusBadge`, which renders nothing for it) and a non-null
+ * sentinel rather than a nullable column, so every count/filter and the
+ * `wanted` exclusion stay plain non-null SQL. `paused_dropped` had ZERO rows
+ * at the same audit and is no longer reachable from the app (removed from
+ * `GAME_STATUSES` in `src/server/games/taxonomy.ts`) — it stays in this
+ * Postgres enum only because Postgres has no `DROP VALUE`; removing it here
+ * would mean creating a new type, swapping the column, and re-pointing the
+ * default and its indexes for a value nothing ever writes.
  */
 export const gameStatusEnum = pgEnum('game_status', [
   'backlog',
   'playing',
-  'completed',
+  'played',
   'paused_dropped',
   // Added in migration 0011 — a wishlist entry sourced from IGDB's upcoming
   // query, not yet owned. See "Upcoming games" in docs/GAMES.md.

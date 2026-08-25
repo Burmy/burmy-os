@@ -53,7 +53,7 @@ async function makeGame(
   const created = await games.createGame(ownerId, {
     title,
     platform: 'steam',
-    status: 'completed',
+    status: 'played',
     hoursTenths: 490,
     platinum: false,
     ...overrides,
@@ -123,7 +123,7 @@ describe('commitSyncRun', () => {
       steamAppid: 50,
       hoursTenths: 73,
       platform: 'steam',
-      status: 'completed',
+      status: 'played',
     });
   });
 
@@ -656,7 +656,7 @@ describe('commitSyncRun', () => {
       achievementsUnlocked: 12,
       achievementsTotal: 48,
       platinum: false,
-      status: 'completed',
+      status: 'played',
     });
   });
 

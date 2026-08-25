@@ -664,7 +664,7 @@ export async function commitSyncRun(
             // A game arriving with recorded hours is already underway or
             // done; one at zero was just discovered and has not been played
             // yet. New rows never land in 'playing' — sync cannot know that.
-            status: hoursTenths > 0 ? 'completed' : 'backlog',
+            status: hoursTenths > 0 ? 'played' : 'backlog',
           });
           continue;
         }
@@ -688,7 +688,7 @@ export async function commitSyncRun(
             title: change.title,
             psnTitleId,
             hoursTenths,
-            status: hoursTenths > 0 ? 'completed' : 'backlog',
+            status: hoursTenths > 0 ? 'played' : 'backlog',
             ...(isGamePlatform(platform) ? { platform } : {}),
             ...(typeof firstPlayedYear === 'number' ? { firstPlayedYear } : {}),
             ...(typeof lastPlayedAt === 'string' ? { lastPlayedAt: new Date(lastPlayedAt) } : {}),

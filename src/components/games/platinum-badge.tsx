@@ -5,8 +5,9 @@ import { cn } from '@/lib/utils';
 /**
  * The platinum trophy marker — the owner's own claim, not third-party data
  * (see `games.platinum` in the schema). Deliberately NOT built from the same
- * palette as `StatusBadge` (blue/emerald/amber/muted): a platinum is an
- * achievement worth showing off, so this reaches for a metallic
+ * palette as `StatusBadge` (blue/muted/violet — `played` renders no badge at
+ * all): a platinum is an achievement worth showing off, so this reaches for
+ * a metallic
  * platinum/silver register instead of another flat color pill, and its round
  * shape keeps it from reading as "one more status" stacked next to the real
  * status badge.

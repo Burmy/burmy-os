@@ -43,7 +43,7 @@ async function makeGame(ownerId: string, title: string): Promise<string> {
   const created = await games.createGame(ownerId, {
     title,
     platform: 'steam',
-    status: 'completed',
+    status: 'played',
     hoursTenths: 490,
     platinum: false,
   });

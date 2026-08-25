@@ -37,9 +37,18 @@ import { formatHours, hours } from '@/server/games/hours';
 export function GameCard({
   game,
   onOpen,
+  size = 'default',
 }: {
   readonly game: Game;
   readonly onOpen: (game: Game) => void;
+  /**
+   * `'large'` gives the currently-`playing` game a wider grid span (see
+   * `GameGrid`) so it reads as the one thing actively in progress without
+   * scrolling. The cover's own `aspect-[3/4]` then grows the card's height to
+   * match, with no separate row-span needed — see `GameGrid`'s `items-start`
+   * comment for why that matters.
+   */
+  readonly size?: 'default' | 'large';
 }): React.ReactElement {
   return (
     <button
@@ -66,6 +75,7 @@ export function GameCard({
         'group flex flex-col rounded-lg border text-left',
         'transition-colors hover:border-foreground/20 hover:bg-muted/40',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
+        size === 'large' && 'col-span-2',
       )}
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">

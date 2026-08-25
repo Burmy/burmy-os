@@ -43,11 +43,6 @@ export function GamesDashboard({
         <StatCard label="Games" value={String(summary.totalGames)} />
         <StatCard label="Hours played" value={formatHours(hours(summary.totalHoursTenths))} />
         <StatCard label="Backlog" value={String(summary.backlogCount)} hint={`${summary.playingCount} in progress`} />
-        <StatCard
-          label="Completion rate"
-          value={summary.completionRatePercent === null ? '—' : `${summary.completionRatePercent.toFixed(0)}%`}
-          hint="of games started"
-        />
       </StatGroup>
 
       <StatGroup title="Ratings & achievements">

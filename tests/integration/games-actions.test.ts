@@ -58,7 +58,7 @@ function baseFormData(overrides: Record<string, string> = {}): FormData {
   const formData = new FormData();
   formData.set('title', 'Ratchet & Clank: Rift Apart');
   formData.set('platform', 'ps5');
-  formData.set('status', 'completed');
+  formData.set('status', 'played');
   for (const [key, value] of Object.entries(overrides)) formData.set(key, value);
   return formData;
 }

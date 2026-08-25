@@ -69,11 +69,9 @@ export interface LibrarySummary {
   readonly totalHoursTenths: number;
   readonly backlogCount: number;
   readonly playingCount: number;
-  readonly completedCount: number;
+  readonly playedCount: number;
   /** Mean of rated games only, 1-5. Null when nothing is rated. */
   readonly averageRating: number | null;
-  /** Completed / (completed + paused_dropped), 0-100. Null when nothing has been started. */
-  readonly completionRatePercent: number | null;
   /** Count of games with the owner's own `platinum` flag set. */
   readonly platinumCount: number;
   /** Mean `hoursTenths` over games that HAVE logged hours. Null when nothing has any hours logged — an unplayed backlog entry is excluded, not counted as a zero. */
@@ -178,9 +176,6 @@ export function buildYearlyBreakdown(
 
 export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummary {
   const rated = rows.filter((row) => row.rating !== null);
-  const completed = rows.filter((row) => row.status === 'completed').length;
-  const dropped = rows.filter((row) => row.status === 'paused_dropped').length;
-  const started = completed + dropped;
 
   // Excluded from their averages entirely, not counted as a zero — the same
   // rule `averageRating` already follows: a game with no hours logged or no
@@ -193,12 +188,9 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
     totalHoursTenths: rows.reduce((total, row) => total + (row.hoursTenths ?? 0), 0),
     backlogCount: rows.filter((row) => row.status === 'backlog').length,
     playingCount: rows.filter((row) => row.status === 'playing').length,
-    completedCount: completed,
+    playedCount: rows.filter((row) => row.status === 'played').length,
     averageRating:
       rated.length === 0 ? null : rated.reduce((sum, row) => sum + (row.rating ?? 0), 0) / rated.length,
-    // Over STARTED games only: a 40-game backlog you never touched should not
-    // read as a 5% completion rate.
-    completionRatePercent: started === 0 ? null : (completed / started) * 100,
     platinumCount: rows.filter((row) => row.platinum).length,
     averageHoursTenthsPerGame:
       withHours.length === 0
