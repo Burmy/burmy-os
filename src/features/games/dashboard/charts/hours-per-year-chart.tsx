@@ -2,8 +2,9 @@
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
+import { TOOLTIP_STYLES } from '@/components/ui/chart-utils';
 import type { YearlyBreakdownRow } from '@/server/games/stats';
-import { TOOLTIP_STYLES, computeChartDomain, formatAxisHours } from '../chart-utils';
+import { computeChartDomain, formatAxisHours } from '../chart-utils';
 
 /**
  * A line, not a bar — see GamesPerYearChart for why (the owner's original

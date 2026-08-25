@@ -4,9 +4,10 @@ import { Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recha
 
 import { EmptyState } from '@/components/finance/empty-state';
 import { formatPercent } from '@/components/finance/format-percent';
+import { TOOLTIP_STYLES, categoryColor } from '@/components/ui/chart-utils';
 import type { CategoryAmount } from '@/server/finance/dashboard';
 import { cents, format } from '@/server/finance/money';
-import { categoryColor, formatTooltipDollars } from './chart-utils';
+import { formatTooltipDollars } from './chart-utils';
 import { CategoryBreakdownChart } from './category-breakdown-chart';
 
 /** Above this many categories a donut turns into confetti — fall back to the same horizontal bar the monthly view already uses, not a second unreadable chart type. */
@@ -51,17 +52,7 @@ export function AnnualCategoryChart({
               const percent = payload?.percentOfExpenses ?? 0;
               return [`${formatTooltipDollars(Number(value))} (${formatPercent(percent)})`, payload?.name ?? ''];
             }}
-            contentStyle={{
-              background: 'var(--color-popover)',
-              color: 'var(--color-popover-foreground)',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-md)',
-              fontSize: 13,
-            }}
-            // Recharts defaults each item's text to the series' own fill
-            // color, not guaranteed readable against the popover background.
-            itemStyle={{ color: 'var(--color-popover-foreground)' }}
-            labelStyle={{ color: 'var(--color-popover-foreground)' }}
+            {...TOOLTIP_STYLES}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
         </PieChart>

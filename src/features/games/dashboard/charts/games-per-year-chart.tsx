@@ -2,8 +2,9 @@
 
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
+import { TOOLTIP_STYLES } from '@/components/ui/chart-utils';
 import type { YearlyBreakdownRow } from '@/server/games/stats';
-import { TOOLTIP_STYLES, computeChartDomain } from '../chart-utils';
+import { computeChartDomain } from '../chart-utils';
 
 /**
  * A line, not a bar — the owner's original spreadsheet kept this as one of

@@ -4,8 +4,9 @@ import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import type { TooltipContentProps } from 'recharts';
 
 import { EmptyState } from '@/components/finance/empty-state';
+import { categoryColor } from '@/components/ui/chart-utils';
 import type { YearlyBreakdown } from '@/server/finance/dashboard';
-import { categoryColor, computeChartDomain, formatAxisDollars, formatTooltipDollars } from './chart-utils';
+import { computeChartDomain, formatAxisDollars, formatTooltipDollars } from './chart-utils';
 
 const OTHER_KEY = '__other__';
 

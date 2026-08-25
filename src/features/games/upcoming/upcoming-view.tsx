@@ -5,6 +5,7 @@ import { Check, Gamepad2, Loader2, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import type { UpcomingMonth, UpcomingMonthGame } from '@/server/games/upcoming';
@@ -72,12 +73,7 @@ export function UpcomingView({
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-xl font-semibold">Upcoming</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Anticipated PS5 and PC releases over the next 12 months.
-        </p>
-      </div>
+      <PageHeader title="Upcoming" subtitle="Anticipated PS5 and PC releases over the next 12 months." />
 
       {!igdbConfigured ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">

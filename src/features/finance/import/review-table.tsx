@@ -6,6 +6,7 @@ import { useState, useTransition } from 'react';
 import { StatusBadge } from '@/components/finance/status-badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -258,9 +259,9 @@ export function ImportReviewTable({
       ) : null}
 
       <div className="bg-background sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b py-3">
-        <FilterTab label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
+        <FilterChip label="All" count={rows.length} active={filter === 'all'} onClick={() => setFilter('all')} />
         {(Object.keys(BUCKET_LABELS) as RowBucket[]).map((bucket) => (
-          <FilterTab
+          <FilterChip
             key={bucket}
             label={BUCKET_LABELS[bucket]}
             count={counts[bucket]}
@@ -403,30 +404,5 @@ export function ImportReviewTable({
         onConfirm={discard}
       />
     </div>
-  );
-}
-
-function FilterTab({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  readonly label: string;
-  readonly count: number;
-  readonly active: boolean;
-  readonly onClick: () => void;
-}): React.ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={`rounded-full border px-3 py-1 text-sm transition-colors ${
-        active ? 'bg-foreground text-background border-foreground' : 'hover:bg-muted/50'
-      }`}
-    >
-      {label} <span className="tabular">{count}</span>
-    </button>
   );
 }

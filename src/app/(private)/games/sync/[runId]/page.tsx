@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { PageHeader } from '@/components/ui/page-header';
 import { SyncReview } from '@/features/games/sync/sync-review';
 import { requireOwner } from '@/server/auth/owner';
 import { getSyncRun, listSyncChanges, type SyncRun } from '@/server/db/games/sync';
@@ -39,22 +40,21 @@ export default async function SyncRunPage({
       <Link href="/games/library" className="text-muted-foreground hover:text-foreground text-sm">
         ← Games
       </Link>
-      <h1 className="mt-2 text-xl font-semibold">Review {run.source === 'psn' ? 'PlayStation' : 'Steam'} sync</h1>
+      <PageHeader
+        title={`Review ${run.source === 'psn' ? 'PlayStation' : 'Steam'} sync`}
+        className="mt-2"
+        {...(run.status === 'ready'
+          ? { subtitle: 'Nothing below has been saved yet — review each change, then apply the ones you want.' }
+          : {})}
+      />
 
-      {run.status === 'ready' ? (
-        <>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Nothing below has been saved yet — review each change, then apply the ones you want.
-          </p>
-          <div className="mt-6">
-            <SyncReview run={run} changes={await listSyncChanges(owner.userId, runId)} />
-          </div>
-        </>
-      ) : (
-        <div className="mt-6">
+      <div className="mt-6">
+        {run.status === 'ready' ? (
+          <SyncReview run={run} changes={await listSyncChanges(owner.userId, runId)} />
+        ) : (
           <RunStatusNotice run={run} />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

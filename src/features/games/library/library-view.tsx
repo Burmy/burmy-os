@@ -4,8 +4,9 @@ import { LayoutGrid, Plus, Rows3 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/page-header';
 import type { Game } from '@/server/db/games/games';
 import type { PsnTokenAge } from '@/server/games/psn-token-age';
 import { GAME_PLATFORMS, GAME_STATUSES, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
@@ -126,53 +127,52 @@ export function LibraryView({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Library</h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {/* Baseline is the NON-wanted count, not `games.length` — wanted
-                games are hidden by default, so the default view (no filter
-                touched) must read as "N games," not "N of M" against a
-                total that silently includes invisible wishlist rows. */}
-            {visible.length === nonWantedGames.length
-              ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
-              : `${visible.length} of ${nonWantedGames.length} games`}
-          </p>
-        </div>
+      <PageHeader
+        title="Library"
+        subtitle={
+          // Baseline is the NON-wanted count, not `games.length` — wanted
+          // games are hidden by default, so the default view (no filter
+          // touched) must read as "N games," not "N of M" against a total
+          // that silently includes invisible wishlist rows.
+          visible.length === nonWantedGames.length
+            ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
+            : `${visible.length} of ${nonWantedGames.length} games`
+        }
+        actions={
+          <>
+            <div className="flex rounded-md border p-0.5">
+              <Button
+                variant={view === 'gallery' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7"
+                aria-label="Gallery view"
+                aria-pressed={view === 'gallery'}
+                onClick={() => setView('gallery')}
+              >
+                <LayoutGrid className="size-4" />
+              </Button>
+              <Button
+                variant={view === 'table' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-7"
+                aria-label="Table view"
+                aria-pressed={view === 'table'}
+                onClick={() => setView('table')}
+              >
+                <Rows3 className="size-4" />
+              </Button>
+            </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-md border p-0.5">
-            <Button
-              variant={view === 'gallery' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7"
-              aria-label="Gallery view"
-              aria-pressed={view === 'gallery'}
-              onClick={() => setView('gallery')}
-            >
-              <LayoutGrid className="size-4" />
+            <Button size="sm" onClick={() => setCreating(true)}>
+              <Plus className="size-4" />
+              Add game
             </Button>
-            <Button
-              variant={view === 'table' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7"
-              aria-label="Table view"
-              aria-pressed={view === 'table'}
-              onClick={() => setView('table')}
-            >
-              <Rows3 className="size-4" />
-            </Button>
-          </div>
 
-          <Button size="sm" onClick={() => setCreating(true)}>
-            <Plus className="size-4" />
-            Add game
-          </Button>
-
-          <SyncButton configured={steamConfigured} lastSyncedAt={steamLastSyncedAt} />
-          <PsnSyncButton configured={psnConfigured} lastSyncedAt={psnLastSyncedAt} tokenAge={psnTokenAge} />
-        </div>
-      </div>
+            <SyncButton configured={steamConfigured} lastSyncedAt={steamLastSyncedAt} />
+            <PsnSyncButton configured={psnConfigured} lastSyncedAt={psnLastSyncedAt} tokenAge={psnTokenAge} />
+          </>
+        }
+      />
 
       {/* Search sits on its own row, above the chips, at every breakpoint —
           rather than sharing one line with two chip groups that only wraps
@@ -275,32 +275,5 @@ export function LibraryView({
         }}
       />
     </div>
-  );
-}
-
-function FilterChip({
-  label,
-  count,
-  active,
-  onClick,
-}: {
-  readonly label: string;
-  readonly count: number;
-  readonly active: boolean;
-  readonly onClick: () => void;
-}): React.ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-        active ? 'bg-foreground text-background border-transparent' : 'text-muted-foreground hover:bg-muted',
-      )}
-    >
-      {label}
-      <span className="ml-1.5 opacity-60">{count}</span>
-    </button>
   );
 }

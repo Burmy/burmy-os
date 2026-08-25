@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { PageHeader } from '@/components/ui/page-header';
 import { GamesDashboard } from '@/features/games/dashboard/games-dashboard';
 import { requireOwner } from '@/server/auth/owner';
 import { listGameStatRows } from '@/server/db/games/games';
@@ -18,5 +19,10 @@ export default async function GamesStatsPage(): Promise<React.ReactElement> {
   // reproducible and testable without mocking time.
   const currentYear = new Date().getUTCFullYear();
 
-  return <GamesDashboard rows={rows} playYears={playYears} currentYear={currentYear} />;
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Stats" />
+      <GamesDashboard rows={rows} playYears={playYears} currentYear={currentYear} />
+    </div>
+  );
 }

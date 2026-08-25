@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 
+import { PageHeader } from '@/components/ui/page-header';
 import { TransactionsTable } from '@/features/finance/transactions/transactions-table';
 import { parseLedgerFilters } from '@/features/finance/transactions/filters';
 import { requireOwner } from '@/server/auth/owner';
@@ -81,11 +82,10 @@ export default async function TransactionsPage({
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Transactions</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        The complete transaction ledger behind the monthly grid — search, filter, correct history, and
-        export.
-      </p>
+      <PageHeader
+        title="Transactions"
+        subtitle="The complete transaction ledger behind the monthly grid — search, filter, correct history, and export."
+      />
 
       <TransactionsTable
         page={ledgerPage}

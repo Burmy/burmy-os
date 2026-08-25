@@ -3,6 +3,7 @@
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { EmptyState } from '@/components/finance/empty-state';
+import { TOOLTIP_STYLES } from '@/components/ui/chart-utils';
 import type { TrendPoint } from '@/server/finance/dashboard';
 import { computeChartDomain, formatAxisDollars, formatTooltipDollars } from './chart-utils';
 
@@ -28,20 +29,7 @@ export function NetCashflowChart({ points }: { readonly points: readonly TrendPo
           tickFormatter={formatAxisDollars}
           width={56}
         />
-        <Tooltip
-          formatter={(value) => formatTooltipDollars(Number(value))}
-          contentStyle={{
-            background: 'var(--color-popover)',
-            color: 'var(--color-popover-foreground)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            fontSize: 13,
-          }}
-          // Recharts defaults each item's text to the series' own fill
-          // color, not guaranteed readable against the popover background.
-          itemStyle={{ color: 'var(--color-popover-foreground)' }}
-          labelStyle={{ color: 'var(--color-popover-foreground)' }}
-        />
+        <Tooltip formatter={(value) => formatTooltipDollars(Number(value))} {...TOOLTIP_STYLES} />
         <Bar dataKey="netCents" name="Net" radius={[3, 3, 3, 3]}>
           {points.map((point) => (
             <Cell

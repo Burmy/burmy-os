@@ -1,3 +1,5 @@
+import { Section } from '@/components/ui/section';
+import { StatCard } from '@/components/ui/stat-card';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatPriceCents } from '@/server/games/money';
 import type { PlayYearRow } from '@/server/games/play-years';
@@ -174,26 +176,6 @@ export function GamesDashboard({
   );
 }
 
-function StatCard({
-  label,
-  value,
-  hint,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly hint?: string;
-}): React.ReactElement {
-  return (
-    <div className="rounded-lg border p-4">
-      <p className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</p>
-      <p className="mt-2 truncate text-2xl font-semibold" title={value}>
-        {value}
-      </p>
-      {hint === undefined ? null : <p className="text-muted-foreground mt-1 text-xs">{hint}</p>}
-    </div>
-  );
-}
-
 /**
  * A lightweight, unbordered heading over a row of `StatCard`s — grouping
  * related numbers (Library / Ratings & achievements / Money) without
@@ -218,25 +200,5 @@ function StatGroup({
       </div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{children}</div>
     </div>
-  );
-}
-
-function Section({
-  title,
-  description,
-  children,
-}: {
-  readonly title: string;
-  readonly description?: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <section className="rounded-lg border p-4">
-      <h2 className="text-sm font-medium">{title}</h2>
-      {description === undefined ? null : (
-        <p className="text-muted-foreground mt-1 mb-3 text-xs">{description}</p>
-      )}
-      <div className="mt-3">{children}</div>
-    </section>
   );
 }

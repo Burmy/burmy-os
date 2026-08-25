@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { categoryColor, computeChartDomain, formatAxisHours } from '@/features/games/dashboard/chart-utils';
+import { computeChartDomain, formatAxisHours } from '@/features/games/dashboard/chart-utils';
 
 describe('formatAxisHours', () => {
   it('renders whole hours compactly', () => {
@@ -9,13 +9,6 @@ describe('formatAxisHours', () => {
 
   it('renders zero as 0h rather than an empty label', () => {
     expect(formatAxisHours(0)).toBe('0h');
-  });
-});
-
-describe('categoryColor', () => {
-  it('cycles through the palette rather than running out', () => {
-    expect(categoryColor(0)).toBe(categoryColor(16));
-    expect(categoryColor(0)).not.toBe(categoryColor(1));
   });
 });
 

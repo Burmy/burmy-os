@@ -3,9 +3,10 @@
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 import { EmptyState } from '@/components/finance/empty-state';
-import type { CategoryAmount } from '@/server/finance/dashboard';
 import { formatPercent } from '@/components/finance/format-percent';
-import { categoryColor, formatAxisDollars, formatTooltipDollars } from './chart-utils';
+import { TOOLTIP_STYLES, categoryColor } from '@/components/ui/chart-utils';
+import type { CategoryAmount } from '@/server/finance/dashboard';
+import { formatAxisDollars, formatTooltipDollars } from './chart-utils';
 
 /**
  * Horizontal bar, not a donut — reads cleanly at any category count, unlike
@@ -44,18 +45,7 @@ export function CategoryBreakdownChart({
             const percent = (item?.payload as CategoryAmount | undefined)?.percentOfExpenses ?? 0;
             return [`${formatTooltipDollars(Number(value))} (${formatPercent(percent)})`, 'Spent'];
           }}
-          contentStyle={{
-            background: 'var(--color-popover)',
-            color: 'var(--color-popover-foreground)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            fontSize: 13,
-          }}
-          // Recharts defaults each item's text to the series' own fill color
-          // (readable on a bar, not guaranteed readable as text on the
-          // popover background) — force it back to the theme foreground.
-          itemStyle={{ color: 'var(--color-popover-foreground)' }}
-          labelStyle={{ color: 'var(--color-popover-foreground)' }}
+          {...TOOLTIP_STYLES}
         />
         <Bar dataKey="amountCents" radius={[0, 3, 3, 0]} maxBarSize={22}>
           {categories.map((category, index) => (

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Tag } from 'lucide-react';
 import Link from 'next/link';
 
+import { PageHeader } from '@/components/ui/page-header';
 import { ThemeToggle } from '@/features/shell/theme-toggle';
 import { requireOwner } from '@/server/auth/owner';
 import { readTheme } from '@/server/security/theme';
@@ -28,7 +29,7 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
 
   return (
     <div>
-      <h1 className="text-xl font-semibold">Settings</h1>
+      <PageHeader title="Settings" />
 
       <div className="mt-8">
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Finance</h2>

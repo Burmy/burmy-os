@@ -2,8 +2,9 @@
 
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
+import { TOOLTIP_STYLES } from '@/components/ui/chart-utils';
 import { type GameStatRow, buildDistribution } from '@/server/games/stats';
-import { TOOLTIP_STYLES, computeChartDomain } from '../chart-utils';
+import { computeChartDomain } from '../chart-utils';
 
 const RATING_VALUES = [1, 2, 3, 4, 5] as const;
 

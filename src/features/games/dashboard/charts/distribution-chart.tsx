@@ -2,8 +2,8 @@
 
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
+import { TOOLTIP_STYLES, categoryColor } from '@/components/ui/chart-utils';
 import type { DistributionSlice } from '@/server/games/stats';
-import { TOOLTIP_STYLES, categoryColor } from '../chart-utils';
 
 /**
  * Horizontal bars, not a donut — a donut degrades badly past ~6 slices, and
