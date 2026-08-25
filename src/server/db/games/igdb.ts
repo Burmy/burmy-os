@@ -92,6 +92,19 @@ function credentials(): Credentials | null {
   return { clientId, clientSecret };
 }
 
+/**
+ * Whether `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` are present — checked
+ * directly against `process.env`, independent of any fetch result. Needed
+ * because `fetchUpcomingGames()` (like `searchGames()`) returns `[]` on
+ * missing credentials AND on a genuine request failure, so it alone can't
+ * tell the "Upcoming games" tab which empty state to show. Same pattern as
+ * `psnConfigured()` in `psn-client.ts` and `steamCredentialsConfigured()` in
+ * `sync-actions.ts` for their own integrations.
+ */
+export function igdbConfigured(): boolean {
+  return credentials() !== null;
+}
+
 async function fetchToken({ clientId, clientSecret }: Credentials): Promise<CachedToken | null> {
   try {
     const params = new URLSearchParams({

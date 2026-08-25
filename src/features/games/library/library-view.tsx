@@ -61,10 +61,26 @@ export function LibraryView({
   const [editing, setEditing] = useState<Game | null>(null);
   const [creating, setCreating] = useState(false);
 
+  // `wanted` (wishlist) games are hidden unless their own status chip is
+  // active — see the plan's "Library hides it by default." Every OTHER
+  // chip's count (status, platform, source), and the "All ___" chip in each
+  // group, is computed over THIS set rather than `games` directly, so none
+  // of them jump as the wishlist grows: a wishlisted PS5 game shouldn't
+  // inflate the "PS5" platform chip while it's still invisible in the
+  // default view. `counts` (the per-status map) below is the one exception
+  // that stays keyed off `games` — it has to be, since `wanted`'s own chip
+  // needs a real count, and doing so changes nothing for the other statuses
+  // (a `wanted` row is never counted under any OTHER status key either way).
+  const nonWantedGames = useMemo(() => games.filter((game) => game.status !== 'wanted'), [games]);
+
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return games.filter((game) => {
-      if (status !== 'all' && game.status !== status) return false;
+      if (status === 'all') {
+        if (game.status === 'wanted') return false;
+      } else if (game.status !== status) {
+        return false;
+      }
       if (platform !== 'all' && game.platform !== platform) return false;
       if (source === 'steam' && game.steamAppid === null) return false;
       if (source === 'manual' && game.steamAppid !== null) return false;
@@ -85,21 +101,21 @@ export function LibraryView({
 
   const platformCounts = useMemo(() => {
     const byPlatform = new Map<GamePlatform, number>();
-    for (const game of games) byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
+    for (const game of nonWantedGames) byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
     return byPlatform;
-  }, [games]);
+  }, [nonWantedGames]);
 
   // Same provenance signal as game-dialog.tsx's `steamOwned` and
   // game-card.tsx's source mark — `steamAppid !== null`, not `platform`.
   const sourceCounts = useMemo(() => {
     let steam = 0;
     let manual = 0;
-    for (const game of games) {
+    for (const game of nonWantedGames) {
       if (game.steamAppid === null) manual += 1;
       else steam += 1;
     }
     return { steam, manual };
-  }, [games]);
+  }, [nonWantedGames]);
 
   return (
     <div className="space-y-4">
@@ -107,9 +123,13 @@ export function LibraryView({
         <div>
           <h1 className="text-xl font-semibold">Library</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {visible.length === games.length
-              ? `${games.length} game${games.length === 1 ? '' : 's'}`
-              : `${visible.length} of ${games.length} games`}
+            {/* Baseline is the NON-wanted count, not `games.length` — wanted
+                games are hidden by default, so the default view (no filter
+                touched) must read as "N games," not "N of M" against a
+                total that silently includes invisible wishlist rows. */}
+            {visible.length === nonWantedGames.length
+              ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
+              : `${visible.length} of ${nonWantedGames.length} games`}
           </p>
         </div>
 
@@ -166,7 +186,7 @@ export function LibraryView({
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="flex flex-wrap gap-1">
-            <FilterChip label="All" count={games.length} active={status === 'all'} onClick={() => setStatus('all')} />
+            <FilterChip label="All" count={nonWantedGames.length} active={status === 'all'} onClick={() => setStatus('all')} />
             {/* A status with zero games in the library is noise, not a real filter —
                 same principle as the platform chips below. */}
             {GAME_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
@@ -183,7 +203,7 @@ export function LibraryView({
           <div className="flex flex-wrap gap-1">
             <FilterChip
               label="All platforms"
-              count={games.length}
+              count={nonWantedGames.length}
               active={platform === 'all'}
               onClick={() => setPlatform('all')}
             />
@@ -204,7 +224,7 @@ export function LibraryView({
           <div className="flex flex-wrap gap-1">
             <FilterChip
               label="All sources"
-              count={games.length}
+              count={nonWantedGames.length}
               active={source === 'all'}
               onClick={() => setSource('all')}
             />

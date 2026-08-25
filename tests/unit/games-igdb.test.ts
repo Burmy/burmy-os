@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { __resetIgdbTokenCacheForTests, fetchUpcomingGames, searchGames } from '@/server/db/games/igdb';
+import { __resetIgdbTokenCacheForTests, fetchUpcomingGames, igdbConfigured, searchGames } from '@/server/db/games/igdb';
 
 /**
  * `searchGames` must fail SOFT in every case — missing credentials, a
@@ -377,5 +377,27 @@ describe('fetchUpcomingGames', () => {
     expect(requestedBody).toContain('game_type = 0');
     expect(requestedBody).toContain('platforms = (167,6)');
     expect(requestedBody).toContain('hypes >= 30');
+  });
+});
+
+/**
+ * `igdbConfigured()` is what lets the Upcoming tab tell "not configured"
+ * apart from "configured, but nothing came back" — a distinction
+ * `fetchUpcomingGames()` alone cannot make, since it returns `[]` for both.
+ * See that function's own doc comment.
+ */
+describe('igdbConfigured', () => {
+  it('is false when neither credential is set', () => {
+    expect(igdbConfigured()).toBe(false);
+  });
+
+  it('is false when only one of the two credentials is set', () => {
+    vi.stubEnv('IGDB_CLIENT_ID', 'test-client-id');
+    expect(igdbConfigured()).toBe(false);
+  });
+
+  it('is true once both credentials are set', () => {
+    stubCredentials();
+    expect(igdbConfigured()).toBe(true);
   });
 });

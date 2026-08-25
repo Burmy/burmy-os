@@ -21,6 +21,21 @@ export class DuplicateGameError extends Error {
 }
 
 /**
+ * A duplicate `igdb_id` on a wishlist add — the owner already has a `games`
+ * row for this exact IGDB game, wishlisted or since promoted to `backlog`.
+ * Deliberately its own class rather than reusing `DuplicateGameError`: that
+ * one's message ("the same game on a different platform is fine") describes
+ * the title+platform index, not this one, and repeating it here would be
+ * actively misleading about what actually collided.
+ */
+export class DuplicateWishlistGameError extends Error {
+  constructor(readonly duplicateTitle: string) {
+    super(`"${duplicateTitle}" is already in your library.`);
+    this.name = 'DuplicateWishlistGameError';
+  }
+}
+
+/**
  * The row does not exist, or belongs to someone else. One error for both, so a
  * crafted id cannot be used to probe for another owner's rows.
  */

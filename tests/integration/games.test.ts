@@ -450,3 +450,164 @@ describe('PSN identity columns', () => {
     expect(fetched.lastPlayedAt).toEqual(lastPlayedAt);
   });
 });
+
+/**
+ * Upcoming games / wishlist — the DAL added for the "Upcoming games" tab.
+ * The Server Action path built on top of this (owner resolution, zod
+ * validation, `revalidatePath`) is `tests/integration/games-upcoming-actions.test.ts`'s
+ * job — same split this suite already draws for the rest of the games
+ * actions vs. their DAL.
+ */
+describe('createWishlistGame', () => {
+  it('creates a wanted row stamped with igdbId, coverUrl and releaseDate', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+
+    const created = await games.createWishlistGame(owner, {
+      igdbId: 92550,
+      title: 'Fable',
+      coverUrl: 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/cobc6d.jpg',
+      releaseDate: '2027-02-01',
+      platform: 'ps5',
+    });
+
+    expect(created.status).toBe('wanted');
+    expect(created.title).toBe('Fable');
+    expect(created.platform).toBe('ps5');
+    expect(created.coverUrl).toBe('https://images.igdb.com/igdb/image/upload/t_cover_big_2x/cobc6d.jpg');
+
+    const fetched = await games.getGame(owner, created.id);
+    expect(fetched.status).toBe('wanted');
+  });
+
+  it('rejects a second wishlist add for the same igdbId, for the same owner', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    await games.createWishlistGame(owner, { igdbId: 92550, title: 'Fable', coverUrl: null, releaseDate: null, platform: 'ps5' });
+
+    await expect(
+      games.createWishlistGame(owner, {
+        igdbId: 92550,
+        title: 'Fable (again)',
+        coverUrl: null,
+        releaseDate: null,
+        platform: 'ps5',
+      }),
+    ).rejects.toBeInstanceOf(errors.DuplicateWishlistGameError);
+  });
+
+  it('allows two different owners to each wishlist the same igdbId — the partial index is per owner', async () => {
+    const mine = await makeOwner('mine@burmy.test');
+    const theirs = await makeOwner('theirs@burmy.test');
+
+    const myGame = await games.createWishlistGame(mine, {
+      igdbId: 92550,
+      title: 'Fable',
+      coverUrl: null,
+      releaseDate: null,
+      platform: 'ps5',
+    });
+    const theirGame = await games.createWishlistGame(theirs, {
+      igdbId: 92550,
+      title: 'Fable',
+      coverUrl: null,
+      releaseDate: null,
+      platform: 'ps5',
+    });
+
+    expect(myGame.id).not.toBe(theirGame.id);
+  });
+});
+
+describe('listWishlistIgdbIds', () => {
+  it('returns only this owner’s igdb ids, ignoring games with no igdbId at all', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    await games.createGame(owner, { title: 'Manually Added', platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 111, title: 'Wishlisted', coverUrl: null, releaseDate: null, platform: 'ps5' });
+
+    expect(await games.listWishlistIgdbIds(owner)).toEqual([111]);
+  });
+
+  it('still includes an igdb id after its row is promoted to backlog', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    await games.createWishlistGame(owner, {
+      igdbId: 222,
+      title: 'Released Now',
+      coverUrl: null,
+      releaseDate: '2020-01-01',
+      platform: 'ps5',
+    });
+
+    await games.promoteReleasedWantedGames(owner);
+
+    expect(await games.listWishlistIgdbIds(owner)).toEqual([222]);
+  });
+
+  it('never returns another owner’s igdb ids', async () => {
+    const mine = await makeOwner('mine@burmy.test');
+    const theirs = await makeOwner('theirs@burmy.test');
+    await games.createWishlistGame(theirs, { igdbId: 333, title: 'Theirs', coverUrl: null, releaseDate: null, platform: 'ps5' });
+
+    expect(await games.listWishlistIgdbIds(mine)).toEqual([]);
+  });
+});
+
+describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
+  it('counts only wanted rows whose release date has passed — not future dates, not TBD (null) dates', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 2, title: 'Future', coverUrl: null, releaseDate: '2099-01-01', platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, platform: 'ps5' });
+
+    expect(await games.countOverdueWantedGames(owner)).toBe(1);
+  });
+
+  it('flips only the overdue wanted rows to backlog, leaving future and TBD wishlist rows as wanted', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const overdue = await games.createWishlistGame(owner, {
+      igdbId: 1,
+      title: 'Overdue',
+      coverUrl: null,
+      releaseDate: '2020-01-01',
+      platform: 'ps5',
+    });
+    const future = await games.createWishlistGame(owner, {
+      igdbId: 2,
+      title: 'Future',
+      coverUrl: null,
+      releaseDate: '2099-01-01',
+      platform: 'ps5',
+    });
+    const tbd = await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, platform: 'ps5' });
+
+    const flipped = await games.promoteReleasedWantedGames(owner);
+
+    expect(flipped).toBe(1);
+    expect((await games.getGame(owner, overdue.id)).status).toBe('backlog');
+    expect((await games.getGame(owner, future.id)).status).toBe('wanted');
+    expect((await games.getGame(owner, tbd.id)).status).toBe('wanted');
+  });
+
+  it('only flips the given owner’s rows', async () => {
+    const mine = await makeOwner('mine@burmy.test');
+    const theirs = await makeOwner('theirs@burmy.test');
+    const theirOverdue = await games.createWishlistGame(theirs, {
+      igdbId: 1,
+      title: 'Their overdue game',
+      coverUrl: null,
+      releaseDate: '2020-01-01',
+      platform: 'ps5',
+    });
+
+    const flipped = await games.promoteReleasedWantedGames(mine);
+
+    expect(flipped).toBe(0);
+    expect((await games.getGame(theirs, theirOverdue.id)).status).toBe('wanted');
+  });
+
+  it('is idempotent — a second call touches zero rows once the first has already flipped everything', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', platform: 'ps5' });
+
+    expect(await games.promoteReleasedWantedGames(owner)).toBe(1);
+    expect(await games.promoteReleasedWantedGames(owner)).toBe(0);
+  });
+});

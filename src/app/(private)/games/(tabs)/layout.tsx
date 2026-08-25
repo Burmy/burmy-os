@@ -2,7 +2,7 @@ import { SubNav } from '@/features/shell/nav';
 import { requireOwner } from '@/server/auth/owner';
 
 /**
- * Library / Stats — the two Games screens that share a persistent tab bar.
+ * Library / Upcoming / Stats — the Games screens that share a persistent tab bar.
  *
  * `requireOwner()` here is defense-in-depth alongside the page-level calls each
  * page makes itself. A layout guard alone would not protect a page's Server
@@ -15,6 +15,7 @@ export default async function GamesTabsLayout({
 
   const links = [
     { href: '/games/library', label: 'Library' },
+    { href: '/games/upcoming', label: 'Upcoming' },
     { href: '/games/stats', label: 'Stats' },
   ];
 

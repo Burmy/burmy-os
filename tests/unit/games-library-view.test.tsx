@@ -255,4 +255,71 @@ describe('LibraryView', () => {
     expect(screen.getByRole('button', { name: /sync with steam/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /sync with playstation/i })).not.toBeDisabled();
   });
+
+  /**
+   * "Upcoming games" plan, Task 5: `wanted` (wishlist) rows are hidden from
+   * the default view and revealed only by their own status chip — see
+   * `library-view.tsx`'s `nonWantedGames` comment for the full reasoning.
+   */
+  describe('wanted (wishlist) games', () => {
+    it('hides wanted games from the default gallery view', () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', title: 'Owned Game', status: 'completed' }),
+            game({ id: 'b', title: 'Wishlisted Game', status: 'wanted' }),
+          ]}
+        />,
+      );
+
+      expect(screen.getByText('Owned Game')).toBeInTheDocument();
+      expect(screen.queryByText('Wishlisted Game')).not.toBeInTheDocument();
+    });
+
+    it('reveals wanted games only once their own status chip is active', async () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', title: 'Owned Game', status: 'completed' }),
+            game({ id: 'b', title: 'Wishlisted Game', status: 'wanted' }),
+          ]}
+        />,
+      );
+
+      await userEvent.click(screen.getByRole('button', { name: /^wanted/i }));
+
+      expect(screen.getByText('Wishlisted Game')).toBeInTheDocument();
+      expect(screen.queryByText('Owned Game')).not.toBeInTheDocument();
+    });
+
+    it('does not count wanted games in the "All" status chip, the platform chips, or the header total', () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', title: 'Owned Game', status: 'completed', platform: 'ps5' }),
+            game({ id: 'b', title: 'Wishlisted Game', status: 'wanted', platform: 'ps5' }),
+          ]}
+        />,
+      );
+
+      // "1 game" — the wishlist entry must not inflate the total.
+      expect(screen.getByText('1 game')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^all\d/i })).toHaveTextContent('All1');
+      expect(screen.getByRole('button', { name: /^ps5/i })).toHaveTextContent('PS51');
+    });
+
+    it("the Wanted chip's own count is unaffected by being excluded from every other chip", () => {
+      render(
+        <LibraryView
+          games={[
+            game({ id: 'a', status: 'completed' }),
+            game({ id: 'b', status: 'wanted' }),
+            game({ id: 'c', status: 'wanted' }),
+          ]}
+        />,
+      );
+
+      expect(screen.getByRole('button', { name: /^wanted/i })).toHaveTextContent('Wanted2');
+    });
+  });
 });

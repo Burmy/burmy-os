@@ -11,13 +11,13 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
 import type { GameStatRow } from '@/server/games/stats';
 import type { GameOwnership, GamePlatform, GameStatus } from '@/server/games/taxonomy';
-import { DuplicateGameError, GameNotFoundError, isUniqueViolation } from './errors';
+import { DuplicateGameError, DuplicateWishlistGameError, GameNotFoundError, isUniqueViolation } from './errors';
 import { listPlayYears, listPlayYearsForGame } from './play-years';
 
 export interface Game {
@@ -295,6 +295,108 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
     ownership: row.ownership as GameOwnership | null,
     status: row.status as GameStatus,
   }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upcoming games / wishlist (src/features/games/upcoming/wishlist-actions.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** What `addToWishlistAction` needs to create a `wanted` row from an IGDB "Upcoming games" candidate. */
+export interface WishlistGameInput {
+  readonly igdbId: number;
+  readonly title: string;
+  readonly coverUrl: string | null;
+  /** `YYYY-MM-DD`, or `null` for a Later/TBD candidate — see `UpcomingMonthGame.releaseDate`. */
+  readonly releaseDate: string | null;
+  readonly platform: GamePlatform;
+}
+
+/**
+ * Creates a `wanted` (wishlist) row. A dedicated insert, not a call to
+ * `createGame`: the two functions guard two DIFFERENT unique indexes
+ * (`games_owner_title_platform_idx` vs. `games_owner_igdb_id_idx`), and a
+ * shared `isUniqueViolation()` catch has no way to tell which one fired —
+ * this keeps the resulting error message honest about which collision
+ * actually happened, rather than reusing `DuplicateGameError`'s
+ * title+platform wording ("the same game on a different platform is fine")
+ * for a conflict that is actually about the IGDB id.
+ */
+export async function createWishlistGame(ownerId: string, input: WishlistGameInput): Promise<Game> {
+  try {
+    const rows = await getDb()
+      .insert(gamesTable)
+      .values({
+        ownerId,
+        title: input.title,
+        platform: input.platform,
+        status: 'wanted',
+        coverUrl: input.coverUrl,
+        releaseDate: input.releaseDate,
+        igdbId: input.igdbId,
+      })
+      .returning();
+
+    const row = rows[0];
+    if (!row) throw new Error('Wishlist game insert returned no row');
+    // A brand-new wishlist row has no play-year split — nothing to query.
+    return rowToGame(row, []);
+  } catch (error) {
+    if (isUniqueViolation(error)) throw new DuplicateWishlistGameError(input.title);
+    throw error;
+  }
+}
+
+/**
+ * Every IGDB game id the owner already has a `games` row for — wishlisted,
+ * or since promoted to `backlog` by the auto-flip; either way, still the
+ * SAME row the unique index on `(owner_id, igdb_id)` guards. Used by the
+ * Upcoming tab to render an already-added candidate as "Added" instead of
+ * offering the add control a second time.
+ */
+export async function listWishlistIgdbIds(ownerId: string): Promise<number[]> {
+  const rows = await getDb()
+    .select({ igdbId: gamesTable.igdbId })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), isNotNull(gamesTable.igdbId)));
+
+  return rows.map((row) => row.igdbId).filter((igdbId): igdbId is number => igdbId !== null);
+}
+
+/**
+ * How many of the owner's wishlist rows have a `release_date` already in
+ * the past. The Upcoming page counts this at render time and hands it down
+ * so the client can decide whether to fire `promoteReleasedWantedGamesAction`
+ * — see that action's own doc comment for why the flip itself can't happen
+ * here, during a Server Component's render.
+ */
+export async function countOverdueWantedGames(ownerId: string): Promise<number> {
+  const rows = await getDb()
+    .select({ n: sql<number>`count(*)::int` })
+    .from(gamesTable)
+    .where(
+      and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.status, 'wanted'), sql`${gamesTable.releaseDate} < current_date`),
+    );
+
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * `wanted` -> `backlog` for every one of the owner's wishlist rows whose
+ * `release_date` has passed. Owner-scoped, and idempotent — a second call
+ * touches zero rows once the first has already flipped everything overdue.
+ * Returns the number of rows flipped, useful only for tests; callers don't
+ * need it.
+ */
+export async function promoteReleasedWantedGames(ownerId: string): Promise<number> {
+  const rows = await getDb()
+    .update(gamesTable)
+    .set({ status: 'backlog', updatedAt: new Date() })
+    .where(
+      and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.status, 'wanted'), sql`${gamesTable.releaseDate} < current_date`),
+    )
+    .returning({ id: gamesTable.id });
+
+  return rows.length;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
