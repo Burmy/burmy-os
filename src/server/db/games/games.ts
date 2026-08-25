@@ -42,6 +42,9 @@ export interface Game {
   readonly averagePlaytimeHours: number | null;
   readonly esrbRating: string | null;
   readonly steamAppid: number | null;
+  readonly psnTitleId: string | null;
+  readonly psnNpCommunicationId: string | null;
+  readonly lastPlayedAt: Date | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
@@ -69,6 +72,9 @@ export interface GameInput {
   readonly averagePlaytimeHours?: number | null;
   readonly esrbRating?: string | null;
   readonly steamAppid?: number | null;
+  readonly psnTitleId?: string | null;
+  readonly psnNpCommunicationId?: string | null;
+  readonly lastPlayedAt?: Date | null;
 }
 
 function rowToGame(
@@ -97,6 +103,9 @@ function rowToGame(
     averagePlaytimeHours: row.averagePlaytimeHours,
     esrbRating: row.esrbRating,
     steamAppid: row.steamAppid,
+    psnTitleId: row.psnTitleId,
+    psnNpCommunicationId: row.psnNpCommunicationId,
+    lastPlayedAt: row.lastPlayedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     playYears,

@@ -880,6 +880,24 @@ export const games = pgTable(
      * third-party library sync.
      */
     steamAppid: integer('steam_appid'),
+    /**
+     * PSN's stable per-title id (e.g. `CUSA12345_00`), TEXT not numeric —
+     * unlike Steam's `steamAppid`. Played-game data (hours, first played,
+     * platform) is keyed by this id.
+     *
+     * `psnTitleId` and `psnNpCommunicationId` below are TWO SEPARATE
+     * identifier spaces with no join key between them except the game's
+     * name: trophy data (counts, platinum) is keyed by
+     * `npCommunicationId`, not `titleId`. Both are stored because the sync
+     * engine resolves each independently against the owner's library, the
+     * same "resolve the match once, persist the external id" precedent
+     * `steamAppid` already set.
+     */
+    psnTitleId: text('psn_title_id'),
+    /** See `psnTitleId` above — a separate id space, used only for trophy data. */
+    psnNpCommunicationId: text('psn_np_communication_id'),
+    /** Most recent play activity PSN reported for this title, if any. */
+    lastPlayedAt: timestamp('last_played_at', { withTimezone: true }),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -899,6 +917,13 @@ export const games = pgTable(
     uniqueIndex('games_owner_steam_appid_idx')
       .on(t.ownerId, t.steamAppid)
       .where(sql`${t.steamAppid} is not null`),
+    // Same partial-uniqueness shape as the Steam index above, for the same
+    // reason: only rows matched to a PSN title carry a value here, and one
+    // PSN title maps to at most one library row per owner. `psnNpCommunicationId`
+    // deliberately gets NO uniqueness constraint — see the field comment.
+    uniqueIndex('games_owner_psn_title_id_idx')
+      .on(t.ownerId, t.psnTitleId)
+      .where(sql`${t.psnTitleId} is not null`),
   ],
 );
 

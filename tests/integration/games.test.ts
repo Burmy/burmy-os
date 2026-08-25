@@ -325,3 +325,98 @@ describe('cross-owner isolation', () => {
     await expect(games.deleteGame(mine, theirGame.id)).rejects.toBeInstanceOf(errors.GameNotFoundError);
   });
 });
+
+/**
+ * `games_owner_psn_title_id_idx` — the partial unique index on
+ * (owner_id, psn_title_id) added alongside `psnTitleId`/`psnNpCommunicationId`/
+ * `lastPlayedAt`. Mirrors the existing `games_owner_steam_appid_idx` coverage
+ * this suite never had its own describe block for, but the brief specifically
+ * calls out the partial-index shape as the thing worth proving against real
+ * Postgres: a `WHERE psn_title_id is not null` index enforces uniqueness only
+ * among MATCHED rows, and must never limit the library to one unmatched (Steam
+ * or PSP) row per owner.
+ */
+describe('PSN identity columns', () => {
+  it('rejects two rows sharing a psn_title_id for one owner', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    await games.createGame(owner, { title: 'Bloodborne', platform: 'ps4', psnTitleId: 'CUSA12345_00' });
+
+    await expect(
+      games.createGame(owner, { title: 'Bloodborne GOTY', platform: 'ps4', psnTitleId: 'CUSA12345_00' }),
+    ).rejects.toBeInstanceOf(errors.DuplicateGameError);
+  });
+
+  it('allows many rows with a null psn_title_id for the same owner — the point of the partial index', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+
+    // Stand-ins for the real shape: dozens of Steam and PSP rows that will
+    // never carry a PSN id at all. A non-partial unique index would allow
+    // at most one of these.
+    const steamGame = await games.createGame(owner, { title: 'Hollow Knight', platform: 'steam' });
+    const pspGame = await games.createGame(owner, { title: 'Persona 3 Portable', platform: 'psp' });
+    const anotherNullPsn = await games.createGame(owner, { title: 'Returnal', platform: 'ps5' });
+
+    expect(steamGame.psnTitleId).toBeNull();
+    expect(pspGame.psnTitleId).toBeNull();
+    expect(anotherNullPsn.psnTitleId).toBeNull();
+  });
+
+  it('allows two different owners to each have a game with the same psn_title_id', async () => {
+    const mine = await makeOwner('mine@burmy.test');
+    const theirs = await makeOwner('theirs@burmy.test');
+
+    const myGame = await games.createGame(mine, { title: 'God of War', platform: 'ps5', psnTitleId: 'CUSA99999_00' });
+    const theirGame = await games.createGame(theirs, {
+      title: 'God of War',
+      platform: 'ps5',
+      psnTitleId: 'CUSA99999_00',
+    });
+
+    expect(myGame.psnTitleId).toBe('CUSA99999_00');
+    expect(theirGame.psnTitleId).toBe('CUSA99999_00');
+  });
+
+  it('places no uniqueness constraint on psn_np_communication_id — duplicates are allowed', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+
+    // Same npCommunicationId on two different titles is a realistic shape —
+    // psn-api's trophy titles and played-game titles live in separate id
+    // spaces joined only by name, so nothing here should ever collide.
+    const first = await games.createGame(owner, {
+      title: 'Ghost of Tsushima',
+      platform: 'ps4',
+      psnNpCommunicationId: 'NPWR12345_00',
+    });
+    const second = await games.createGame(owner, {
+      title: 'Ghost of Tsushima Director’s Cut',
+      platform: 'ps5',
+      psnNpCommunicationId: 'NPWR12345_00',
+    });
+
+    expect(first.psnNpCommunicationId).toBe('NPWR12345_00');
+    expect(second.psnNpCommunicationId).toBe('NPWR12345_00');
+  });
+
+  it('round-trips psnTitleId, psnNpCommunicationId and lastPlayedAt through createGame/getGame', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const lastPlayedAt = new Date('2026-08-01T12:00:00Z');
+
+    const created = await games.createGame(owner, {
+      title: 'Spider-Man 2',
+      platform: 'ps5',
+      psnTitleId: 'CUSA54321_00',
+      psnNpCommunicationId: 'NPWR54321_00',
+      lastPlayedAt,
+    });
+
+    expect(created.psnTitleId).toBe('CUSA54321_00');
+    expect(created.psnNpCommunicationId).toBe('NPWR54321_00');
+    expect(created.lastPlayedAt).toEqual(lastPlayedAt);
+
+    const fetched = await games.getGame(owner, created.id);
+
+    expect(fetched.psnTitleId).toBe('CUSA54321_00');
+    expect(fetched.psnNpCommunicationId).toBe('NPWR54321_00');
+    expect(fetched.lastPlayedAt).toEqual(lastPlayedAt);
+  });
+});
