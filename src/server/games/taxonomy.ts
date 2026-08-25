@@ -14,7 +14,7 @@ export type GamePlatform = (typeof GAME_PLATFORMS)[number];
 export const GAME_OWNERSHIPS = ['physical', 'digital'] as const;
 export type GameOwnership = (typeof GAME_OWNERSHIPS)[number];
 
-export const GAME_STATUSES = ['backlog', 'playing', 'completed', 'paused_dropped'] as const;
+export const GAME_STATUSES = ['backlog', 'playing', 'completed', 'paused_dropped', 'wanted'] as const;
 export type GameStatus = (typeof GAME_STATUSES)[number];
 
 export const PLATFORM_LABELS: Record<GamePlatform, string> = {
@@ -49,6 +49,7 @@ export const STATUS_LABELS: Record<GameStatus, string> = {
   playing: 'Playing',
   completed: 'Completed',
   paused_dropped: 'Paused / Dropped',
+  wanted: 'Wanted',
 };
 
 export const OWNERSHIP_LABELS: Record<GameOwnership, string> = {

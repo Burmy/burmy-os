@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -253,6 +253,18 @@ export async function deleteGame(ownerId: string, id: string): Promise<void> {
  * explicitly rather than reusing `listGames` keeps the stats layer's input
  * shape from silently widening every time a display field is added.
  */
+/**
+ * The read boundary every stat function shares. `wanted` rows are wishlist
+ * entries, not owned games — they must never contribute to a library
+ * total, average, count, or leaderboard. Filtered ONCE, here, rather than in
+ * each of `buildLibrarySummary`/`buildYearlyBreakdown`/`buildDistribution`/
+ * `findCallouts`/`buildFinancialSummary`/`buildLeaderboard` individually:
+ * six call sites is six chances to forget one, and a stat function added
+ * later would silently miss the exclusion. Filtering at this single query
+ * boundary makes every current and future stat correct by construction. See
+ * CLAUDE.md and the plan's "The two consequences of `wanted` being a real
+ * status."
+ */
 export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> {
   const rows = await getDb()
     .select({
@@ -275,7 +287,7 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
       priceCents: gamesTable.priceCents,
     })
     .from(gamesTable)
-    .where(eq(gamesTable.ownerId, ownerId));
+    .where(and(eq(gamesTable.ownerId, ownerId), ne(gamesTable.status, 'wanted')));
 
   return rows.map((row) => ({
     ...row,

@@ -301,6 +301,36 @@ describe('listGameStatRows', () => {
       rating: 5,
     });
   });
+
+  it('excludes wanted (wishlist) games — they are not owned and must never enter a stat', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const owned = await games.createGame(owner, {
+      title: 'Ghost of Tsushima',
+      platform: 'ps4',
+      status: 'completed',
+      hoursTenths: 1080,
+      firstPlayedYear: 2020,
+      rating: 5,
+      priceCents: 5_999,
+    });
+    await games.createGame(owner, {
+      title: 'Fable',
+      platform: 'ps5',
+      status: 'wanted',
+      // A wishlist entry has no play history at all — if this row ever
+      // leaked into a stat, it would show up as a zero-hour, zero-rating
+      // game diluting an average, not just an extra count.
+      hoursTenths: null,
+      rating: null,
+      priceCents: null,
+    });
+
+    const rows = await games.listGameStatRows(owner);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(owned.id);
+    expect(rows.every((row) => row.status !== 'wanted')).toBe(true);
+  });
 });
 
 describe('cross-owner isolation', () => {

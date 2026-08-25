@@ -129,7 +129,15 @@ export const gameOwnershipEnum = pgEnum('game_ownership', ['physical', 'digital'
  * not a schema decision, and splitting it would put two nearly-identical
  * buckets in every filter.
  */
-export const gameStatusEnum = pgEnum('game_status', ['backlog', 'playing', 'completed', 'paused_dropped']);
+export const gameStatusEnum = pgEnum('game_status', [
+  'backlog',
+  'playing',
+  'completed',
+  'paused_dropped',
+  // Added in migration 0011 — a wishlist entry sourced from IGDB's upcoming
+  // query, not yet owned. See "Upcoming games" in docs/GAMES.md.
+  'wanted',
+]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity
@@ -898,6 +906,20 @@ export const games = pgTable(
     psnNpCommunicationId: text('psn_np_communication_id'),
     /** Most recent play activity PSN reported for this title, if any. */
     lastPlayedAt: timestamp('last_played_at', { withTimezone: true }),
+    /**
+     * A calendar fact, not an instant — same `date`-string convention as
+     * finance transaction dates (see this file's header comment). Populated
+     * for a `wanted` row from IGDB's upcoming query, and read by the
+     * auto-flip (`wanted` -> `backlog` once this date has passed).
+     */
+    releaseDate: date('release_date', { mode: 'string' }),
+    /**
+     * IGDB's numeric game id, stamped only on rows created from the
+     * "Upcoming games" wishlist flow. Exact-dedup key: is this IGDB game
+     * already wishlisted? Nullable — every pre-existing row and every
+     * manually-added game has no IGDB id at all.
+     */
+    igdbId: integer('igdb_id'),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -924,6 +946,13 @@ export const games = pgTable(
     uniqueIndex('games_owner_psn_title_id_idx')
       .on(t.ownerId, t.psnTitleId)
       .where(sql`${t.psnTitleId} is not null`),
+    // Same partial-uniqueness shape as the Steam/PSN indexes above: only
+    // rows created from the upcoming-games wishlist flow carry a value
+    // here, and one IGDB game maps to at most one library row per owner.
+    // Makes a double-add a clean isUniqueViolation(), not a duplicate row.
+    uniqueIndex('games_owner_igdb_id_idx')
+      .on(t.ownerId, t.igdbId)
+      .where(sql`${t.igdbId} is not null`),
   ],
 );
 

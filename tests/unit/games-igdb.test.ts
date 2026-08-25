@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { __resetIgdbTokenCacheForTests, searchGames } from '@/server/db/games/igdb';
+import { __resetIgdbTokenCacheForTests, fetchUpcomingGames, searchGames } from '@/server/db/games/igdb';
 
 /**
  * `searchGames` must fail SOFT in every case — missing credentials, a
@@ -290,5 +290,92 @@ describe('searchGames — 401-triggered refresh and retry', () => {
     expect(await searchGames('Witcher 3')).toEqual([]);
     expect(tokenCalls).toBe(2);
     expect(gamesCalls).toBe(2);
+  });
+});
+
+/**
+ * `fetchUpcomingGames` shares `igdbPost`, the token cache, and the games
+ * endpoint with `searchGames` above — its own soft-fail contract (missing
+ * credentials, network error, non-2xx, malformed JSON -> `[]`, never a
+ * throw) is exercised narrowly here rather than repeating every case
+ * `searchGames`'s suites already cover for the shared plumbing.
+ */
+describe('fetchUpcomingGames', () => {
+  it('returns [] and never calls fetch when credentials are missing', async () => {
+    vi.stubEnv('IGDB_CLIENT_ID', undefined);
+    vi.stubEnv('IGDB_CLIENT_SECRET', undefined);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    expect(await fetchUpcomingGames()).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('returns [] when the token request fails', async () => {
+    stubCredentials();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed');
+      }),
+    );
+
+    expect(await fetchUpcomingGames()).toEqual([]);
+  });
+
+  it('returns [] on a non-2xx games response', async () => {
+    stubCredentials();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        if (endpointOf(url) === 'token') return fakeJsonResponse(200, TOKEN_OK);
+        return fakeJsonResponse(500, { message: 'server error' });
+      }),
+    );
+
+    expect(await fetchUpcomingGames()).toEqual([]);
+  });
+
+  it('returns [] when the games response body fails to parse as JSON', async () => {
+    stubCredentials();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown) => {
+        if (endpointOf(url) === 'token') return fakeJsonResponse(200, TOKEN_OK);
+        return fakeBrokenJsonResponse(200);
+      }),
+    );
+
+    expect(await fetchUpcomingGames()).toEqual([]);
+  });
+
+  it('shapes a well-formed response and sends game_type = 0 / platforms = (167,6) in the request body', async () => {
+    stubCredentials();
+    let requestedBody = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: unknown, init?: RequestInit) => {
+        if (endpointOf(url) === 'token') return fakeJsonResponse(200, TOKEN_OK);
+        requestedBody = String(init?.body ?? '');
+        return fakeJsonResponse(200, [
+          {
+            id: 92550,
+            name: 'Fable',
+            hypes: 402,
+            cover: { image_id: 'cobc6d' },
+            platforms: [6, 167],
+            release_dates: [{ y: 2027, m: 2, date_format: 0, platform: 167 }],
+          },
+        ]);
+      }),
+    );
+
+    const games = await fetchUpcomingGames();
+
+    expect(games).toHaveLength(1);
+    expect(games[0]).toMatchObject({ igdbId: 92550, title: 'Fable', hypes: 402 });
+    expect(requestedBody).toContain('game_type = 0');
+    expect(requestedBody).toContain('platforms = (167,6)');
+    expect(requestedBody).toContain('hypes >= 30');
   });
 });

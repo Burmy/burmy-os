@@ -6,6 +6,10 @@ const STYLES: Record<GameStatus, string> = {
   playing: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
   completed: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
   paused_dropped: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+  // Not owned yet — a wishlist entry, distinct from all four "in the
+  // library" states above. Violet reads as neither "in progress" (blue) nor
+  // "done" (emerald) nor "stalled" (amber).
+  wanted: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
 };
 
 /**
@@ -23,6 +27,7 @@ const DOT_STYLES: Record<GameStatus, string> = {
   playing: 'bg-blue-400',
   completed: 'bg-emerald-400',
   paused_dropped: 'bg-amber-400',
+  wanted: 'bg-violet-400',
 };
 
 /**

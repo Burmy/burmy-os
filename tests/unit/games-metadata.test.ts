@@ -5,6 +5,7 @@ import {
   bestTitleMatchAmong,
   buildSearchQuery,
   buildTimeToBeatQuery,
+  buildUpcomingQuery,
   coverUrl,
   type GameSuggestion,
   metadataFieldsToFill,
@@ -58,6 +59,48 @@ describe('buildTimeToBeatQuery', () => {
   it('requests game_id and normally, filtered to the given ids', () => {
     const query = buildTimeToBeatQuery([1, 2, 3]);
     expect(query).toBe('fields game_id,normally; where game_id = (1,2,3); limit 3;');
+  });
+});
+
+describe('buildUpcomingQuery', () => {
+  it('uses game_type = 0, not the dead category field', () => {
+    const query = buildUpcomingQuery(1_000, 2_000, 30);
+    // `category = 0` returns zero rows against live IGDB — verified before
+    // writing this query. `game_type` is the live replacement.
+    expect(query).toContain('game_type = 0');
+    expect(query).not.toContain('category');
+  });
+
+  it('filters to PS5/PC via the parenthesis "any of" form, and applies the given window and floor', () => {
+    const query = buildUpcomingQuery(1_755_000_000, 1_786_536_000, 30);
+    expect(query).toContain('platforms = (167,6)');
+    expect(query).toContain('first_release_date > 1755000000');
+    expect(query).toContain('first_release_date < 1786536000');
+    expect(query).toContain('hypes >= 30');
+    expect(query).toContain('sort hypes desc');
+    expect(query).toContain('limit 200;');
+  });
+
+  it('never applies status != (6,7) — that filter collapsed a real 45-game result to 1 against live data', () => {
+    const query = buildUpcomingQuery(1_000, 2_000, 30);
+    expect(query).not.toContain('status');
+  });
+
+  it('requests release_dates.y/.m/.date_format/.platform and the bare platforms relation, not name subfields', () => {
+    const query = buildUpcomingQuery(1_000, 2_000, 30);
+    expect(query).toContain('release_dates.y');
+    expect(query).toContain('release_dates.m');
+    expect(query).toContain('release_dates.date_format');
+    expect(query).toContain('release_dates.platform');
+    expect(query).toMatch(/(^|,)platforms(,|;)/);
+    expect(query).not.toContain('platforms.name');
+    expect(query).not.toContain('release_dates.platform.name');
+  });
+
+  it('respects a different hype floor', () => {
+    const query = buildUpcomingQuery(1_000, 2_000, 50);
+    expect(query).toContain('hypes >= 50');
+    expect(query).not.toContain('hypes >= 30');
   });
 });
 

@@ -28,16 +28,43 @@
 import {
   buildSearchQuery,
   buildTimeToBeatQuery,
+  buildUpcomingQuery,
   toSuggestions,
   withPlaytime,
   type GameSuggestion,
 } from '@/server/games/metadata';
+import { toUpcomingGames, type UpcomingGame } from '@/server/games/upcoming';
 
 const TIMEOUT_MS = 5_000;
 const SEARCH_LIMIT = 6;
 const TOKEN_ENDPOINT = 'https://id.twitch.tv/oauth2/token';
 const GAMES_ENDPOINT = 'https://api.igdb.com/v4/games';
 const TIME_TO_BEAT_ENDPOINT = 'https://api.igdb.com/v4/game_time_to_beats';
+
+/**
+ * Minimum `hypes` (pre-release follows) for a game to appear in "Upcoming
+ * games". IGDB publishes no documented scale for `hypes` — there is no
+ * "AAA = 500, indie = 20" anywhere in their schema — so this was calibrated
+ * against real, live data rather than guessed.
+ *
+ * Counts measured live over the next 12 months, PS5+PC, `game_type = 0`
+ * (main games only), at several candidate floors:
+ *
+ *   floor  count   notes
+ *   10     120     the firehose the owner explicitly rejected
+ *   20      66     tail still admits obscure titles ("Decrepit", "Woodo")
+ *   30      45     tail still holds real franchise entries ("Warhammer
+ *                  40,000: Dawn of War IV") — CHOSEN
+ *   50      27     thins to ~2/month; risks empty months
+ *
+ * 30 is the floor where the list stops reading like an indie-storefront feed
+ * and starts reading like games the owner would actually buy, without
+ * thinning out so far that some months come up empty.
+ */
+const HYPE_FLOOR = 30;
+
+/** "Next 12 months" — the window this tab looks ahead, per the design decision. */
+const UPCOMING_WINDOW_MONTHS = 12;
 
 interface Credentials {
   readonly clientId: string;
@@ -162,5 +189,35 @@ export async function searchGames(query: string): Promise<GameSuggestion[]> {
     // its failure must never blank out real results the owner is about to
     // pick from — it only leaves averagePlaytimeHours null.
     return suggestions;
+  }
+}
+
+/**
+ * Fetches the "Upcoming games" candidate list — one live request per page
+ * load (see `buildUpcomingQuery` in `metadata.ts` for the query and the
+ * calibration/hazard notes it documents). Fetched fresh on every visit, no
+ * cached table, per the design decision.
+ *
+ * Soft-fails to `[]` on missing credentials, a network error, a timeout, a
+ * non-2xx response, or malformed JSON — never a throw, exactly like
+ * `searchGames` above. The tab's empty state is this function returning
+ * `[]`, not an error path the caller has to special-case.
+ */
+export async function fetchUpcomingGames(): Promise<UpcomingGame[]> {
+  const creds = credentials();
+  if (creds === null) return [];
+
+  try {
+    const now = new Date();
+    const nowSeconds = Math.floor(now.getTime() / 1000);
+    const horizon = new Date(now);
+    horizon.setUTCMonth(horizon.getUTCMonth() + UPCOMING_WINDOW_MONTHS);
+    const horizonSeconds = Math.floor(horizon.getTime() / 1000);
+
+    const payload = await igdbPost(GAMES_ENDPOINT, buildUpcomingQuery(nowSeconds, horizonSeconds, HYPE_FLOOR), creds);
+    return payload === null ? [] : toUpcomingGames(payload);
+  } catch {
+    // Network error, timeout, or malformed JSON — degrades to an empty tab.
+    return [];
   }
 }

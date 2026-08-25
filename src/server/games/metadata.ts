@@ -93,6 +93,69 @@ export function buildTimeToBeatQuery(gameIds: readonly number[]): string {
   return `fields game_id,normally; where game_id = (${gameIds.join(',')}); limit ${gameIds.length};`;
 }
 
+/**
+ * The `/v4/games` query body for the "Upcoming games" tab, Apicalypse plain
+ * text. Every constant baked into this query's SHAPE (as opposed to the
+ * three values callers supply — the time window and the hype floor) was
+ * verified against the live IGDB API before being written, not assumed from
+ * documentation or from the original design plan:
+ *
+ *   - `category = 0` ("main_game") returns ZERO ROWS against live IGDB
+ *     today — `category` is dead. `game_type = 0` is the live replacement,
+ *     confirmed by querying `/game_types` directly: 0 = Main Game (the
+ *     other fourteen values are DLC/expansion/bundle/remaster/port/mod/
+ *     etc. — exactly what this tab wants excluded).
+ *   - `platforms = (167,6)` — parenthesis form, "any of" — confirmed live.
+ *     167 = PlayStation 5, 6 = PC.
+ *   - `hypes` ("Number of follows a game gets before release") is the only
+ *     live, non-empty pre-release quality signal — `total_rating`,
+ *     `aggregated_rating` and `rating` are structurally empty pre-release,
+ *     and `follows` is deprecated. IGDB publishes no documented scale for
+ *     it; the floor is a calibrated constant on the caller's side (see
+ *     `HYPE_FLOOR` in `src/server/db/games/igdb.ts`), not baked in here.
+ *   - The plan this module was built from also proposed `status != (6,7)`
+ *     to exclude cancelled/rumored titles. A live probe at hype floor 30
+ *     showed `status` is simply UNSET on essentially every upcoming game
+ *     (all top 45 by hype, including Grand Theft Auto VI and Fable) — and
+ *     Apicalypse's `!=` EXCLUDES rows where the field is null rather than
+ *     passing them through, the opposite of what a naive SQL-NULL mental
+ *     model predicts. Adding that filter collapsed the same 45-game result
+ *     down to 1. It is deliberately NOT in this query — do not re-add it
+ *     without re-verifying live.
+ *
+ * `platforms` and `release_dates.platform` are both requested WITHOUT a
+ * `.name` subfield: an unexpanded IGDB relation field returns a raw numeric
+ * id, which is all `toUpcomingGames` (`src/server/games/upcoming.ts`) needs
+ * — the app's own `PLATFORM_LABELS` (taxonomy.ts) supplies display text for
+ * `ps5`/`pc`, so no IGDB-authored label string is ever parsed. `release_dates`
+ * is requested as `.y`/`.m`/`.date_format` (not the unix `.date`) so month
+ * bucketing reads IGDB's own pre-split calendar fields directly — avoiding
+ * the timezone drift a UNIX-seconds→calendar conversion would risk.
+ *
+ * `sort hypes desc` matters beyond display order: `limit 200` caps the
+ * response, so if a 12-month, floor-N window ever exceeds 200 real
+ * candidates, the highest-hype (least likely to be filler) games are the
+ * ones kept.
+ */
+export function buildUpcomingQuery(nowSeconds: number, horizonSeconds: number, hypeFloor: number): string {
+  const fields = [
+    'name',
+    'hypes',
+    'cover.image_id',
+    'platforms',
+    'release_dates.y',
+    'release_dates.m',
+    'release_dates.date_format',
+    'release_dates.platform',
+  ].join(',');
+  return (
+    `fields ${fields}; ` +
+    `where first_release_date > ${nowSeconds} & first_release_date < ${horizonSeconds} ` +
+    `& game_type = 0 & platforms = (167,6) & hypes >= ${hypeFloor}; ` +
+    `sort hypes desc; limit 200;`
+  );
+}
+
 /** Escapes a string for Apicalypse's double-quoted `search "..."` clause. */
 function escapeApicalypseString(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
