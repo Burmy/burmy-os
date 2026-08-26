@@ -1,12 +1,13 @@
 'use client';
 
 import Image from 'next/image';
-import { Check, Gamepad2, Loader2, Plus } from 'lucide-react';
+import { Check, Gamepad2, Heart, Loader2, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import type { UpcomingMonth, UpcomingMonthGame } from '@/server/games/upcoming';
 import { addToWishlistAction, promoteReleasedWantedGamesAction } from './wishlist-actions';
@@ -125,6 +126,22 @@ function MonthSection({
  * standing in for missing art" reasoning) — IGDB has no cover for every
  * upcoming title either, and a lone floating icon would look just as broken
  * here as it would in the library gallery.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WISHLISTED GETS A DISTINCT COVER TREATMENT, NOT JUST THE BUTTON AT THE BOTTOM.
+ *
+ * Before this, a wishlisted card and an un-wishlisted one were pixel-identical
+ * above the fold — the ONLY difference was the "+ Add to wishlist" button
+ * flipping to a disabled "Added" at the very bottom, invisible while scanning
+ * a 7-column grid. A violet ring plus a small corner marker on the cover
+ * itself make it scannable without reading any button — violet because
+ * `StatusBadge` already uses it for the library's own `wanted` status, so
+ * this reads as the SAME "wishlisted" meaning rather than a new color. The
+ * marker sits at the BOTTOM corner, not top, for the same reason
+ * `game-card.tsx` keeps its own badges off the top of the cover: box art
+ * commonly carries a logo across the top third, and the bottom is far more
+ * often plain background art.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 function UpcomingGameCard({
   game,
@@ -134,7 +151,12 @@ function UpcomingGameCard({
   readonly wishlisted: boolean;
 }): React.ReactElement {
   return (
-    <div className="flex flex-col rounded-lg border">
+    <div
+      className={cn(
+        'flex flex-col rounded-lg border',
+        wishlisted && 'border-violet-300 ring-1 ring-violet-400/50 dark:border-violet-500/50 dark:ring-violet-400/30',
+      )}
+    >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">
         {game.coverUrl === null ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
@@ -152,6 +174,15 @@ function UpcomingGameCard({
             className="object-cover"
           />
         )}
+        {wishlisted ? (
+          <span
+            aria-hidden
+            title="On your wishlist"
+            className="absolute right-2 bottom-2 inline-flex size-6 items-center justify-center rounded-full bg-violet-500/90 text-white shadow-sm ring-1 ring-violet-300/60"
+          >
+            <Heart className="size-3.5 fill-current" strokeWidth={2} />
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-3">

@@ -33,6 +33,20 @@ import { formatHours, hours } from '@/server/games/hours';
  * `variant="onImage"` (an opaque pill, legible against arbitrary art without
  * reaching for a gradient scrim — see that component for why).
  * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PLATINUM ALSO GETS A CARD-LEVEL RING, NOT JUST THE BADGE.
+ *
+ * `PlatinumBadge` alone is a 24px icon at the bottom of the cover — no larger
+ * than the status pill beside it, and with `StatusBadge` now returning `null`
+ * for `played` (the overwhelming majority of the library), a platinum is
+ * often the ONLY signal on the card at all. A grid of covers needs it to read
+ * at a glance, not on close inspection, so the outer card itself picks up a
+ * metallic ring/border in the exact same slate-300/slate-400 register
+ * `PlatinumBadge` already uses — not a new color, not a gradient background,
+ * just a frame — so a scan of the gallery makes every platinum obvious
+ * without turning the grid into a casino.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function GameCard({
   game,
@@ -76,6 +90,8 @@ export function GameCard({
         'transition-colors hover:border-foreground/20 hover:bg-muted/40',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
         size === 'large' && 'col-span-2',
+        game.platinum &&
+          'border-slate-300 ring-1 ring-slate-400/60 dark:border-slate-500/70 dark:ring-slate-400/40',
       )}
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">

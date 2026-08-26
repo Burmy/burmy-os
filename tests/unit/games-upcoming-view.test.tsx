@@ -102,6 +102,38 @@ describe('UpcomingView — already-wishlisted state', () => {
     expect(screen.queryByRole('button', { name: /add to wishlist/i })).not.toBeInTheDocument();
   });
 
+  /**
+   * Before this treatment, a wishlisted card and a plain one were
+   * pixel-identical above the fold — the only difference was the button at
+   * the very bottom, invisible while scanning a 7-column grid. This asserts
+   * the COVER itself (not just the button) carries a distinguishing class.
+   */
+  it('gives a wishlisted card a distinct ring on its cover that a plain card does not have', () => {
+    const { rerender } = render(
+      <UpcomingView
+        {...baseProps({
+          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
+          wishlistedIgdbIds: [],
+        })}
+      />,
+    );
+
+    const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('.rounded-lg');
+    expect(plainCard?.className).not.toMatch(/ring-violet-400/);
+
+    rerender(
+      <UpcomingView
+        {...baseProps({
+          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
+          wishlistedIgdbIds: [42],
+        })}
+      />,
+    );
+
+    const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('.rounded-lg');
+    expect(wishlistedCard?.className).toMatch(/ring-violet-400/);
+  });
+
   it('flips a fresh card from "Add to wishlist" to "Added" only after the server confirms it', async () => {
     addToWishlistAction.mockResolvedValueOnce({ ok: true });
     render(<UpcomingView {...baseProps({ months: [month({ games: [upcomingGame({ igdbId: 7 })] })] })} />);
