@@ -250,6 +250,28 @@ body {
 }
 
 /**
+ * Tailwind's preflight resets `button { cursor: default }` — a deliberate
+ * upstream choice (buttons "don't look clickable by default"), but this app
+ * wants the opposite: a hand cursor on every real click target, matching
+ * every other interactive-affordance signal already in place (hover states,
+ * focus rings). This single rule covers every `<button>` in the app —
+ * shadcn's `Button`, `FilterChip`, `Checkbox`, `Select`'s trigger, the
+ * Dialog close (X), `GameCard`/`GameTable`'s own raw buttons — without
+ * repeating `cursor-pointer` in each one's className, and it covers any
+ * future button automatically. `:disabled` is excluded on purpose: those
+ * already get `disabled:cursor-not-allowed` or `disabled:pointer-events-none`
+ * per-component, which this must not fight.
+ *
+ * Deliberately NOT applied to `[role="option"]`/dropdown-menu items —
+ * `select.tsx`/`dropdown-menu.tsx` already set `cursor-default` on those on
+ * purpose, matching native macOS menu items (an arrow cursor, not a hand,
+ * over a menu selection) rather than web link/button conventions.
+ */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+/**
  * Every monetary figure uses tabular numerals so columns align in the monthly
  * grid. Proportional digits make a spreadsheet look broken.
  */

@@ -31,13 +31,18 @@ import { YearlyBreakdownTable } from './yearly-breakdown-table';
  * its own. Nothing here is deleted: every figure the old layout showed is
  * still present, either as a card or as a hint.
  *
- * The top stat-card row (games/hours/platinums/backlog/spend/cost-per-hour)
- * is deliberately BARE — no `Section`, no heading — matching Finance's own
- * top-row convention exactly (`finance-dashboard.tsx`'s Income/Expenses/...
- * row and its `InsightsSection` mini-cards are both bare too). Everything
- * below that row (Year by year, Trends, Breakdown, Top 3, Highlights) keeps
- * its `Section` wrapper, again mirroring Finance: its own charts are boxed,
- * only its stat-card rows are not.
+ * Every group of small, individually-bordered cards is deliberately BARE —
+ * no `Section`, no heading: the top stat-card row
+ * (games/hours/platinums/backlog/spend/cost-per-hour), Top 3 (four
+ * `TopGames` cards), and Highlights (two `StatCard`s). Wrapping any of
+ * these in an outer `Section` box double-boxes the same information, since
+ * each card is already its own bordered box — matching Finance's own
+ * convention exactly (`finance-dashboard.tsx`'s Income/Expenses/... row and
+ * its `InsightsSection` mini-cards are both bare too). Year by year, Trends,
+ * and Breakdown keep their `Section` wrapper: a table and `ChartBlock`-
+ * labelled charts have no bordering of their own, so one outer box is the
+ * right amount, not a double one — again mirroring Finance, where charts get
+ * boxed and only stat-card rows don't.
  */
 export function GamesDashboard({
   rows,
@@ -140,51 +145,42 @@ export function GamesDashboard({
         </div>
       </Section>
 
-      <Section title="Top 3">
-        <div className="grid gap-3 lg:grid-cols-2">
-          <TopGames
-            title="Most played"
-            hint="By total hours"
-            metric="hours"
-            entries={buildLeaderboard(rows, 'hours', 3)}
-          />
-          <TopGames
-            title="Highest rated"
-            hint="Your own rating"
-            metric="rating"
-            entries={buildLeaderboard(rows, 'rating', 3)}
-          />
-          <TopGames
-            title="Most trophies"
-            hint="Achievements earned"
-            metric="trophies"
-            entries={buildLeaderboard(rows, 'trophies', 3)}
-          />
-          <TopGames
-            title="Best value"
-            hint="Lowest cost per hour played"
-            metric="costPerHour"
-            entries={buildLeaderboard(rows, 'costPerHour', 3)}
-          />
-        </div>
-      </Section>
+      {/* Bare, no Section/heading — same reasoning as the top stat-card row
+          above. `TopGames` is itself a bordered card (`bg-card rounded-lg
+          border p-4`), so wrapping four of them in a second outer Section
+          box was the same "double box" problem the top row already fixed,
+          just with a richer card instead of a plain StatCard. */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <TopGames title="Most played" hint="By total hours" metric="hours" entries={buildLeaderboard(rows, 'hours', 3)} />
+        <TopGames title="Highest rated" hint="Your own rating" metric="rating" entries={buildLeaderboard(rows, 'rating', 3)} />
+        <TopGames
+          title="Most trophies"
+          hint="Achievements earned"
+          metric="trophies"
+          entries={buildLeaderboard(rows, 'trophies', 3)}
+        />
+        <TopGames
+          title="Best value"
+          hint="Lowest cost per hour played"
+          metric="costPerHour"
+          entries={buildLeaderboard(rows, 'costPerHour', 3)}
+        />
+      </div>
 
-      <Section title="Highlights">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <StatCard
-            label="Most-played developer"
-            value={callouts.topDeveloper?.name ?? '—'}
-            {...(callouts.topDeveloper === null
-              ? {}
-              : { hint: formatHours(hours(callouts.topDeveloper.hoursTenths)) })}
-          />
-          <StatCard
-            label="Best year"
-            value={callouts.bestYear === null ? '—' : String(callouts.bestYear.year)}
-            {...(callouts.bestYear === null ? {} : { hint: formatHours(hours(callouts.bestYear.hoursTenths)) })}
-          />
-        </div>
-      </Section>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <StatCard
+          label="Most-played developer"
+          value={callouts.topDeveloper?.name ?? '—'}
+          {...(callouts.topDeveloper === null
+            ? {}
+            : { hint: formatHours(hours(callouts.topDeveloper.hoursTenths)) })}
+        />
+        <StatCard
+          label="Best year"
+          value={callouts.bestYear === null ? '—' : String(callouts.bestYear.year)}
+          {...(callouts.bestYear === null ? {} : { hint: formatHours(hours(callouts.bestYear.hoursTenths)) })}
+        />
+      </div>
     </div>
   );
 }

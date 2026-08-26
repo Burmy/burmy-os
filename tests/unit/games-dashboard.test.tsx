@@ -57,24 +57,28 @@ const rows: readonly GameStatRow[] = [
  * `games-stats.test.ts` and by manual verification, not here.
  */
 describe('GamesDashboard', () => {
-  it('renders Year by year, Trends, Breakdown, Top 3, and Highlights as titled Sections', () => {
+  it('renders Year by year, Trends, and Breakdown as titled Sections', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    for (const title of ['Year by year', 'Trends', 'Breakdown', 'Top 3', 'Highlights']) {
+    for (const title of ['Year by year', 'Trends', 'Breakdown']) {
       expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
   });
 
   /**
-   * Library/Money used to be two separate boxed, titled `Section`s. They're
-   * now one bare stat-card row with no heading and no bordering box at
-   * all — matching Finance's own top-row convention exactly (its
-   * Income/Expenses/... row, and its `InsightsSection` mini-cards, are both
-   * bare too; only Finance's charts get boxed).
+   * Library/Money/Top 3/Highlights used to each be their own boxed, titled
+   * `Section` — every one of them is a row of small cards that are ALREADY
+   * individually bordered (`StatCard`, `TopGames`), so an outer Section box
+   * double-boxed the same information. All four are now bare rows with no
+   * heading and no bordering box of their own — matching Finance's own
+   * top-row convention exactly (its Income/Expenses/... row, and its
+   * `InsightsSection` mini-cards, are both bare too; only Finance's charts
+   * and tables get boxed).
    */
-  it('does not render Library or Money as their own titled Section — the stat-card row is bare', () => {
+  it('does not render Library, Money, Top 3, or Highlights as their own titled Section — those rows are bare', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    expect(screen.queryByRole('heading', { name: 'Library' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: 'Money' })).not.toBeInTheDocument();
+    for (const title of ['Library', 'Money', 'Top 3', 'Highlights']) {
+      expect(screen.queryByRole('heading', { name: title })).not.toBeInTheDocument();
+    }
   });
 
   it('shows exactly one bare stat-card row of 6: Games, Hours played, Platinums, Backlog, Total spend, Cost per hour', () => {
@@ -135,16 +139,16 @@ describe('GamesDashboard', () => {
     expect(within(breakdown).queryAllByRole('heading', { level: 2 })).toHaveLength(1);
   });
 
-  it('keeps Top 3 and Highlights intact', () => {
+  it('keeps Top 3 and Highlights intact, as bare rows with no titled Section of their own', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    const topThree = screen.getByRole('heading', { name: 'Top 3' }).closest('section') as HTMLElement;
-    expect(within(topThree).getByText('Most played')).toBeInTheDocument();
-    expect(within(topThree).getByText('Highest rated')).toBeInTheDocument();
-    expect(within(topThree).getByText('Most trophies')).toBeInTheDocument();
-    expect(within(topThree).getByText('Best value')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Top 3' })).not.toBeInTheDocument();
+    expect(screen.getByText('Most played')).toBeInTheDocument();
+    expect(screen.getByText('Highest rated')).toBeInTheDocument();
+    expect(screen.getByText('Most trophies')).toBeInTheDocument();
+    expect(screen.getByText('Best value')).toBeInTheDocument();
 
-    const highlights = screen.getByRole('heading', { name: 'Highlights' }).closest('section') as HTMLElement;
-    expect(within(highlights).getByText('Most-played developer')).toBeInTheDocument();
-    expect(within(highlights).getByText('Best year')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Highlights' })).not.toBeInTheDocument();
+    expect(screen.getByText('Most-played developer')).toBeInTheDocument();
+    expect(screen.getByText('Best year')).toBeInTheDocument();
   });
 });
