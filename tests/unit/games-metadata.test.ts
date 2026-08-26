@@ -331,6 +331,19 @@ describe('scoreTitleMatch — token containment', () => {
     const score = scoreTitleMatch('War', 'War Thunder');
     expect(score.confidence).toBe('low');
   });
+
+  it('never promotes containment to HIGH for a bare, non-delimited remainder word — a real subtitle, not a droppable tagline', () => {
+    // Real false positive: the owner wishlisted a real, distinct upcoming
+    // "God of War Laufey" and the in-app PSN sync matched it, at HIGH
+    // confidence, against the owner's actual PS4 "God of War" (2018)
+    // playthrough — attaching that game's hours/achievements/platform to
+    // the wrong row. "Laufey" is neither a number, a roman numeral, nor a
+    // known edition marker. Every genuine droppable-tagline match in this
+    // app's real data (Idle Slayer – Incremental RPG, Tap Ninja - Idle
+    // game) has a dash introducing the tagline; this one has none.
+    const score = scoreTitleMatch('God of War Laufey', 'God of War');
+    expect(score.confidence).toBe('low');
+  });
 });
 
 describe('scoreTitleMatch — abbreviations', () => {

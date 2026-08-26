@@ -473,6 +473,16 @@ const EDITION_MARKER_WORDS = new Set([
 const ROMAN_NUMERAL_TOKENS = new Set(['ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii']);
 
 /**
+ * Every real droppable-tagline match this module has ever seen (`Idle
+ * Slayer – Incremental RPG`, `Tap Ninja - Idle game`) introduces the
+ * tagline with a dash. A bare, space-appended remainder word with no dash
+ * is far more likely a genuine subtitle/name than a storefront tagline —
+ * see the real false positive this guards against in
+ * `isTokenContainmentMatch`'s own doc comment.
+ */
+const DASH_CHARACTERS = /[-–—]/;
+
+/**
  * A trailing number or roman numeral distinguishes a sequel/entry from its
  * predecessor and must never be treated as a droppable descriptor — see the
  * containment guards in `isTokenContainmentMatch`.
@@ -502,8 +512,9 @@ function isTokenContainmentMatch(
   const candidateTokens = normalizedCandidate.split(' ').filter(Boolean);
   if (storedTokens.length === 0 || candidateTokens.length === 0) return false;
 
-  const [shorter, longer] =
-    storedTokens.length <= candidateTokens.length ? [storedTokens, candidateTokens] : [candidateTokens, storedTokens];
+  const storedIsLonger = storedTokens.length > candidateTokens.length;
+  const [shorter, longer] = storedIsLonger ? [candidateTokens, storedTokens] : [storedTokens, candidateTokens];
+  const rawLonger = storedIsLonger ? rawStored : rawCandidate;
   // A single generic word ("Doom", "War") is too common to safely treat as
   // "contained" in anything that happens to start with it.
   if (shorter.length < 2) return false;
@@ -513,7 +524,16 @@ function isTokenContainmentMatch(
 
   const shorterSet = new Set(shorter);
   const remainder = longer.filter((token) => !shorterSet.has(token));
-  return !remainder.some((token) => isDistinguishingToken(token) || EDITION_MARKER_WORDS.has(token));
+  if (remainder.some((token) => isDistinguishingToken(token) || EDITION_MARKER_WORDS.has(token))) return false;
+  if (remainder.length === 0) return true;
+
+  // A real false positive found live: the owner wishlisted "God of War
+  // Laufey" (a real, distinct upcoming title) and it token-contained the
+  // owner's actual "God of War" (2018) playthrough at HIGH confidence —
+  // "Laufey" is neither a number, a roman numeral, nor a known edition
+  // marker, so nothing above caught it. Require a dash actually
+  // introducing the remainder before treating it as a droppable tagline.
+  return DASH_CHARACTERS.test(rawLonger);
 }
 
 /**

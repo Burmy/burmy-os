@@ -47,10 +47,14 @@ function formatEarnedDate(iso: string): string {
  * players" figures come from its own crawled community database, not
  * something Sony's official API exposes to a single account.
  *
+ * One merged list, sorted tier-then-name — not split into separate Earned/
+ * Unearned tables. Color alone (full tier color vs. grayed-out) signals
+ * earned/unearned; real usage found two headed tables read as more
+ * structure than the data actually needed.
+ *
  * v1 scope discipline: no DLC-group labeling — `Trophy.groupId` is captured
  * for a later pass, but a human-readable group name needs a third,
- * unrequested API call (`getTitleTrophyGroups`). One flat list per bucket,
- * sorted tier-then-name, is enough for now.
+ * unrequested API call (`getTitleTrophyGroups`).
  */
 export function TrophiesSection({ state }: { readonly state: TrophyFetchState }): React.ReactElement {
   if (state.status === 'idle' || state.status === 'loading') {
@@ -70,64 +74,64 @@ export function TrophiesSection({ state }: { readonly state: TrophyFetchState })
     return <p className="text-muted-foreground py-8 text-center text-sm">No trophy data found for this game.</p>;
   }
 
-  const earned = state.trophies.filter((trophy) => trophy.earned);
-  const unearned = state.trophies.filter((trophy) => !trophy.earned);
+  const earnedCount = state.trophies.filter((trophy) => trophy.earned).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       <p className="text-sm">
-        <span className="tabular font-medium">{earned.length}</span>
+        <span className="tabular font-medium">{earnedCount}</span>
         <span className="text-muted-foreground"> of {state.trophies.length} trophies earned</span>
       </p>
-      {earned.length > 0 ? <TrophyList title="Earned" trophies={sortTrophies(earned)} /> : null}
-      {unearned.length > 0 ? <TrophyList title="Unearned" trophies={sortTrophies(unearned)} /> : null}
+      <TrophyList trophies={sortTrophies(state.trophies)} />
     </div>
   );
 }
 
-function TrophyList({ title, trophies }: { readonly title: string; readonly trophies: readonly Trophy[] }): React.ReactElement {
+function TrophyList({ trophies }: { readonly trophies: readonly Trophy[] }): React.ReactElement {
   return (
-    <div className="space-y-2">
-      <h3 className="text-muted-foreground text-xs font-medium">
-        {title} <span className="tabular">({trophies.length})</span>
-      </h3>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-10" />
-            <TableHead>Trophy</TableHead>
-            <TableHead className="text-right">{title === 'Earned' ? 'Earned' : 'Rarity'}</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {trophies.map((trophy) => {
-            // Redacted for a still-secret trophy — avoids spoiling a hidden
-            // trophy's name/description before the owner has earned it,
-            // matching how PSN's own clients treat this exact flag.
-            const redact = trophy.hidden && !trophy.earned;
-            return (
-              <TableRow key={trophy.id}>
-                <TableCell>
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="w-10" />
+          <TableHead>Trophy</TableHead>
+          <TableHead className="text-right">Earned / Rarity</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {trophies.map((trophy) => {
+          // Redacted for a still-secret trophy — avoids spoiling a hidden
+          // trophy's name/description before the owner has earned it,
+          // matching how PSN's own clients treat this exact flag.
+          const redact = trophy.hidden && !trophy.earned;
+          return (
+            <TableRow key={trophy.id}>
+              <TableCell>
+                {/* Full tier color once earned; grayed/desaturated until
+                    then — the same visual language the PlayStation app
+                    itself uses, so color alone (not a second Earned/
+                    Unearned table) carries the earned/unearned signal in
+                    this one merged list. */}
+                <span className={trophy.earned ? undefined : 'opacity-50 grayscale'}>
                   <TrophyTierBadge tier={trophy.tier} />
-                </TableCell>
-                <TableCell>
-                  <div className="font-medium">{redact ? '???' : (trophy.name ?? 'Untitled trophy')}</div>
-                  {redact || trophy.description === null ? null : (
-                    <div className="text-muted-foreground text-xs">{trophy.description}</div>
-                  )}
-                </TableCell>
-                <TableCell className="text-muted-foreground tabular text-right text-xs">
-                  {trophy.earned && trophy.earnedAt !== null
-                    ? formatEarnedDate(trophy.earnedAt)
-                    : trophy.rarity !== null
-                      ? `${trophy.rarity}%`
-                      : '—'}
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
+                </span>
+              </TableCell>
+              <TableCell className={trophy.earned ? undefined : 'text-muted-foreground'}>
+                <div className="font-medium">{redact ? '???' : (trophy.name ?? 'Untitled trophy')}</div>
+                {redact || trophy.description === null ? null : (
+                  <div className="text-muted-foreground text-xs">{trophy.description}</div>
+                )}
+              </TableCell>
+              <TableCell className="text-muted-foreground tabular text-right text-xs">
+                {trophy.earned && trophy.earnedAt !== null
+                  ? formatEarnedDate(trophy.earnedAt)
+                  : trophy.rarity !== null
+                    ? `${trophy.rarity}%`
+                    : '—'}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }

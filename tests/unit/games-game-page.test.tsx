@@ -68,8 +68,83 @@ function game(overrides: Partial<Game> = {}): Game {
   };
 }
 
+/** Every field-editing test needs this first — the page opens read-only. */
+async function openForEditing(rendered: Game): Promise<ReturnType<typeof userEvent.setup>> {
+  const user = userEvent.setup();
+  render(<GamePage game={rendered} />);
+  await user.click(screen.getByRole('button', { name: 'Edit' }));
+  return user;
+}
+
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+/**
+ * The page opens read-only — a two-column profile layout (cover/platform/
+ * status/rating/hours on the left, formatted text on the right), no inputs
+ * anywhere, until "Edit" is clicked.
+ */
+describe('GamePage — view mode', () => {
+  it('renders formatted values with no inputs anywhere', () => {
+    render(<GamePage game={game()} />);
+
+    expect(screen.queryByLabelText('Title')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
+
+    expect(screen.getByRole('heading', { name: 'Elden Ring' })).toBeInTheDocument();
+    expect(screen.getByText('PS5')).toBeInTheDocument();
+    expect(screen.getByText('Played')).toBeInTheDocument();
+    expect(screen.getByText('136h')).toBeInTheDocument();
+    expect(screen.getByText('Physical')).toBeInTheDocument();
+    expect(screen.getByText('Action RPG')).toBeInTheDocument();
+  });
+
+  it('shows "Not set" for an unset field rather than leaving it blank', () => {
+    render(<GamePage game={game({ ownership: null, genre: null, developer: null, publisher: null })} />);
+    expect(screen.getAllByText('Not set').length).toBeGreaterThan(0);
+  });
+
+  it('switches to edit mode on "Edit", revealing real inputs', async () => {
+    await openForEditing(game());
+
+    expect(screen.getByLabelText('Title')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+  });
+
+  it('Cancel discards an in-progress edit and returns to view mode without saving', async () => {
+    const user = await openForEditing(game({ genre: 'Roguelike' }));
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Genre' }));
+    await user.type(screen.getByRole('textbox', { name: 'Genre' }), 'Something else');
+    await user.tab();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(updateGameAction).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getByText('Roguelike')).toBeInTheDocument();
+  });
+
+  it('a successful Save returns to view mode showing the new value', async () => {
+    const user = await openForEditing(game({ genre: 'Roguelike' }));
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Genre' }));
+    await user.type(screen.getByRole('textbox', { name: 'Genre' }), 'Metroidvania');
+    await user.tab();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateGameAction).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    expect(screen.getByText('Metroidvania')).toBeInTheDocument();
+  });
 });
 
 /**
@@ -85,10 +160,15 @@ describe('GamePage metadata search', () => {
     vi.useRealTimers();
   });
 
-  it('makes zero metadata calls just from opening an existing game', async () => {
-    vi.useFakeTimers();
+  it('makes zero metadata calls just from opening an existing game and entering edit mode', async () => {
+    // Entering edit mode is a real (non-fake-timer) click — fake timers only
+    // matter for the debounced search effect itself, which is what this
+    // test is actually waiting out.
+    const user = userEvent.setup();
     render(<GamePage game={game({ title: 'Elden Ring' })} />);
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
 
+    vi.useFakeTimers();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
@@ -97,8 +177,7 @@ describe('GamePage metadata search', () => {
   });
 
   it('calls the metadata action once the owner actually edits the title field', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ title: 'Elden Ring' })} />);
+    const user = await openForEditing(game({ title: 'Elden Ring' }));
 
     const titleInput = screen.getByLabelText('Title');
     await user.clear(titleInput);
@@ -140,8 +219,7 @@ describe('GamePage cover art', () => {
 
   async function pickTheSuggestion(existingCover: string | null): Promise<FormData> {
     searchGameMetadataAction.mockResolvedValue([suggestion()]);
-    const user = userEvent.setup();
-    render(<GamePage game={game({ title: 'Hades', coverUrl: existingCover })} />);
+    const user = await openForEditing(game({ title: 'Hades', coverUrl: existingCover }));
 
     const titleInput = screen.getByLabelText('Title');
     await user.clear(titleInput);
@@ -182,9 +260,8 @@ describe('GamePage play-year split', () => {
     // make `playYears` become `[]`, which `validateSplit` treats as
     // legitimately "no split," and `replacePlayYears` then DELETES the
     // stored split outright.
-    const user = userEvent.setup();
     const existing = game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] });
-    render(<GamePage game={existing} />);
+    const user = await openForEditing(existing);
 
     // The split panel starts expanded because this game already has a split.
     const yearInput = screen.getByLabelText('Year');
@@ -204,110 +281,57 @@ describe('GamePage play-year split', () => {
 
 /**
  * Steam owns hours/achievement counts for a linked game, so those fields
- * render read-only and say where the number came from.
+ * render read-only and say where the number came from. No tab-switching
+ * needed anymore — every section is stacked and visible at once in edit
+ * mode.
  */
 describe('GamePage Steam provenance', () => {
   it('renders hours read-only for a Steam-linked game', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ steamAppid: 367520 })} />);
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    await openForEditing(game({ steamAppid: 367520 }));
     expect(screen.getByLabelText('Hours played')).toBeDisabled();
   });
 
   it('labels the field with its source', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ steamAppid: 367520 })} />);
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    await openForEditing(game({ steamAppid: 367520 }));
     expect(screen.getAllByText(/from steam/i).length).toBeGreaterThan(0);
   });
 
   it('keeps hours editable for a game with no Steam link', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ steamAppid: null })} />);
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    await openForEditing(game({ steamAppid: null }));
     expect(screen.getByLabelText('Hours played')).not.toBeDisabled();
   });
 
   it('keeps achievement counts read-only for a Steam-linked game', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ steamAppid: 367520 })} />);
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    await openForEditing(game({ steamAppid: 367520 }));
     expect(screen.getByLabelText('Achievements earned')).toBeDisabled();
     expect(screen.getByLabelText('Achievements total')).toBeDisabled();
   });
 
   it('keeps rating, status and notes editable for a Steam-linked game', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ steamAppid: 367520 })} />);
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
+    await openForEditing(game({ steamAppid: 367520 }));
     expect(screen.getByLabelText('Rating (1-5)')).not.toBeDisabled();
     expect(screen.getByLabelText('Status')).not.toBeDisabled();
-    await user.click(screen.getByRole('tab', { name: 'Notes' }));
     expect(screen.getByRole('textbox', { name: 'Notes' })).not.toBeDisabled();
   });
 
-  it('keeps the play-year split editable even when the total is Steam-owned', () => {
-    render(
-      <GamePage
-        game={game({ steamAppid: 367520, hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })}
-      />,
+  it('keeps the play-year split editable even when the total is Steam-owned', async () => {
+    await openForEditing(
+      game({ steamAppid: 367520, hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] }),
     );
     expect(screen.getByLabelText('Year')).not.toBeDisabled();
   });
 });
 
-describe('GamePage — tabs', () => {
-  it('defaults to the Progress tab, with Details and Notes present but inactive', () => {
-    render(<GamePage game={game()} />);
-
-    expect(screen.getByRole('tab', { name: 'Progress' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'false');
-    expect(screen.getByLabelText('Status')).toBeInTheDocument();
-  });
-
-  it('switches tabs on click, without losing the other tabs\' fields from the DOM', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game()} />);
-
-    expect(screen.getByRole('button', { name: 'Genre' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: 'Details' }));
-    expect(screen.getByLabelText('Platform')).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: 'Notes' }));
-    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Status')).toBeInTheDocument();
-  });
-
-  it('submits fields from every tab, not just whichever one is currently active', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Action RPG', notes: 'Great game' })} />);
-
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => {
-      expect(updateGameAction).toHaveBeenCalledTimes(1);
-    });
-    const submitted = updateGameAction.mock.calls[0]![1];
-    expect(submitted.get('genre')).toBe('Action RPG');
-    expect(submitted.get('notes')).toBe('Great game');
-  });
-});
-
 describe('GamePage — Genre/Developer/Publisher inline fields', () => {
   it('shows the current value as plain text, not an input, until clicked', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} />);
-    await user.click(screen.getByRole('tab', { name: 'Details' }));
+    await openForEditing(game({ genre: 'Roguelike' }));
 
     expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Roguelike');
     expect(screen.queryByRole('textbox', { name: 'Genre' })).not.toBeInTheDocument();
   });
 
   it('reveals a real input on click and commits the typed value on blur', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} />);
-    await user.click(screen.getByRole('tab', { name: 'Details' }));
+    const user = await openForEditing(game({ genre: 'Roguelike' }));
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     const input = screen.getByRole('textbox', { name: 'Genre' });
@@ -322,9 +346,7 @@ describe('GamePage — Genre/Developer/Publisher inline fields', () => {
   // enclosing Radix Dialog to (not) accidentally close, so there's nothing
   // to assert beyond "the edit itself was cancelled."
   it('pressing Escape cancels the field edit', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} />);
-    await user.click(screen.getByRole('tab', { name: 'Details' }));
+    const user = await openForEditing(game({ genre: 'Roguelike' }));
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     const input = screen.getByRole('textbox', { name: 'Genre' });
@@ -336,9 +358,7 @@ describe('GamePage — Genre/Developer/Publisher inline fields', () => {
   });
 
   it('submits the edited value, not the original', async () => {
-    const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} />);
-    await user.click(screen.getByRole('tab', { name: 'Details' }));
+    const user = await openForEditing(game({ genre: 'Roguelike' }));
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     const input = screen.getByRole('textbox', { name: 'Genre' });
@@ -357,14 +377,15 @@ describe('GamePage — Genre/Developer/Publisher inline fields', () => {
 });
 
 /**
- * The Trophies tab only exists for a game linked to PSN
+ * Trophies only render at all for a game linked to PSN
  * (`psnNpCommunicationId !== null`) — most of the library isn't a linked
  * PS4/PS5 title, so there's no empty state to show for the common case.
- * The fetch itself is live and lazy: it fires once, on the tab's first
- * activation, never again on repeat switches — see `game-page.tsx`'s
- * `handleTabChange`.
+ * The fetch itself is live and fires once, automatically, on mount — there
+ * is no tab to click anymore (see `game-page.tsx`'s trophy-fetch effect).
+ * One merged list, not separate Earned/Unearned tables — color (full tier
+ * color vs. grayed-out) is what signals earned/unearned now.
  */
-describe('GamePage — Trophies tab', () => {
+describe('GamePage — Trophies', () => {
   function trophy(overrides: Partial<Trophy> = {}): Trophy {
     return {
       source: 'psn',
@@ -382,31 +403,26 @@ describe('GamePage — Trophies tab', () => {
     };
   }
 
-  it('does not render the Trophies tab at all for a game with no PSN link', () => {
+  it('does not render a Trophies section at all for a game with no PSN link', () => {
     render(<GamePage game={game({ psnNpCommunicationId: null })} />);
-    expect(screen.queryByRole('tab', { name: 'Trophies' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Trophies' })).not.toBeInTheDocument();
+    expect(fetchGameTrophiesAction).not.toHaveBeenCalled();
   });
 
-  it('renders the Trophies tab for a PSN-linked game, and fetches only once on first activation', async () => {
+  it('fetches automatically on mount for a PSN-linked game, exactly once', async () => {
     fetchGameTrophiesAction.mockResolvedValue({ ok: true, trophies: [trophy()] });
-    const user = userEvent.setup();
     render(<GamePage game={game({ id: 'game-42', psnNpCommunicationId: 'NPWR12345_00' })} />);
-
-    const tab = screen.getByRole('tab', { name: 'Trophies' });
-    await user.click(tab);
 
     await waitFor(() => {
       expect(fetchGameTrophiesAction).toHaveBeenCalledTimes(1);
     });
     expect(fetchGameTrophiesAction).toHaveBeenCalledWith('game-42');
 
-    // Switch away and back — must not fetch a second time.
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
-    await user.click(tab);
+    await screen.findByText('Master Chief');
     expect(fetchGameTrophiesAction).toHaveBeenCalledTimes(1);
   });
 
-  it('renders earned/unearned trophies with tier and rarity once loaded', async () => {
+  it('renders one merged list, color-coded by earned status, with tier and rarity', async () => {
     fetchGameTrophiesAction.mockResolvedValue({
       ok: true,
       trophies: [
@@ -414,10 +430,7 @@ describe('GamePage — Trophies tab', () => {
         trophy({ id: '2', name: 'Rookie', tier: 'bronze', earned: false, earnedAt: null, rarity: '80.1' }),
       ],
     });
-    const user = userEvent.setup();
     render(<GamePage game={game({ psnNpCommunicationId: 'NPWR12345_00' })} />);
-
-    await user.click(screen.getByRole('tab', { name: 'Trophies' }));
 
     await screen.findByText('Master Chief');
     // The "1"/"of 2 trophies earned" text is split across two <span>s —
@@ -426,25 +439,30 @@ describe('GamePage — Trophies tab', () => {
     expect(
       screen.getByText((_, element) => element?.textContent === '1 of 2 trophies earned'),
     ).toBeInTheDocument();
-    expect(screen.getByText('Rookie')).toBeInTheDocument();
+
+    // Both rows sit in the same table — no separate Earned/Unearned headings.
+    expect(screen.queryByText('Earned (1)')).not.toBeInTheDocument();
+    expect(screen.queryByText('Unearned (1)')).not.toBeInTheDocument();
+    const rookieRow = screen.getByText('Rookie').closest('tr');
+    expect(rookieRow).not.toBeNull();
     expect(screen.getByText('80.1%')).toBeInTheDocument();
+    // The unearned row's tier badge is grayed out — the color-coding signal.
+    expect(rookieRow!.querySelector('.grayscale')).not.toBeNull();
+    const masterChiefRow = screen.getByText('Master Chief').closest('tr');
+    expect(masterChiefRow!.querySelector('.grayscale')).toBeNull();
   });
 
   it.each([
     ['not_configured', /isn't connected/i],
     ['token_expired', /needs refreshing/i],
     ['unavailable', /couldn't reach/i],
-  ] as const)('renders a scoped message for a %s failure, without disabling the rest of the page', async (reason, expectedText) => {
+  ] as const)('renders a scoped message for a %s failure, without affecting the rest of the page', async (reason, expectedText) => {
     fetchGameTrophiesAction.mockResolvedValue({ ok: false, reason });
-    const user = userEvent.setup();
     render(<GamePage game={game({ psnNpCommunicationId: 'NPWR12345_00' })} />);
 
-    await user.click(screen.getByRole('tab', { name: 'Trophies' }));
-
     await screen.findByText(expectedText);
-    // Progress's own fields are unaffected by a Trophies-tab failure.
-    await user.click(screen.getByRole('tab', { name: 'Progress' }));
-    expect(screen.getByLabelText('Status')).not.toBeDisabled();
+    // The rest of the (view-mode) page is unaffected by a trophy fetch failure.
+    expect(screen.getByRole('heading', { name: 'Elden Ring' })).toBeInTheDocument();
   });
 });
 
