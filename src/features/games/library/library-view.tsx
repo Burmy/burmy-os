@@ -1,6 +1,7 @@
 'use client';
 
 import { LayoutGrid, Plus, Rows3 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -38,11 +39,11 @@ export function LibraryView({
 }: {
   readonly games: readonly Game[];
 }): React.ReactElement {
+  const router = useRouter();
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [platform, setPlatform] = useState<PlatformFilter>('all');
   const [search, setSearch] = useState('');
-  const [editing, setEditing] = useState<Game | null>(null);
   const [creating, setCreating] = useState(false);
 
   // `wanted` (wishlist) games are hidden unless their own status chip is
@@ -221,22 +222,12 @@ export function LibraryView({
           No games match this filter.
         </p>
       ) : view === 'gallery' ? (
-        <GameGrid games={visible} onOpen={setEditing} />
+        <GameGrid games={visible} onOpen={(game) => router.push(`/games/${game.id}`)} />
       ) : (
-        <GameTable games={visible} onOpen={setEditing} />
+        <GameTable games={visible} onOpen={(game) => router.push(`/games/${game.id}`)} />
       )}
 
-      <GameDialog
-        key={editing?.id ?? (creating ? 'create' : 'closed')}
-        game={editing}
-        open={creating || editing !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setCreating(false);
-            setEditing(null);
-          }
-        }}
-      />
+      <GameDialog open={creating} onOpenChange={setCreating} />
     </div>
   );
 }

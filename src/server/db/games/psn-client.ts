@@ -86,11 +86,20 @@ import {
   exchangeAccessCodeForAuthTokens,
   exchangeNpssoForAccessCode,
   exchangeRefreshTokenForAuthTokens,
+  getTitleTrophies,
   getUserPlayedGames,
   getUserTitles,
+  getUserTrophiesEarnedForTitle,
 } from 'psn-api';
 
-import { toPlayedTitles, toTrophyTitles, type PsnPlayedTitle, type PsnTrophyTitle } from '@/server/games/psn';
+import {
+  toPlayedTitles,
+  toTrophies,
+  toTrophyTitles,
+  type PsnPlayedTitle,
+  type PsnTrophyTitle,
+  type Trophy,
+} from '@/server/games/psn';
 
 const TIMEOUT_MS = 5_000;
 const MAX_PAGES = 20;
@@ -323,4 +332,77 @@ export async function fetchTrophyTitles(): Promise<PsnTrophyTitle[] | PsnFailure
   }
 
   return collected;
+}
+
+/**
+ * Same `nextOffset`-driven pagination loop `fetchPlayedTitles`/
+ * `fetchTrophyTitles` each already inline once — factored out here because
+ * `fetchGameTrophies` below needs it TWICE, for two independent endpoints.
+ * Returns the raw, un-shaped `trophies` entries from every page collected
+ * into one array, or `'unavailable'` the moment any page's request fails —
+ * a partial trophy list would misreport a game as less complete/rarer than
+ * it really is, which is worse than one clear failure state.
+ */
+async function collectTrophyPages(fetchPage: (offset: number) => Promise<unknown>): Promise<unknown[] | 'unavailable'> {
+  const collected: unknown[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    let response: unknown;
+    try {
+      response = await withTimeout(fetchPage(offset));
+    } catch {
+      return 'unavailable';
+    }
+
+    const trophies = (response as { trophies?: unknown } | null)?.trophies;
+    if (Array.isArray(trophies)) collected.push(...trophies);
+
+    const next = (response as { nextOffset?: unknown } | null)?.nextOffset;
+    if (typeof next !== 'number' || !Number.isFinite(next) || next <= offset) break;
+    offset = next;
+  }
+
+  return collected;
+}
+
+/**
+ * One game's full trophy detail, fetched LIVE every call — no caching
+ * table, mirroring `igdb.ts`'s `fetchUpcomingGames()`. Neither
+ * `getTitleTrophies` (the catalog: name/description/icon/tier) nor
+ * `getUserTrophiesEarnedForTitle` (earned state/date/rarity) is used
+ * anywhere else in this codebase; `psn.ts`'s `toTrophies` explains why the
+ * two must be joined client-side. Run via `Promise.all` — the two endpoints
+ * are independent, so a page waits one round-trip-worth of latency, not
+ * two. `trophyGroupId: 'all'` returns every group (base game + DLC) in one
+ * pair of calls; see `Trophy.groupId`'s own doc comment for what happens to
+ * that value downstream.
+ */
+export async function fetchGameTrophies(
+  npCommunicationId: string,
+  npServiceName: 'trophy' | 'trophy2',
+): Promise<Trophy[] | PsnFailure> {
+  const auth = await getAccessToken();
+  if (isFailure(auth)) return auth;
+
+  const [titlePages, userPages] = await Promise.all([
+    collectTrophyPages((offset) =>
+      getTitleTrophies({ accessToken: auth.accessToken }, npCommunicationId, 'all', {
+        npServiceName,
+        limit: PAGE_LIMIT,
+        offset,
+      }),
+    ),
+    collectTrophyPages((offset) =>
+      getUserTrophiesEarnedForTitle({ accessToken: auth.accessToken }, 'me', npCommunicationId, 'all', {
+        npServiceName,
+        limit: PAGE_LIMIT,
+        offset,
+      }),
+    ),
+  ]);
+
+  if (titlePages === 'unavailable' || userPages === 'unavailable') return 'unavailable';
+
+  return toTrophies({ trophies: titlePages }, { trophies: userPages });
 }

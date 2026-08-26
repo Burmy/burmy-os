@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { UserPlayedGamesResponse, UserTitlesResponse } from 'psn-api';
 
-import { categoryToPlatform, parsePlayDuration, toPlayedTitles, toTrophyTitles } from '@/server/games/psn';
+import {
+  categoryToPlatform,
+  npServiceNameForPlatform,
+  parsePlayDuration,
+  toPlayedTitles,
+  toTrophies,
+  toTrophyTitles,
+} from '@/server/games/psn';
 
 /**
  * `parsePlayDuration`, `categoryToPlatform`, `toPlayedTitles`, and
@@ -309,6 +316,99 @@ describe('toTrophyTitles', () => {
   });
 });
 
+describe('npServiceNameForPlatform', () => {
+  it('maps ps5 to trophy2', () => {
+    expect(npServiceNameForPlatform('ps5')).toBe('trophy2');
+  });
+
+  it('maps ps4 to trophy', () => {
+    expect(npServiceNameForPlatform('ps4')).toBe('trophy');
+  });
+
+  // Documented default: a `psnNpCommunicationId` is only ever populated for
+  // ps4/ps5 rows in practice, but the function must still return SOMETHING
+  // for the type's other members rather than throw.
+  it('defaults every other platform to trophy', () => {
+    expect(npServiceNameForPlatform('psp')).toBe('trophy');
+    expect(npServiceNameForPlatform('steam')).toBe('trophy');
+  });
+});
+
+const WELL_FORMED_TITLE_TROPHY = {
+  trophyId: 1,
+  trophyHidden: false,
+  trophyType: 'gold',
+  trophyName: 'Master Chief',
+  trophyDetail: 'Complete every mission on Legendary.',
+  trophyIconUrl: 'https://image.api.playstation.com/trophy/1.png',
+  trophyGroupId: 'default',
+};
+
+const WELL_FORMED_USER_TROPHY = {
+  trophyId: 1,
+  trophyHidden: false,
+  earned: true,
+  earnedDateTime: '2026-08-25T09:19:50Z',
+  trophyType: 'gold',
+  trophyRare: 1,
+  trophyEarnedRate: '22.5',
+};
+
+describe('toTrophies', () => {
+  it('joins a title-catalog entry with its matching earned-state entry by trophyId', () => {
+    const [trophy] = toTrophies({ trophies: [WELL_FORMED_TITLE_TROPHY] }, { trophies: [WELL_FORMED_USER_TROPHY] });
+    expect(trophy).toEqual({
+      source: 'psn',
+      id: '1',
+      groupId: 'default',
+      tier: 'gold',
+      hidden: false,
+      name: 'Master Chief',
+      description: 'Complete every mission on Legendary.',
+      iconUrl: 'https://image.api.playstation.com/trophy/1.png',
+      earned: true,
+      earnedAt: '2026-08-25T09:19:50Z',
+      rarity: '22.5',
+    });
+  });
+
+  it('reports a trophy absent from the earned-state payload as not earned, not as missing', () => {
+    const [trophy] = toTrophies({ trophies: [WELL_FORMED_TITLE_TROPHY] }, { trophies: [] });
+    expect(trophy).toMatchObject({ earned: false, earnedAt: null });
+  });
+
+  it('never reports an earned date for a trophy the user payload marks unearned', () => {
+    const [trophy] = toTrophies(
+      { trophies: [WELL_FORMED_TITLE_TROPHY] },
+      { trophies: [{ ...WELL_FORMED_USER_TROPHY, earned: false, earnedDateTime: '2026-08-25T09:19:50Z' }] },
+    );
+    expect(trophy).toMatchObject({ earned: false, earnedAt: null });
+  });
+
+  it('skips a title-catalog entry with an unknown trophyType rather than fabricating a tier', () => {
+    expect(
+      toTrophies({ trophies: [{ ...WELL_FORMED_TITLE_TROPHY, trophyType: 'diamond' }] }, { trophies: [] }),
+    ).toEqual([]);
+  });
+
+  it('skips a malformed title-catalog entry rather than throwing', () => {
+    expect(
+      toTrophies(
+        { trophies: [null, { ...WELL_FORMED_TITLE_TROPHY, trophyId: 'not-a-number' }, WELL_FORMED_TITLE_TROPHY] },
+        { trophies: [] },
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('returns [] when the title payload has no trophies key, regardless of the user payload', () => {
+    expect(toTrophies({}, { trophies: [WELL_FORMED_USER_TROPHY] })).toEqual([]);
+  });
+
+  it('the title payload is authoritative for existence — an extra user-payload entry with no matching title is dropped', () => {
+    expect(toTrophies({ trophies: [] }, { trophies: [WELL_FORMED_USER_TROPHY] })).toEqual([]);
+  });
+});
+
 /**
  * ─────────────────────────────────────────────────────────────────────────────
  * `src/server/db/games/psn-client.ts` — the one HTTP boundary.
@@ -337,11 +437,14 @@ vi.mock('psn-api', () => ({
   exchangeRefreshTokenForAuthTokens: vi.fn(),
   getUserPlayedGames: vi.fn(),
   getUserTitles: vi.fn(),
+  getTitleTrophies: vi.fn(),
+  getUserTrophiesEarnedForTitle: vi.fn(),
 }));
 
 const psnApi = await import('psn-api');
 const {
   __resetPsnAuthCacheForTests,
+  fetchGameTrophies,
   fetchPlayedTitles,
   fetchTrophyTitles,
   psnConfigured,
@@ -674,5 +777,104 @@ describe('fetchTrophyTitles', () => {
     vi.mocked(psnApi.getUserTitles).mockRejectedValue(new TypeError('fetch failed'));
 
     expect(await fetchTrophyTitles()).toBe('unavailable');
+  });
+});
+
+/** Same rationale as `trophyTitlesPage` above, for `getTitleTrophies`'s response shape. */
+function titleTrophiesPage(trophies: unknown[], nextOffset?: number) {
+  return { trophies, hasTrophyGroups: false, trophySetVersion: '01.00', totalItemCount: trophies.length, nextOffset: nextOffset ?? 0, previousOffset: 0 };
+}
+
+/** Same rationale, for `getUserTrophiesEarnedForTitle`'s response shape. */
+function userTrophiesPage(trophies: unknown[], nextOffset?: number) {
+  return {
+    trophies,
+    hasTrophyGroups: false,
+    trophySetVersion: '01.00',
+    lastUpdatedDateTime: '2026-08-25T09:19:50Z',
+    totalItemCount: trophies.length,
+    nextOffset: nextOffset ?? 0,
+    previousOffset: 0,
+  };
+}
+
+describe('fetchGameTrophies', () => {
+  it("returns 'not_configured' and never calls psn-api when PSN_NPSSO is unset", async () => {
+    vi.stubEnv('PSN_NPSSO', undefined);
+
+    expect(await fetchGameTrophies('NPWR12345_00', 'trophy2')).toBe('not_configured');
+    expect(psnApi.getTitleTrophies).not.toHaveBeenCalled();
+    expect(psnApi.getUserTrophiesEarnedForTitle).not.toHaveBeenCalled();
+  });
+
+  it('joins a single-page title/user response pair into real trophies', async () => {
+    vi.stubEnv('PSN_NPSSO', 'test-npsso');
+    stubSuccessfulAuth();
+    vi.mocked(psnApi.getTitleTrophies).mockResolvedValue(
+      titleTrophiesPage([WELL_FORMED_TITLE_TROPHY]) as never,
+    );
+    vi.mocked(psnApi.getUserTrophiesEarnedForTitle).mockResolvedValue(
+      userTrophiesPage([WELL_FORMED_USER_TROPHY]) as never,
+    );
+
+    const result = await fetchGameTrophies('NPWR12345_00', 'trophy2');
+    expect(result).toEqual([expect.objectContaining({ id: '1', tier: 'gold', earned: true, rarity: '22.5' })]);
+
+    // `'all'` groups, and the requested npServiceName, reach both calls.
+    expect(psnApi.getTitleTrophies).toHaveBeenCalledWith(
+      { accessToken: 'access-token-1' },
+      'NPWR12345_00',
+      'all',
+      { npServiceName: 'trophy2', limit: 200, offset: 0 },
+    );
+    expect(psnApi.getUserTrophiesEarnedForTitle).toHaveBeenCalledWith(
+      { accessToken: 'access-token-1' },
+      'me',
+      'NPWR12345_00',
+      'all',
+      { npServiceName: 'trophy2', limit: 200, offset: 0 },
+    );
+  });
+
+  it('follows nextOffset independently on each of the two endpoints', async () => {
+    vi.stubEnv('PSN_NPSSO', 'test-npsso');
+    stubSuccessfulAuth();
+
+    const titleA = { ...WELL_FORMED_TITLE_TROPHY, trophyId: 1 };
+    const titleB = { ...WELL_FORMED_TITLE_TROPHY, trophyId: 2 };
+    vi.mocked(psnApi.getTitleTrophies)
+      .mockResolvedValueOnce(titleTrophiesPage([titleA], 1) as never)
+      .mockResolvedValueOnce(titleTrophiesPage([titleB]) as never);
+    vi.mocked(psnApi.getUserTrophiesEarnedForTitle).mockResolvedValue(userTrophiesPage([]) as never);
+
+    const result = await fetchGameTrophies('NPWR12345_00', 'trophy');
+    expect(Array.isArray(result) && result.map((t) => t.id)).toEqual(['1', '2']);
+    expect(psnApi.getTitleTrophies).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns 'unavailable' when the title-catalog request fails", async () => {
+    vi.stubEnv('PSN_NPSSO', 'test-npsso');
+    stubSuccessfulAuth();
+    vi.mocked(psnApi.getTitleTrophies).mockRejectedValue(new TypeError('fetch failed'));
+    vi.mocked(psnApi.getUserTrophiesEarnedForTitle).mockResolvedValue(userTrophiesPage([]) as never);
+
+    expect(await fetchGameTrophies('NPWR12345_00', 'trophy2')).toBe('unavailable');
+  });
+
+  it("returns 'unavailable' when the earned-state request fails", async () => {
+    vi.stubEnv('PSN_NPSSO', 'test-npsso');
+    stubSuccessfulAuth();
+    vi.mocked(psnApi.getTitleTrophies).mockResolvedValue(titleTrophiesPage([WELL_FORMED_TITLE_TROPHY]) as never);
+    vi.mocked(psnApi.getUserTrophiesEarnedForTitle).mockRejectedValue(new TypeError('fetch failed'));
+
+    expect(await fetchGameTrophies('NPWR12345_00', 'trophy2')).toBe('unavailable');
+  });
+
+  it('propagates an auth failure exactly like the existing fetch functions', async () => {
+    vi.stubEnv('PSN_NPSSO', 'test-npsso');
+    vi.mocked(psnApi.exchangeNpssoForAccessCode).mockRejectedValue(NPSSO_INVALID_ERROR);
+
+    expect(await fetchGameTrophies('NPWR12345_00', 'trophy2')).toBe('token_expired');
+    expect(psnApi.getTitleTrophies).not.toHaveBeenCalled();
   });
 });

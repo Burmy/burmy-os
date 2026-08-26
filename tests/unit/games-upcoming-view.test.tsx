@@ -125,8 +125,31 @@ describe('UpcomingView — already-wishlisted state', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: /added/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /added/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /add to wishlist/i })).not.toBeInTheDocument();
+  });
+
+  /**
+   * Regression: the "Added" control used to be `disabled` with
+   * `variant="secondary"` — the shared `disabled:opacity-50` rule faded an
+   * already-modest gray-on-gray pairing to near-illegibility (reported: hard
+   * to read, especially in dark theme). It's a permanent success state, not
+   * a temporarily-unavailable control, so it must not be `disabled` at all,
+   * and must render in the app's emerald "done" register at full opacity.
+   */
+  it('renders "Added" at full opacity, not as a disabled control', () => {
+    render(
+      <UpcomingView
+        {...baseProps({
+          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
+          wishlistedIgdbIds: [42],
+        })}
+      />,
+    );
+
+    const added = screen.getByRole('button', { name: /added/i });
+    expect(added).not.toBeDisabled();
+    expect(added.className).toMatch(/emerald/);
   });
 
   /**
@@ -168,10 +191,25 @@ describe('UpcomingView — already-wishlisted state', () => {
     const button = screen.getByRole('button', { name: /add to wishlist/i });
     await userEvent.click(button);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /^added$/i })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: /^added$/i })).toBeInTheDocument());
     expect(addToWishlistAction).toHaveBeenCalledWith(
       expect.objectContaining({ igdbId: 7, title: 'Fable', platforms: ['ps5'] }),
     );
+  });
+});
+
+describe('UpcomingView — Library discoverability hint', () => {
+  it('points at the Library for a game IGDB\'s feed cannot surface, when IGDB is configured', () => {
+    render(<UpcomingView {...baseProps({ igdbConfigured: true })} />);
+
+    const link = screen.getByRole('link', { name: 'Library' });
+    expect(link).toHaveAttribute('href', '/games/library');
+  });
+
+  it('does not show the hint when IGDB is not configured — a different problem', () => {
+    render(<UpcomingView {...baseProps({ igdbConfigured: false, months: [] })} />);
+
+    expect(screen.queryByRole('link', { name: 'Library' })).not.toBeInTheDocument();
   });
 });
 

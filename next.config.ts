@@ -13,8 +13,17 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
 
   // IGDB (Games module cover art) serves images from images.igdb.com.
+  // PSN (per-game trophy icons, fetched live — see psn-client.ts's
+  // fetchGameTrophies) serves from Sony's own asset CDN. Hostname taken from
+  // psn-api's own doc-comment example URLs for a sibling icon field
+  // (conceptIconUrl) on the same CDN family — confirm against one real
+  // trophyIconUrl the first time this runs against a live account, and
+  // correct here if it differs.
   images: {
-    remotePatterns: [{ protocol: 'https', hostname: 'images.igdb.com' }],
+    remotePatterns: [
+      { protocol: 'https', hostname: 'images.igdb.com' },
+      { protocol: 'https', hostname: 'image.api.playstation.com' },
+    ],
   },
 
   // Security headers. The nonce-based CSP is added in src/proxy.ts during M2 —

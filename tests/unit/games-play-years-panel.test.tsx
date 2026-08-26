@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { type PlayYearDraft, PlayYearsPanel } from '@/features/games/library/play-years-panel';
+import { type PlayYearDraft, PlayYearsPanel } from '@/features/games/play-years-panel';
 
 function setup(value: PlayYearDraft[], totalTenths: number) {
   const onChange = vi.fn();

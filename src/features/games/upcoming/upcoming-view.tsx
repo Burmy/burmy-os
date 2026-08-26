@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { Check, Gamepad2, Heart, Loader2, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
@@ -92,6 +93,24 @@ export function UpcomingView({
   return (
     <div className="space-y-6">
       <PageHeader title="Upcoming" subtitle="Anticipated PS5 and PC releases over the next 12 months." />
+
+      {/* IGDB's feed only ever surfaces titles with real pre-release hype
+          in the next 12 months (see the module doc comment above) — a
+          game that's already out, or never clears the hype floor, can
+          never appear here no matter how long you wait. The Library's own
+          Add Game flow has always accepted any hand-typed title with
+          status set to Wanted, entirely independent of this feed — this
+          is just pointing at a path that already works, not a new one. */}
+      {igdbConfigured ? (
+        <p className="text-muted-foreground text-xs">
+          Don&apos;t see a game here? IGDB only lists titles with real pre-release buzz, in the next 12 months. For
+          anything else — already out, or below IGDB&apos;s radar — add it from the{' '}
+          <Link href="/games/library" className="underline underline-offset-2 hover:text-foreground">
+            Library
+          </Link>{' '}
+          and set its status to Wanted.
+        </p>
+      ) : null}
 
       {!igdbConfigured ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">
@@ -271,8 +290,24 @@ function AddToWishlistButton({
   }
 
   if (isAdded) {
+    // Not `disabled` — this is a permanent success/done state, not a
+    // temporarily-unavailable control, so it must not pick up the shared
+    // `disabled:opacity-50` rule in button.tsx: that rule fading an already
+    // low-contrast `secondary` (gray-on-gray) pairing to half opacity is
+    // exactly why "Added" was nearly illegible. Reuses the emerald register
+    // `StatusBadge`'s `played` style already establishes as this app's
+    // "done" color, at full opacity. `pointer-events-none` keeps it inert
+    // without the HTML `disabled` attribute; `tabIndex={-1}` keeps it out
+    // of tab order now that `disabled` no longer does that automatically —
+    // there's nothing here for a keyboard user to activate.
     return (
-      <Button size="sm" variant="secondary" disabled className="w-full">
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        tabIndex={-1}
+        className="pointer-events-none w-full border border-emerald-300 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400"
+      >
         <Check className="size-4" aria-hidden />
         Added
       </Button>

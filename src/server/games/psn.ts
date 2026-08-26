@@ -284,3 +284,158 @@ export function toTrophyTitles(payload: unknown): PsnTrophyTitle[] {
     ];
   });
 }
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * PER-GAME TROPHY DETAIL — LIVE, NEVER PERSISTED
+ *
+ * Everything below shapes the two calls a per-game trophy page makes on
+ * demand (`getTitleTrophies` + `getUserTrophiesEarnedForTitle`, both fetched
+ * fresh by `psn-client.ts`'s `fetchGameTrophies` every time the page is
+ * visited — no caching table, mirroring `igdb.ts`'s `fetchUpcomingGames`).
+ * This is deliberately NOT persisted anywhere: `games.achievements_unlocked`/
+ * `achievements_total` staying two plain counts, not a per-trophy child
+ * table, is a decision this schema made on purpose (the source spreadsheet's
+ * "Trophies" column was always a single number, never a list) — this module
+ * supplies the richer detail a live page can show without reopening that
+ * decision.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+export type TrophyTier = 'bronze' | 'silver' | 'gold' | 'platinum';
+
+const TROPHY_TIERS: readonly TrophyTier[] = ['bronze', 'silver', 'gold', 'platinum'];
+
+function isTrophyTier(value: unknown): value is TrophyTier {
+  return typeof value === 'string' && (TROPHY_TIERS as readonly string[]).includes(value);
+}
+
+export interface Trophy {
+  /** The one field a hypothetical future Steam achievement source would also carry — nothing more is built for it yet. */
+  readonly source: 'psn';
+  readonly id: string;
+  /** `trophyGroupId` — `"default"` for the base game, `"001"`/`"002"`... for DLC. Captured for a future pass; not surfaced in the v1 trophy list. */
+  readonly groupId: string;
+  readonly tier: TrophyTier;
+  readonly hidden: boolean;
+  readonly name: string | null;
+  readonly description: string | null;
+  readonly iconUrl: string | null;
+  readonly earned: boolean;
+  readonly earnedAt: string | null;
+  /** `trophyEarnedRate` — Sony's own percentage-of-players-who-earned-this string, e.g. `"22.5"`. Never fabricated; `null` when PSN didn't report one. */
+  readonly rarity: string | null;
+}
+
+/**
+ * `games.platform` (already resolved reliably via the CUSA/PPSA title-ID
+ * prefix trick — see the module header above) tells `npServiceName` apart
+ * without a second `getUserTitles()` round trip. That call is a full-library,
+ * paginated endpoint; re-fetching it just to read one field for a single
+ * game page would reintroduce the exact `O(games)` fan-out cost the
+ * live-on-demand design was meant to avoid. In practice a
+ * `psnNpCommunicationId` is only ever populated for `ps4`/`ps5` rows (never
+ * `psp`, which predates PSN trophies entirely, and never `steam`/`pc`/
+ * `other`), so `'trophy'` is a safe, unreachable-in-practice default for
+ * every platform besides `ps5`.
+ */
+export function npServiceNameForPlatform(platform: GamePlatform): 'trophy' | 'trophy2' {
+  return platform === 'ps5' ? 'trophy2' : 'trophy';
+}
+
+interface TitleTrophyFields {
+  readonly tier: TrophyTier;
+  readonly hidden: boolean;
+  readonly name: string | null;
+  readonly description: string | null;
+  readonly iconUrl: string | null;
+  readonly groupId: string;
+}
+
+function titleTrophyMap(payload: unknown): Map<number, TitleTrophyFields> {
+  const map = new Map<number, TitleTrophyFields>();
+  const trophies = asRecord(payload)?.trophies;
+  if (!Array.isArray(trophies)) return map;
+
+  for (const entry of trophies) {
+    const record = asRecord(entry);
+    if (record === null) continue;
+
+    const trophyId = record.trophyId;
+    if (typeof trophyId !== 'number') continue;
+    if (!isTrophyTier(record.trophyType)) continue;
+
+    map.set(trophyId, {
+      tier: record.trophyType,
+      hidden: record.trophyHidden === true,
+      name: typeof record.trophyName === 'string' ? record.trophyName : null,
+      description: typeof record.trophyDetail === 'string' ? record.trophyDetail : null,
+      iconUrl: typeof record.trophyIconUrl === 'string' ? record.trophyIconUrl : null,
+      groupId: typeof record.trophyGroupId === 'string' ? record.trophyGroupId : 'default',
+    });
+  }
+  return map;
+}
+
+interface UserTrophyFields {
+  readonly earned: boolean;
+  readonly earnedAt: string | null;
+  readonly rarity: string | null;
+}
+
+function userTrophyMap(payload: unknown): Map<number, UserTrophyFields> {
+  const map = new Map<number, UserTrophyFields>();
+  const trophies = asRecord(payload)?.trophies;
+  if (!Array.isArray(trophies)) return map;
+
+  for (const entry of trophies) {
+    const record = asRecord(entry);
+    if (record === null) continue;
+
+    const trophyId = record.trophyId;
+    if (typeof trophyId !== 'number') continue;
+
+    const earned = record.earned === true;
+    map.set(trophyId, {
+      earned,
+      earnedAt: earned && typeof record.earnedDateTime === 'string' ? record.earnedDateTime : null,
+      rarity: typeof record.trophyEarnedRate === 'string' ? record.trophyEarnedRate : null,
+    });
+  }
+  return map;
+}
+
+/**
+ * Joins a `getTitleTrophies` response (name/description/icon/tier — the
+ * catalog) with a `getUserTrophiesEarnedForTitle` response (earned state/
+ * date/rarity) into one `Trophy[]`, keyed by `trophyId` — confirmed via
+ * `psn-api`'s own doc comment that the two are deliberately split and MUST
+ * be merged client-side ("`getUserTrophiesEarnedForTitle` returns the
+ * earned status of the trophy only... use `getTitleTrophies()`" for the
+ * rest). The title payload is authoritative for which trophies exist; a
+ * trophy absent from the user payload (or the whole user payload failing to
+ * parse) is `earned: false`, `earnedAt: null` — same "absence is not an
+ * error, it's a fact about what wasn't reported" contract `toTrophyTitles`
+ * already uses.
+ */
+export function toTrophies(titlePayload: unknown, userPayload: unknown): Trophy[] {
+  const titleTrophies = titleTrophyMap(titlePayload);
+  const userTrophies = userTrophyMap(userPayload);
+
+  return Array.from(titleTrophies.entries()).map(([trophyId, title]) => {
+    const user = userTrophies.get(trophyId);
+    return {
+      source: 'psn',
+      id: String(trophyId),
+      groupId: title.groupId,
+      tier: title.tier,
+      hidden: title.hidden,
+      name: title.name,
+      description: title.description,
+      iconUrl: title.iconUrl,
+      earned: user?.earned ?? false,
+      earnedAt: user?.earnedAt ?? null,
+      rarity: user?.rarity ?? null,
+    };
+  });
+}

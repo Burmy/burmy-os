@@ -18,6 +18,13 @@ vi.mock('@/features/games/metadata-actions', () => ({
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// Editing an existing game no longer opens an in-place `GameDialog` — it
+// navigates to `/games/[id]` (see `GamePage`). `LibraryView` calls
+// `useRouter()` itself now, which needs a mock the same way
+// `games-game-page.test.tsx` already does.
+const push = vi.fn();
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+
 const { LibraryView } = await import('@/features/games/library/library-view');
 
 type Game = Parameters<typeof LibraryView>[0]['games'][number];
@@ -72,7 +79,8 @@ describe('LibraryView', () => {
     expect(screen.getByText('Elden Ring')).toBeInTheDocument();
   });
 
-  it('opens the editor from the table view by keyboard, not just by clicking the row', async () => {
+  it('navigates to the game page from the table view by keyboard, not just by clicking the row', async () => {
+    push.mockClear();
     render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' })]} />);
 
     await userEvent.click(screen.getByRole('button', { name: /table view/i }));
@@ -82,7 +90,7 @@ describe('LibraryView', () => {
     screen.getByRole('button', { name: 'Elden Ring' }).focus();
     await userEvent.keyboard('{Enter}');
 
-    expect(screen.getByRole('heading', { name: 'Elden Ring', level: 2 })).toBeInTheDocument();
+    expect(push).toHaveBeenCalledWith('/games/a');
   });
 
   it('filters by status', async () => {
