@@ -149,17 +149,21 @@
   --ring: #a1a1aa;
 
   /**
-   * "Signal Violet" — the app's one accent color, added for real usage that
-   * found the app reading as scattered/grey/static. Deliberately used
-   * sparingly (hover states, active/selected indicators, one or two "hero"
-   * numbers per page, focus accents) — never the resting fill of a primary
-   * button, never a replacement for `--primary`/`--accent` above, which keep
-   * their existing neutral meanings. Chosen specifically to avoid colliding
-   * with Finance's existing semantic colors: green = income, amber/orange =
-   * expense, red = destructive/net-negative (`--destructive` above) — violet
-   * touches none of those, so "is this button destructive?" never comes up.
+   * The app's one accent color — real usage found a wider "Signal Violet"
+   * application (this token's first version) still read as too busy, so its
+   * footprint shrank to genuinely rare: the main heading's underline, a
+   * button's hover state, and the active tab indicator. Nowhere else —
+   * `--primary`/`--accent` above keep their existing neutral meanings, and
+   * every other control this token used to touch (focus rings, a checked
+   * checkbox, a select's checkmark) went back to plain black/white/gray.
+   *
+   * Red, matching this same value's use as `--destructive` above (and as
+   * the accent in the `voicebox-DESIGN.md` reference this was built from,
+   * where the accent and the error color are the identical value) —
+   * accepted deliberately, not overlooked: a destructive action is
+   * disambiguated by its trash icon and "Remove" label, not by color alone.
    */
-  --brand: #9333ea;
+  --brand: #dc2626;
   --brand-foreground: #fafafa;
 
   --chart-income: #16a34a;
@@ -207,8 +211,9 @@
     --ring: #52525b;
 
     /* See the light `:root` block's `--brand` doc comment — brighter here
-       for legibility against a near-black background. */
-    --brand: #a855f7;
+       for legibility against a near-black background, same relationship
+       `--destructive` above already has to its own light-theme value. */
+    --brand: #ef4444;
     --brand-foreground: #fafafa;
 
     --chart-income: #4ade80;
@@ -256,7 +261,7 @@
   --ring: #52525b;
 
   /* See the light `:root` block's `--brand` doc comment. */
-  --brand: #a855f7;
+  --brand: #ef4444;
   --brand-foreground: #fafafa;
 
   --chart-income: #4ade80;

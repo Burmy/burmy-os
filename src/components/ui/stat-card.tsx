@@ -13,6 +13,10 @@ import { cn } from '@/lib/utils';
  * wider than its grid cell — it clips with an ellipsis and the full value is
  * still reachable on hover, exactly like Games' own stat cards did before
  * this became shared.
+ *
+ * No border, `bg-muted` (not `bg-card` — see `Section`'s own doc comment on
+ * why), `p-6` — same borderless/tonal/padding treatment `Section` uses, so
+ * the app's two shared "card" primitives read as one consistent language.
  */
 export function StatCard({
   label,
@@ -28,7 +32,7 @@ export function StatCard({
   readonly hint?: string;
 }): React.ReactElement {
   return (
-    <div className="flex h-full flex-col justify-between gap-2 rounded-lg border bg-card p-5">
+    <div className="flex h-full flex-col justify-between gap-2 rounded-lg bg-muted p-6">
       <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
       <div>
         <div

@@ -1,7 +1,5 @@
 'use client';
 
-import { motion } from 'motion/react';
-
 import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TrophyTierBadge } from '@/components/games/trophy-tier-badge';
@@ -71,18 +69,13 @@ export function TrophiesSection({ state }: { readonly state: TrophyFetchState })
   const earnedCount = state.trophies.filter((trophy) => trophy.earned).length;
 
   return (
-    <motion.div
-      className="space-y-2"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.2 }}
-    >
+    <div className="space-y-2">
       <p className="text-sm">
         <span className="tabular font-medium">{earnedCount}</span>
         <span className="text-muted-foreground"> of {state.trophies.length} trophies earned</span>
       </p>
       <TrophyList trophies={sortTrophies(state.trophies)} />
-    </motion.div>
+    </div>
   );
 }
 
