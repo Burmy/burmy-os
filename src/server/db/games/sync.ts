@@ -12,6 +12,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable, gameSyncChanges, gameSyncRuns } from '@/server/db/schema';
+import type { MetadataFill } from '@/server/games/metadata';
 import type { PlannedChange, SyncChangeKind } from '@/server/games/sync-plan';
 import { GAME_PLATFORMS, type GamePlatform } from '@/server/games/taxonomy';
 import { isUniqueViolation, SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from './errors';
@@ -309,6 +310,85 @@ export async function setSyncChangeSelected(ownerId: string, changeId: string, s
 }
 
 /**
+ * Up to `limit` staged `new_game` changes for this run that have not yet
+ * been through the sync enrichment phase
+ * (`advanceSyncEnrichmentAction`, `src/features/games/sync/sync-actions.ts`).
+ *
+ * "Not yet enriched" is the ABSENCE of a `metadataEnriched` key in `payload`
+ * — not a separate cursor column, unlike the keyset walk the sync engines
+ * themselves use over `games` (`listSteamGamesChunk`/`listPsnGamesChunk`).
+ * That walk needs a real bookmark because `games` keeps changing while a run
+ * is `running`. A run's `new_game` changes, by contrast, are a FIXED set the
+ * moment `finishSyncRun` marks the run `ready` — nothing appends to
+ * `game_sync_changes` afterward — so "which ones still lack the marker" is
+ * exactly as safe as a keyset bookmark here, with no schema change and no
+ * possibility of skipping or repeating a row across calls.
+ *
+ * Ordered by `createdAt` (same order `listSyncChanges` already uses) purely
+ * for a stable, predictable processing order across calls — nothing here
+ * depends on it beyond that.
+ */
+export async function listUnenrichedNewGameChanges(ownerId: string, runId: string, limit: number): Promise<SyncChange[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(gameSyncChanges)
+    .where(
+      and(
+        eq(gameSyncChanges.runId, runId),
+        eq(gameSyncChanges.ownerId, ownerId),
+        eq(gameSyncChanges.kind, 'new_game'),
+        sql`NOT jsonb_exists(${gameSyncChanges.payload}, 'metadataEnriched')`,
+      ),
+    )
+    .orderBy(asc(gameSyncChanges.createdAt))
+    .limit(limit);
+
+  return rows.map(rowToSyncChange);
+}
+
+/**
+ * Merges a resolved IGDB `fill` into one staged `new_game` change's payload
+ * and marks it enriched — filtered by BOTH `id` and `ownerId`, same
+ * discipline as `setSyncChangeSelected` above.
+ *
+ * `fill` is `{}` for "searched, found no HIGH-confidence match" (or IGDB was
+ * unreachable/unconfigured) — merging an empty object still sets the
+ * `metadataEnriched` marker, so `listUnenrichedNewGameChanges` never revisits
+ * this change again. That is the enrichment phase's whole soft-fail
+ * contract: a game that cannot be enriched is marked done anyway, not
+ * retried forever and not left to block the run.
+ *
+ * The merge reads the change's CURRENT payload and writes back the union —
+ * a plain object spread, not a jsonb `||` — because the caller
+ * (`advanceSyncEnrichmentAction`) already has the row in hand from
+ * `listUnenrichedNewGameChanges` and this avoids depending on any
+ * particular jsonb operator's availability or precedence.
+ */
+export async function markNewGameChangeEnriched(ownerId: string, changeId: string, fill: MetadataFill): Promise<void> {
+  const db = getDb();
+
+  await db.transaction(async (tx) => {
+    const rows = await tx
+      .select({ payload: gameSyncChanges.payload })
+      .from(gameSyncChanges)
+      .where(and(eq(gameSyncChanges.id, changeId), eq(gameSyncChanges.ownerId, ownerId)))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) return; // Change does not exist, or belongs to someone else — nothing to update.
+
+    const currentPayload = row.payload as Record<string, unknown>;
+    const mergedPayload: Record<string, unknown> = { ...currentPayload, ...fill, metadataEnriched: true };
+
+    await tx
+      .update(gameSyncChanges)
+      .set({ payload: mergedPayload })
+      .where(and(eq(gameSyncChanges.id, changeId), eq(gameSyncChanges.ownerId, ownerId)));
+  });
+}
+
+/**
  * The `games` columns a `field_update` change is allowed to touch.
  * Whitelisted BY NAME rather than trusted from the payload — `payload.field`
  * is JSONB staged by a sync run, not a compile-time-checked value — so a
@@ -419,6 +499,29 @@ function linkFieldPatch(field: LinkField, value: unknown): Partial<typeof gamesT
 
 /** `link` must land before a `field_update` that might assume it; `new_game` last; `reconcile` never applies (see `commitSyncRun`). */
 const COMMIT_ORDER: Record<SyncChangeKind, number> = { link: 0, field_update: 1, new_game: 2, reconcile: 3 };
+
+/**
+ * The (at most) five IGDB-enrichment columns a `new_game` payload may carry
+ * — written by `markNewGameChangeEnriched` above, via the enrichment phase
+ * (`advanceSyncEnrichmentAction`, `src/features/games/sync/sync-actions.ts`),
+ * never by either planner (`planNewGameChange`/`planNewPsnGameChange`, which
+ * predate enrichment and never touch these keys). All five are read the same
+ * defensive way every other optional payload field in this file is: a
+ * `typeof` check, never a bare cast. A change that was never enriched (run
+ * committed before enrichment finished, IGDB unconfigured/unreachable, or no
+ * HIGH-confidence match found) simply carries none of them, and the insert
+ * below lands exactly as it did before enrichment existed — every column
+ * NULL, a letter-tile placeholder.
+ */
+function enrichmentFieldsFromPayload(payload: Record<string, unknown>): Partial<typeof gamesTable.$inferInsert> {
+  return {
+    ...(typeof payload.coverUrl === 'string' ? { coverUrl: payload.coverUrl } : {}),
+    ...(typeof payload.genre === 'string' ? { genre: payload.genre } : {}),
+    ...(typeof payload.metacritic === 'number' ? { metacritic: payload.metacritic } : {}),
+    ...(typeof payload.averagePlaytimeHours === 'number' ? { averagePlaytimeHours: payload.averagePlaytimeHours } : {}),
+    ...(typeof payload.esrbRating === 'string' ? { esrbRating: payload.esrbRating } : {}),
+  };
+}
 
 /**
  * Applies every SELECTED change in a run to `games`, in one transaction, then
@@ -665,6 +768,7 @@ export async function commitSyncRun(
             // done; one at zero was just discovered and has not been played
             // yet. New rows never land in 'playing' — sync cannot know that.
             status: hoursTenths > 0 ? 'played' : 'backlog',
+            ...enrichmentFieldsFromPayload(payload),
           });
           continue;
         }
@@ -696,6 +800,7 @@ export async function commitSyncRun(
             ...(typeof achievementsUnlocked === 'number' ? { achievementsUnlocked } : {}),
             ...(typeof achievementsTotal === 'number' ? { achievementsTotal } : {}),
             ...(typeof platinum === 'boolean' ? { platinum } : {}),
+            ...enrichmentFieldsFromPayload(payload),
           });
           continue;
         }

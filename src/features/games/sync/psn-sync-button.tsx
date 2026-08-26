@@ -9,6 +9,7 @@ import { toast } from '@/components/ui/toast';
 import type { PsnTokenAge } from '@/server/games/psn-token-age';
 import { advancePsnSyncAction, startPsnSyncAction } from './psn-actions';
 import { formatRelativeTime } from './relative-time';
+import { advanceSyncEnrichmentAction } from './sync-actions';
 
 /**
  * Sony's NPSSO retrieval endpoint. Only ever useful while already logged in
@@ -22,6 +23,7 @@ type SyncState =
   | { readonly phase: 'idle' }
   | { readonly phase: 'starting' }
   | { readonly phase: 'running'; readonly cursor: number; readonly total: number }
+  | { readonly phase: 'enriching' }
   | { readonly phase: 'token_expired' };
 
 /** Opens in a new tab so the owner never loses this page mid-retrieval. */
@@ -139,6 +141,16 @@ export function PsnSyncButton({
       if (progress.done) break;
     }
 
+    // Enrichment is a nicety, never a gate — see `SyncButton`'s matching
+    // comment and `advanceSyncEnrichmentAction`'s own doc comment in
+    // `sync-actions.ts` for why an error here just ends the loop rather
+    // than blocking the owner from reaching the review screen.
+    setState({ phase: 'enriching' });
+    for (;;) {
+      const enrichment = await advanceSyncEnrichmentAction(runId);
+      if ('error' in enrichment || enrichment.done) break;
+    }
+
     router.push(`/games/sync/${runId}`);
   }
 
@@ -182,9 +194,11 @@ export function PsnSyncButton({
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
         {state.phase === 'running'
           ? `${state.cursor} of ${state.total} games checked`
-          : state.phase === 'starting'
-            ? 'Starting…'
-            : 'Sync with PlayStation'}
+          : state.phase === 'enriching'
+            ? 'Adding cover art…'
+            : state.phase === 'starting'
+              ? 'Starting…'
+              : 'Sync with PlayStation'}
       </Button>
       <PsnStatusLine lastSyncedAt={lastSyncedAt} tokenAge={tokenAge} />
     </div>

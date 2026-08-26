@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -166,6 +167,7 @@ export function SyncReview({
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">Select</TableHead>
+                <TableHead className="w-14"></TableHead>
                 <TableHead>Title</TableHead>
                 <TableHead className="text-right">Hours</TableHead>
               </TableRow>
@@ -176,6 +178,9 @@ export function SyncReview({
                 return (
                   <TableRow key={change.id}>
                     <SelectCell change={change} disabled={pending} onChange={setSelected} />
+                    <TableCell>
+                      <NewGameCover coverUrl={payload.coverUrl} title={change.title} />
+                    </TableCell>
                     <TableCell className="font-medium">{change.title}</TableCell>
                     <TableCell className="tabular text-right">{formatFieldValue('hoursTenths', payload.hoursTenths)}</TableCell>
                   </TableRow>
@@ -279,6 +284,31 @@ function ChangeGroup({
   );
 }
 
+/**
+ * A `new_game` change's cover thumbnail — real IGDB art when the enrichment
+ * phase (`advanceSyncEnrichmentAction`) found a HIGH-confidence match before
+ * this run reached the review screen, otherwise the same letter-tile
+ * fallback `game-card.tsx`/`top-games.tsx` already use for a game with no
+ * cover at all. Enrichment is asynchronous and best-effort (see that
+ * function's own "NEVER BLOCKS OR FAILS A SYNC" doc comment), so this cell
+ * showing a letter tile is an entirely normal outcome, not a bug — the
+ * owner can always add art by hand later, exactly as before enrichment
+ * existed.
+ */
+function NewGameCover({ coverUrl, title }: { readonly coverUrl: string | null; readonly title: string }): React.ReactElement {
+  return (
+    <div className="bg-muted relative h-14 w-[2.625rem] shrink-0 overflow-hidden rounded">
+      {coverUrl === null ? (
+        <span className="text-muted-foreground flex h-full items-center justify-center text-sm font-semibold" aria-hidden>
+          {title.charAt(0).toUpperCase()}
+        </span>
+      ) : (
+        <Image src={coverUrl} alt="" fill sizes="42px" className="object-cover" />
+      )}
+    </div>
+  );
+}
+
 function SelectCell({
   change,
   disabled,
@@ -367,8 +397,14 @@ function parseFieldUpdatePayload(payload: Record<string, unknown>): {
   };
 }
 
-function parseNewGamePayload(payload: Record<string, unknown>): { readonly hoursTenths: number | null } {
-  return { hoursTenths: asNumber(payload.hoursTenths) };
+function parseNewGamePayload(payload: Record<string, unknown>): {
+  readonly hoursTenths: number | null;
+  readonly coverUrl: string | null;
+} {
+  return {
+    hoursTenths: asNumber(payload.hoursTenths),
+    coverUrl: typeof payload.coverUrl === 'string' ? payload.coverUrl : null,
+  };
 }
 
 function parseLinkPayload(payload: Record<string, unknown>): {

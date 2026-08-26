@@ -4,10 +4,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const startPsnSyncAction = vi.fn();
 const advancePsnSyncAction = vi.fn();
+// Same shared, source-agnostic enrichment phase `games-sync-button.test.tsx`
+// mocks for Steam — `psn-sync-button.tsx` drives it too (see that
+// component's own comment on its loop), defaulted here to "nothing to
+// enrich, done immediately" so it never interferes with this file's
+// existing sync-loop assertions.
+const advanceSyncEnrichmentAction = vi.fn();
 
 vi.mock('@/features/games/sync/psn-actions', () => ({
   startPsnSyncAction: (...args: unknown[]) => startPsnSyncAction(...args),
   advancePsnSyncAction: (...args: unknown[]) => advancePsnSyncAction(...args),
+}));
+
+vi.mock('@/features/games/sync/sync-actions', () => ({
+  advanceSyncEnrichmentAction: (...args: unknown[]) => advanceSyncEnrichmentAction(...args),
 }));
 
 const push = vi.fn();
@@ -25,6 +35,8 @@ describe('PsnSyncButton', () => {
   beforeEach(() => {
     startPsnSyncAction.mockReset();
     advancePsnSyncAction.mockReset();
+    advanceSyncEnrichmentAction.mockReset();
+    advanceSyncEnrichmentAction.mockResolvedValue({ runId: 'psn-run-1', done: true, enrichedCount: 0 });
     push.mockClear();
     toastError.mockClear();
   });
@@ -71,6 +83,28 @@ describe('PsnSyncButton', () => {
 
     resolveSecondChunk({ runId: 'psn-run-2', cursor: 47, total: 47, done: true, changeCount: 0 });
     await waitFor(() => expect(push).toHaveBeenCalledWith('/games/sync/psn-run-2'));
+  });
+
+  it('runs the enrichment phase after sync reaches done, showing "Adding cover art…", before navigating', async () => {
+    startPsnSyncAction.mockResolvedValue({ ok: true, runId: 'psn-run-4' });
+    advancePsnSyncAction.mockResolvedValueOnce({ runId: 'psn-run-4', cursor: 1, total: 1, done: true, changeCount: 1 });
+    let resolveEnrichment: (value: unknown) => void = () => {};
+    advanceSyncEnrichmentAction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveEnrichment = resolve;
+        }),
+    );
+
+    render(<PsnSyncButton configured={true} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /sync with playstation/i }));
+
+    await screen.findByText('Adding cover art…');
+    expect(push).not.toHaveBeenCalled();
+
+    resolveEnrichment({ runId: 'psn-run-4', done: true, enrichedCount: 1 });
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/games/sync/psn-run-4'));
   });
 
   it('stops the loop and surfaces the message when an advance call errors', async () => {

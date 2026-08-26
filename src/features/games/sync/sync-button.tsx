@@ -7,12 +7,13 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { formatRelativeTime } from './relative-time';
-import { advanceSteamSyncAction, startSteamSyncAction } from './sync-actions';
+import { advanceSteamSyncAction, advanceSyncEnrichmentAction, startSteamSyncAction } from './sync-actions';
 
 type SyncState =
   | { readonly phase: 'idle' }
   | { readonly phase: 'starting' }
-  | { readonly phase: 'running'; readonly cursor: number; readonly total: number };
+  | { readonly phase: 'running'; readonly cursor: number; readonly total: number }
+  | { readonly phase: 'enriching' };
 
 /**
  * "Sync with Steam" — the Library screen's only entry point into a sync run.
@@ -85,6 +86,17 @@ export function SyncButton({
       if (progress.done) break;
     }
 
+    // Enrichment is a nicety, never a gate: if it errors (run somehow no
+    // longer 'ready') this loop just stops and the owner still reaches the
+    // review screen, same as before enrichment existed — see
+    // `advanceSyncEnrichmentAction`'s own "NEVER BLOCKS OR FAILS A SYNC" doc
+    // comment in `sync-actions.ts`.
+    setState({ phase: 'enriching' });
+    for (;;) {
+      const enrichment = await advanceSyncEnrichmentAction(runId);
+      if ('error' in enrichment || enrichment.done) break;
+    }
+
     router.push(`/games/sync/${runId}`);
   }
 
@@ -121,9 +133,11 @@ export function SyncButton({
         {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
         {state.phase === 'running'
           ? `${state.cursor} of ${state.total} games checked`
-          : state.phase === 'starting'
-            ? 'Starting…'
-            : 'Sync with Steam'}
+          : state.phase === 'enriching'
+            ? 'Adding cover art…'
+            : state.phase === 'starting'
+              ? 'Starting…'
+              : 'Sync with Steam'}
       </Button>
       {lastSyncedAt ? <p className="text-muted-foreground text-xs">Synced {formatRelativeTime(lastSyncedAt)}</p> : null}
     </div>

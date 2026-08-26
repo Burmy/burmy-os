@@ -10,6 +10,7 @@ import {
   type GameSuggestion,
   metadataFieldsToFill,
   normalizeGameTitle,
+  resolveNewGameMetadataFill,
   scoreTitleMatch,
   type StoredGameMetadata,
   toSuggestions,
@@ -569,6 +570,51 @@ describe('metadataFieldsToFill', () => {
         esrbRating: 'M',
       }),
     );
+    expect(fill).toEqual({});
+  });
+});
+
+describe('resolveNewGameMetadataFill', () => {
+  it('fills every available column from a HIGH-confidence exact-title match', () => {
+    const fill = resolveNewGameMetadataFill('Elden Ring', [
+      suggestion({
+        title: 'Elden Ring',
+        coverUrl: 'https://images.igdb.com/elden-ring.jpg',
+        genre: 'RPG',
+        metacritic: 95,
+        averagePlaytimeHours: 55,
+        esrbRating: 'M',
+      }),
+    ]);
+    expect(fill).toEqual({
+      coverUrl: 'https://images.igdb.com/elden-ring.jpg',
+      genre: 'RPG',
+      metacritic: 95,
+      averagePlaytimeHours: 55,
+      esrbRating: 'M',
+    });
+  });
+
+  it('returns an empty fill — never a guess — when no suggestion clears the similarity floor', () => {
+    // "Bloody Roar 2" vs. an unrelated closest candidate: same real-data
+    // shape as the LOW-confidence, below-floor case `SIMILARITY_FLOOR`'s own
+    // doc comment documents for `bestTitleMatchAmong`.
+    const fill = resolveNewGameMetadataFill('Bloody Roar 2', [suggestion({ title: 'Portal 2', coverUrl: 'https://images.igdb.com/portal2.jpg' })]);
+    expect(fill).toEqual({});
+  });
+
+  it('returns an empty fill for an empty suggestion list (IGDB unconfigured, unreachable, or no results)', () => {
+    expect(resolveNewGameMetadataFill('Some New Game', [])).toEqual({});
+  });
+
+  it('never applies a LOW-confidence match even when it is the only candidate above the floor', () => {
+    // A remaster suffix keeps this below HIGH confidence (see
+    // `scoreTitleMatch`'s EDITION_MARKER_WORDS guard) while still similar
+    // enough to clear SIMILARITY_FLOOR — exactly the case that must still
+    // resolve to "no match," not a fuzzy guess.
+    const fill = resolveNewGameMetadataFill('Metro Last Light', [
+      suggestion({ title: 'Metro Last Light Redux', genre: 'Shooter', coverUrl: 'https://images.igdb.com/metro.jpg' }),
+    ]);
     expect(fill).toEqual({});
   });
 });

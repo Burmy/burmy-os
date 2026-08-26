@@ -83,6 +83,46 @@ export function __resetIgdbTokenCacheForTests(): void {
   cachedToken = null;
 }
 
+/**
+ * Self-imposed throttle for IGDB's documented 4 requests/second limit — the
+ * same watermark `scripts/backfill-game-metadata.mjs`'s `MIN_INTERVAL_MS`
+ * already uses (260ms, a hair over the exact 250ms 4/s implies), ported here
+ * because it can no longer be assumed that natural network latency alone
+ * keeps every caller under the limit.
+ *
+ * Until the sync enrichment phase (`advanceSyncEnrichmentAction`,
+ * `src/features/games/sync/sync-actions.ts`) existed, this module's only
+ * callers were human-paced: the add/edit form's autocomplete (one keystroke
+ * at a time) and "Upcoming games" (once per page load). Enrichment calls
+ * `searchGames` several times in a tight server-side loop with no human
+ * pacing at all, so the request stream now genuinely needs its own
+ * self-imposed limit rather than relying on incidental round-trip latency.
+ *
+ * A single shared "earliest next request time" watermark, not a rolling
+ * window — same reasoning the backfill script's own doc comment gives: it
+ * bounds the WHOLE stream, not just an average, and matters here because a
+ * single `searchGames` call already issues two sequential requests
+ * (search, then time-to-beat) with nothing else to space them out.
+ */
+const MIN_INTERVAL_MS = 260;
+let nextRequestAt = 0;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function throttle(): Promise<void> {
+  const now = Date.now();
+  const waitMs = Math.max(0, nextRequestAt - now);
+  nextRequestAt = Math.max(now, nextRequestAt) + MIN_INTERVAL_MS;
+  if (waitMs > 0) await sleep(waitMs);
+}
+
+/** Test-only: resets the throttle watermark so a test file's own timing never leaks into another's. */
+export function __resetIgdbThrottleForTests(): void {
+  nextRequestAt = 0;
+}
+
 function credentials(): Credentials | null {
   const clientId = process.env.IGDB_CLIENT_ID;
   const clientSecret = process.env.IGDB_CLIENT_SECRET;
@@ -112,6 +152,7 @@ async function fetchToken({ clientId, clientSecret }: Credentials): Promise<Cach
       client_secret: clientSecret,
       grant_type: 'client_credentials',
     });
+    await throttle();
     const response = await fetch(`${TOKEN_ENDPOINT}?${params.toString()}`, {
       method: 'POST',
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -159,12 +200,14 @@ async function igdbPost(endpoint: string, body: string, creds: Credentials): Pro
   const token = await getToken(creds);
   if (token === null) return null;
 
+  await throttle();
   let response = await fetch(endpoint, requestInit(token, creds.clientId, body));
 
   if (response.status === 401) {
     cachedToken = null;
     const freshToken = await getToken(creds);
     if (freshToken === null) return null;
+    await throttle();
     response = await fetch(endpoint, requestInit(freshToken, creds.clientId, body));
   }
 

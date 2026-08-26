@@ -30,6 +30,7 @@ import { revalidatePath } from 'next/cache';
 import { requireOwner } from '@/server/auth/owner';
 import { SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from '@/server/db/games/errors';
 import { countSteamGames, listSteamGamesChunk, listSteamGamesForMatching } from '@/server/db/games/games';
+import { searchGames } from '@/server/db/games/igdb';
 import { sumPlayYearsForGames } from '@/server/db/games/play-years';
 import {
   appendSyncChanges,
@@ -40,11 +41,13 @@ import {
   getSyncRun,
   getSyncRunLibrary,
   listSyncChanges,
+  listUnenrichedNewGameChanges,
+  markNewGameChangeEnriched,
   setSyncChangeSelected,
 } from '@/server/db/games/sync';
 import { fetchAchievementCounts, fetchOwnedGames } from '@/server/db/games/steam-client';
 import { minutesToHoursTenths } from '@/server/games/hours';
-import { bestTitleMatchAmong } from '@/server/games/metadata';
+import { bestTitleMatchAmong, resolveNewGameMetadataFill } from '@/server/games/metadata';
 import type { OwnedSteamGame } from '@/server/games/steam';
 import { planLinkedGameChanges, planNewGameChange, type PlannedChange, type StoredGameForSync } from '@/server/games/sync-plan';
 import { type ActionResult, fail, ok } from '../action-result';
@@ -306,6 +309,90 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
     await finishSyncRun(owner.userId, runId, 'failed', message);
     return { error: message };
   }
+}
+
+/**
+ * `new_game` changes enriched per `advanceSyncEnrichmentAction` call. Each
+ * one costs up to TWO IGDB requests (`searchGames`'s search, then its own
+ * time-to-beat merge — see that function's doc comment in `igdb.ts`), so a
+ * chunk of `ENRICHMENT_CHUNK_SIZE` games is at most `2 * ENRICHMENT_CHUNK_SIZE`
+ * outbound requests per call. `igdb.ts`'s own self-imposed throttle
+ * (`MIN_INTERVAL_MS`, mirroring `scripts/backfill-game-metadata.mjs`'s
+ * already-proven watermark) is what actually keeps the WHOLE request stream
+ * under IGDB's documented 4 req/s limit, regardless of chunk size — this
+ * constant exists for UI responsiveness (visible progress, no single call
+ * stalling for tens of seconds), matching `CHUNK_SIZE` above's own reasoning
+ * for the main sync walk.
+ *
+ * SEPARATE from `CHUNK_SIZE`: enrichment runs as its OWN chunked pass, after
+ * a run reaches `ready`, over the fixed set of `new_game` changes it staged —
+ * never folded into the `if (done)` block that stages them (see this
+ * module's — and `psn-actions.ts`'s — own header on why enriching ~70+ new
+ * games synchronously in one call would mean tens of seconds of serial
+ * waiting in a single action).
+ */
+const ENRICHMENT_CHUNK_SIZE = 3;
+
+export interface EnrichmentProgress {
+  readonly runId: string;
+  readonly done: boolean;
+  /** How many changes THIS call processed (0 once every `new_game` change has been enriched) — not a running total. */
+  readonly enrichedCount: number;
+}
+
+/**
+ * Enriches up to `ENRICHMENT_CHUNK_SIZE` staged `new_game` changes for a
+ * `ready` run with IGDB cover art / genre / metacritic / average playtime /
+ * ESRB rating, writing the result into each change's own `payload` — so the
+ * review screen (`sync-review.tsx`) can render a real cover BEFORE the owner
+ * ever commits, and so `commitSyncRun` (`src/server/db/games/sync.ts`) reads
+ * the same fields through into the `games` insert.
+ *
+ * Source-agnostic and shared by both engines — a `new_game` change looks the
+ * same regardless of `run.source`, and this only ever touches
+ * `game_sync_changes`, exactly like `setSyncChangeSelectedAction`/
+ * `commitSyncRunAction` below (see `psn-actions.ts`'s own "NO PSN-SPECIFIC…"
+ * footer for why those two live here rather than being duplicated per
+ * source).
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NEVER BLOCKS OR FAILS A SYNC
+ *
+ * `searchGames` already soft-fails to `[]` on missing credentials, a
+ * Twitch/IGDB outage, a timeout, or a malformed response (`igdb.ts`'s
+ * documented contract) — never a throw. `resolveNewGameMetadataFill`
+ * (`metadata.ts`) turns "no suggestions" and "no HIGH-confidence match"
+ * into the same empty `{}` fill, and `markNewGameChangeEnriched` marks the
+ * change enriched regardless, so a game IGDB cannot confidently identify
+ * simply keeps rendering as a letter-tile placeholder — exactly today's
+ * behaviour before enrichment existed. There is deliberately no top-level
+ * try/catch the way `advanceSteamSyncAction`/`advancePsnSyncAction` have:
+ * nothing in this loop can throw except a genuine database fault, which
+ * SHOULD propagate rather than be swallowed as if it were an IGDB miss.
+ *
+ * Idempotent by construction, not by a cursor: `listUnenrichedNewGameChanges`
+ * selects only changes still missing the `metadataEnriched` marker (see its
+ * own doc comment), so calling this again after `done: true` — or after a
+ * client retry — is a correct, cheap no-op.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function advanceSyncEnrichmentAction(runId: string): Promise<EnrichmentProgress | { readonly error: string }> {
+  const owner = await requireOwner();
+
+  const run = await getSyncRun(owner.userId, runId);
+  if (run === null || run.status !== 'ready') {
+    return { error: 'Sync run not found, or not ready for enrichment.' };
+  }
+
+  const chunk = await listUnenrichedNewGameChanges(owner.userId, runId, ENRICHMENT_CHUNK_SIZE);
+
+  for (const change of chunk) {
+    const suggestions = await searchGames(change.title);
+    const fill = resolveNewGameMetadataFill(change.title, suggestions);
+    await markNewGameChangeEnriched(owner.userId, change.id, fill);
+  }
+
+  return { runId, done: chunk.length === 0, enrichedCount: chunk.length };
 }
 
 /**

@@ -678,3 +678,38 @@ export function metadataFieldsToFill(current: StoredGameMetadata, suggestion: Ga
   if (current.esrbRating === null && suggestion.esrbRating !== null) fill.esrbRating = suggestion.esrbRating;
   return fill;
 }
+
+/**
+ * A brand-new game has no library row yet, so every one of the five
+ * backfillable columns starts unset — the sync enrichment phase's own
+ * "current" for `metadataFieldsToFill` (`src/features/games/sync/sync-actions.ts`'s
+ * `advanceSyncEnrichmentAction`), exactly the same call `scripts/backfill-game-
+ * metadata.mjs` makes per EXISTING game, just with every field guaranteed
+ * null rather than possibly already set.
+ */
+const NO_STORED_METADATA: StoredGameMetadata = {
+  coverUrl: null,
+  genre: null,
+  metacritic: null,
+  averagePlaytimeHours: null,
+  esrbRating: null,
+};
+
+/**
+ * The metadata a brand-new, not-yet-inserted game should be enriched with:
+ * the single best IGDB `suggestion` for `title`, applied ONLY when it clears
+ * HIGH confidence — identical gate to `scripts/backfill-game-metadata.mjs`'s
+ * `--apply` policy (see `scoreTitleMatch`'s doc comment for the full
+ * confidence rule, and `SIMILARITY_FLOOR` for why even the best LOW match is
+ * discarded). Returns an EMPTY `MetadataFill` (no keys), never `null`, for
+ * "no suggestions," "no confident match," or "not configured" alike — the
+ * caller (`markNewGameChangeEnriched`, `src/server/db/games/sync.ts`) merges
+ * this straight into a payload patch with no extra branch, and an empty fill
+ * is exactly what should be written when nothing was found: the new game
+ * stays a letter-tile placeholder, precisely today's un-enriched behaviour.
+ */
+export function resolveNewGameMetadataFill(title: string, suggestions: readonly GameSuggestion[]): MetadataFill {
+  const match = bestTitleMatch(title, suggestions);
+  if (match === null || match.score.confidence !== 'high') return {};
+  return metadataFieldsToFill(NO_STORED_METADATA, match.suggestion);
+}

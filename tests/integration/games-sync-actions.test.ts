@@ -1,5 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { GameSuggestion } from '@/server/games/metadata';
 import { countRows, harness, provisionOwner, resetDatabase } from './harness';
 
 /**
@@ -41,6 +42,13 @@ const fetchAchievementCounts = vi.fn(async (_appid: number) => null);
 
 vi.mock('@/server/db/games/steam-client', () => ({ fetchOwnedGames, fetchAchievementCounts }));
 
+// The enrichment phase's one HTTP boundary — mocked here for the same reason
+// the Steam client is: this suite exercises what `advanceSyncEnrichmentAction`
+// does with a GIVEN `searchGames` result, never a real IGDB/Twitch call.
+const searchGames = vi.fn(async (_title: string): Promise<GameSuggestion[]> => []);
+
+vi.mock('@/server/db/games/igdb', () => ({ searchGames }));
+
 type SyncActions = typeof import('@/features/games/sync/sync-actions');
 type Games = typeof import('@/server/db/games/games');
 type Sync = typeof import('@/server/db/games/sync');
@@ -72,6 +80,8 @@ beforeEach(async () => {
   fetchOwnedGames.mockImplementation(async () => []);
   fetchAchievementCounts.mockReset();
   fetchAchievementCounts.mockImplementation(async () => null);
+  searchGames.mockReset();
+  searchGames.mockImplementation(async () => []);
 });
 
 afterEach(() => {
@@ -414,6 +424,197 @@ describe('advanceSteamSyncAction — keyset pagination survives a moving library
 
     for (const [gameId, count] of linkChangeCountByGame) {
       expect(count, `game ${gameId} received ${count} link changes, expected at most 1`).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+/** A minimal, fully-specified `GameSuggestion` fixture — same shape as the unit suite's own helper. */
+function suggestion(overrides: Partial<GameSuggestion> & { title: string }): GameSuggestion {
+  return {
+    externalId: '1',
+    coverUrl: null,
+    genre: null,
+    developer: null,
+    publisher: null,
+    metacritic: null,
+    averagePlaytimeHours: null,
+    esrbRating: null,
+    releaseYear: null,
+    ...overrides,
+  };
+}
+
+/** The one `games` row for this title, by raw query — new_game rows have no id to look up by beforehand. */
+async function gameRowByTitle(ownerId: string, title: string): Promise<Record<string, unknown>> {
+  const { sql } = await harness();
+  const rows = await sql`select * from "games" where "owner_id" = ${ownerId} and "title" = ${title}`;
+  const row = rows[0];
+  if (!row) throw new Error(`expected a games row titled "${title}"`);
+  return row;
+}
+
+/** Drives a run's staging phase to `ready`, same "empty chunk is done" loop every other test in this file uses. */
+async function runToReady(runId: string): Promise<void> {
+  let done = false;
+  for (let i = 0; i < 50 && !done; i += 1) {
+    const progress = await actions.advanceSteamSyncAction(runId);
+    if ('error' in progress) throw new Error(progress.error);
+    done = progress.done;
+  }
+  if (!done) throw new Error('sync run never reached done');
+}
+
+/**
+ * Drives the enrichment phase to `done` — the SAME "an empty chunk is the
+ * only done signal" idiom `runToReady` above uses for staging, since
+ * `advanceSyncEnrichmentAction` follows it too (see that function's own doc
+ * comment): a chunk that processed real changes is not yet `done` on its
+ * own, even when fewer than `ENRICHMENT_CHUNK_SIZE` remained — the FOLLOWING
+ * call, seeing nothing left, is what actually reports `done: true`. Returns
+ * the number of calls made and the total changes enriched across all of
+ * them, so a test can assert on both the outcome and the chunking shape.
+ */
+async function enrichToDone(runId: string): Promise<{ readonly calls: number; readonly totalEnriched: number }> {
+  let done = false;
+  let calls = 0;
+  let totalEnriched = 0;
+  for (let i = 0; i < 50 && !done; i += 1) {
+    const progress = await actions.advanceSyncEnrichmentAction(runId);
+    if ('error' in progress) throw new Error(progress.error);
+    calls += 1;
+    totalEnriched += progress.enrichedCount;
+    done = progress.done;
+  }
+  if (!done) throw new Error('enrichment never reached done');
+  return { calls, totalEnriched };
+}
+
+describe('advanceSyncEnrichmentAction', () => {
+  it('fills a staged new_game change with IGDB metadata on a HIGH-confidence match, and commit carries it through to the games row', async () => {
+    const ownerId = await provisionOwner();
+    fetchOwnedGames.mockImplementation(async () => [{ appid: 1001, name: 'Elden Ring', playtimeMinutes: 6000 }]);
+    searchGames.mockImplementation(async (title) =>
+      title === 'Elden Ring'
+        ? [
+            suggestion({
+              title: 'Elden Ring', // identical normalized title — HIGH confidence
+              coverUrl: 'https://images.igdb.com/elden-ring.jpg',
+              genre: 'RPG',
+              metacritic: 95,
+              averagePlaytimeHours: 55,
+              esrbRating: 'M',
+            }),
+          ]
+        : [],
+    );
+
+    const runId = await startRun();
+    await runToReady(runId);
+
+    const { totalEnriched } = await enrichToDone(runId);
+    expect(totalEnriched).toBe(1);
+
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    const staged = changes.find((change) => change.kind === 'new_game' && change.title === 'Elden Ring');
+    expect(staged?.payload).toMatchObject({
+      coverUrl: 'https://images.igdb.com/elden-ring.jpg',
+      genre: 'RPG',
+      metacritic: 95,
+      averagePlaytimeHours: 55,
+      esrbRating: 'M',
+      metadataEnriched: true,
+      // The identity/hours fields the planner staged must survive the merge untouched.
+      steamAppid: 1001,
+      hoursTenths: 1000,
+    });
+
+    const commit = await sync.commitSyncRun(ownerId, runId);
+    expect(commit.created).toBe(1);
+
+    const row = await gameRowByTitle(ownerId, 'Elden Ring');
+    expect(row.cover_url).toBe('https://images.igdb.com/elden-ring.jpg');
+    expect(row.genre).toBe('RPG');
+    expect(row.metacritic).toBe(95);
+    expect(row.average_playtime_hours).toBe(55);
+    expect(row.esrb_rating).toBe('M');
+  });
+
+  it('leaves a staged new_game change usable — no metadata, but still committable — when IGDB returns no confident match', async () => {
+    const ownerId = await provisionOwner();
+    fetchOwnedGames.mockImplementation(async () => [{ appid: 1002, name: 'Some New Indie Game', playtimeMinutes: 120 }]);
+    // A wholly unrelated suggestion — the real "closest neighbour, still
+    // below the floor" shape `SIMILARITY_FLOOR` is calibrated against.
+    searchGames.mockImplementation(async () => [suggestion({ title: 'Totally Unrelated Title' })]);
+
+    const runId = await startRun();
+    await runToReady(runId);
+
+    const { totalEnriched } = await enrichToDone(runId);
+    expect(totalEnriched).toBe(1);
+
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    const staged = changes.find((change) => change.kind === 'new_game' && change.title === 'Some New Indie Game');
+    expect(staged?.payload.metadataEnriched).toBe(true);
+    expect(staged?.payload.coverUrl).toBeUndefined();
+    expect(staged?.payload.genre).toBeUndefined();
+    // The change is not stuck or dropped — its real staged fields are intact.
+    expect(staged?.payload.steamAppid).toBe(1002);
+
+    const commit = await sync.commitSyncRun(ownerId, runId);
+    expect(commit.created).toBe(1);
+
+    const row = await gameRowByTitle(ownerId, 'Some New Indie Game');
+    expect(row.cover_url).toBeNull();
+    expect(row.genre).toBeNull();
+    expect(row.steam_appid).toBe(1002);
+  });
+
+  it('never fails the run when IGDB is entirely unreachable, even across several staged games spanning more than one chunk', async () => {
+    const ownerId = await provisionOwner();
+    // Four new games — one more than ENRICHMENT_CHUNK_SIZE (3) — so this
+    // also proves the chunked walk itself keeps going across calls.
+    fetchOwnedGames.mockImplementation(async () => [
+      { appid: 2001, name: 'New Game One', playtimeMinutes: 60 },
+      { appid: 2002, name: 'New Game Two', playtimeMinutes: 60 },
+      { appid: 2003, name: 'New Game Three', playtimeMinutes: 60 },
+      { appid: 2004, name: 'New Game Four', playtimeMinutes: 60 },
+    ]);
+    // IGDB "entirely down" — searchGames itself already soft-fails to `[]`
+    // for every credentials/network/response failure (see `igdb.ts`), so
+    // this is the exact value a real outage produces.
+    searchGames.mockImplementation(async () => []);
+
+    const runId = await startRun();
+    await runToReady(runId);
+
+    let done = false;
+    let totalEnriched = 0;
+    let calls = 0;
+    for (let i = 0; i < 10 && !done; i += 1) {
+      const progress = await actions.advanceSyncEnrichmentAction(runId);
+      if ('error' in progress) throw new Error(progress.error);
+      calls += 1;
+      totalEnriched += progress.enrichedCount;
+      done = progress.done;
+
+      // The run must never flip to 'failed' partway through enrichment.
+      const run = await sync.getSyncRun(ownerId, runId);
+      expect(run?.status).toBe('ready');
+    }
+
+    expect(done).toBe(true);
+    expect(totalEnriched).toBe(4);
+    expect(calls).toBeGreaterThan(1); // proves it actually spanned more than one chunk
+
+    const run = await sync.getSyncRun(ownerId, runId);
+    expect(run?.status).toBe('ready');
+
+    const commit = await sync.commitSyncRun(ownerId, runId);
+    expect(commit.created).toBe(4);
+
+    for (const title of ['New Game One', 'New Game Two', 'New Game Three', 'New Game Four']) {
+      const row = await gameRowByTitle(ownerId, title);
+      expect(row.cover_url).toBeNull();
     }
   });
 });

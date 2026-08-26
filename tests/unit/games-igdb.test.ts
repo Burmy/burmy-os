@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { __resetIgdbTokenCacheForTests, fetchUpcomingGames, igdbConfigured, searchGames } from '@/server/db/games/igdb';
+import {
+  __resetIgdbThrottleForTests,
+  __resetIgdbTokenCacheForTests,
+  fetchUpcomingGames,
+  igdbConfigured,
+  searchGames,
+} from '@/server/db/games/igdb';
 
 /**
  * `searchGames` must fail SOFT in every case — missing credentials, a
@@ -11,14 +17,19 @@ import { __resetIgdbTokenCacheForTests, fetchUpcomingGames, igdbConfigured, sear
  *
  * `restoreMocks: true` (vitest.config.ts) resets `vi.fn()` call state between
  * tests, but does NOT undo `vi.stubEnv`/`vi.stubGlobal`, and does NOT touch
- * this module's own module-scope token cache — all three are unwound
- * explicitly here so one test's fake `fetch`, fake credentials, or cached
- * token can never leak into the next.
+ * this module's own module-scope token cache or request throttle — all four
+ * are unwound explicitly here so one test's fake `fetch`, fake credentials,
+ * cached token, or request-timing watermark can never leak into the next.
+ * Resetting the throttle also keeps this file's own runtime bounded: without
+ * it, the watermark it shares with `igdb.ts`'s real `MIN_INTERVAL_MS` would
+ * keep advancing across every test in this file and slow the whole suite for
+ * no reason a fake, instant `fetch` in these tests actually needs.
  */
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   __resetIgdbTokenCacheForTests();
+  __resetIgdbThrottleForTests();
 });
 
 function stubCredentials(): void {

@@ -4,10 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const startSteamSyncAction = vi.fn();
 const advanceSteamSyncAction = vi.fn();
+// Enrichment is a separate, best-effort phase the button also drives (see
+// `sync-button.tsx`'s own comment on its loop) — defaulted to "nothing to
+// enrich, done immediately" in `beforeEach` below so every existing test's
+// progress-loop assertions (call counts, the final `push`) stay about the
+// SYNC loop, not this one, unless a test overrides it.
+const advanceSyncEnrichmentAction = vi.fn();
 
 vi.mock('@/features/games/sync/sync-actions', () => ({
   startSteamSyncAction: (...args: unknown[]) => startSteamSyncAction(...args),
   advanceSteamSyncAction: (...args: unknown[]) => advanceSteamSyncAction(...args),
+  advanceSyncEnrichmentAction: (...args: unknown[]) => advanceSyncEnrichmentAction(...args),
 }));
 
 const push = vi.fn();
@@ -27,6 +34,8 @@ describe('SyncButton', () => {
   beforeEach(() => {
     startSteamSyncAction.mockReset();
     advanceSteamSyncAction.mockReset();
+    advanceSyncEnrichmentAction.mockReset();
+    advanceSyncEnrichmentAction.mockResolvedValue({ runId: 'run-1', done: true, enrichedCount: 0 });
     push.mockClear();
     toastError.mockClear();
   });
@@ -74,6 +83,41 @@ describe('SyncButton', () => {
 
     resolveSecondChunk({ runId: 'run-2', cursor: 47, total: 47, done: true, changeCount: 0 });
     await waitFor(() => expect(push).toHaveBeenCalledWith('/games/sync/run-2'));
+  });
+
+  it('runs the enrichment phase after sync reaches done, showing "Adding cover art…", before navigating', async () => {
+    startSteamSyncAction.mockResolvedValue({ ok: true, runId: 'run-4' });
+    advanceSteamSyncAction.mockResolvedValueOnce({ runId: 'run-4', cursor: 1, total: 1, done: true, changeCount: 1 });
+    let resolveEnrichment: (value: unknown) => void = () => {};
+    advanceSyncEnrichmentAction.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveEnrichment = resolve;
+        }),
+    );
+
+    render(<SyncButton configured={true} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /sync with steam/i }));
+
+    await screen.findByText('Adding cover art…');
+    expect(push).not.toHaveBeenCalled();
+
+    resolveEnrichment({ runId: 'run-4', done: true, enrichedCount: 1 });
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/games/sync/run-4'));
+  });
+
+  it('still navigates to the review screen when the enrichment phase itself errors — enrichment never blocks the sync', async () => {
+    startSteamSyncAction.mockResolvedValue({ ok: true, runId: 'run-5' });
+    advanceSteamSyncAction.mockResolvedValueOnce({ runId: 'run-5', cursor: 1, total: 1, done: true, changeCount: 1 });
+    advanceSyncEnrichmentAction.mockResolvedValueOnce({ error: 'Sync run not found, or not ready for enrichment.' });
+
+    render(<SyncButton configured={true} />);
+
+    await userEvent.click(screen.getByRole('button', { name: /sync with steam/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/games/sync/run-5'));
+    expect(toastError).not.toHaveBeenCalled();
   });
 
   it('stops the loop and surfaces the message when an advance call errors', async () => {
