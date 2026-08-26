@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, useTransition } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -17,6 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -107,27 +108,6 @@ export function GameDialog({
     (game?.playYears ?? []).map((row) => ({ year: String(row.year), hours: toHoursInput(hours(row.hoursTenths)) })),
   );
   const [showSplit, setShowSplit] = useState((game?.playYears ?? []).length > 0);
-  // Progressive disclosure: catalog metadata (genre/developer/publisher),
-  // Steam-provenance numbers already summarized elsewhere, and one-time/
-  // rare-edit facts (first played year, ownership, price) start hidden
-  // behind "More details" — UNLESS the game being edited already has any of
-  // them filled in, in which case starting collapsed would hide the owner's
-  // own previously-entered data every time they reopen an already-filled-out
-  // game. Computed once from `game` at mount, which is safe because
-  // `GameDialog` is fully remounted per game (`library-view.tsx`'s
-  // `key={editing?.id ?? ...}`), not re-rendered with a new `game` prop in
-  // place.
-  const [showAdvanced, setShowAdvanced] = useState(
-    game !== null &&
-      (game.firstPlayedYear !== null ||
-        game.ownership !== null ||
-        game.achievementsUnlocked !== null ||
-        game.achievementsTotal !== null ||
-        game.priceCents !== null ||
-        game.genre !== null ||
-        game.developer !== null ||
-        game.publisher !== null),
-  );
   // A linked game has its total hours and achievement counts written by
   // Steam sync (see `commitSyncRun` in src/server/db/games/sync.ts), so this
   // form must not let the owner type over them — the Hours/Achievements
@@ -284,223 +264,264 @@ export function GameDialog({
             is `sm:max-w-lg`, and Tailwind emits responsive variants AFTER their
             unprefixed counterparts regardless of className order, so an
             unprefixed override silently loses at any viewport >=640px. */}
-        <DialogContent className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl">
+        <DialogContent
+          className="flex max-h-[85vh] flex-col overflow-hidden sm:max-w-2xl"
+          // Radix's Dialog dismisses on Escape via a document-level CAPTURE
+          // listener — it fires before an `InlineField`'s own `onKeyDown`
+          // (a bubble-phase React handler) ever runs, so that handler's own
+          // `stopPropagation()` cannot prevent it (verified: it did not).
+          // `onEscapeKeyDown` is Radix's own documented hook for exactly
+          // this — `event.target` is still the focused inline-edit input at
+          // the moment Escape fires, so checking its marker attribute here
+          // and calling `preventDefault()` stops the WHOLE DIALOG from
+          // closing, letting the input's own handler cancel just that one
+          // field instead.
+          onEscapeKeyDown={(event) => {
+            if ((event.target as HTMLElement | null)?.dataset.inlineFieldEditing === 'true') {
+              event.preventDefault();
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{game === null ? 'Add game' : game.title}</DialogTitle>
           </DialogHeader>
 
-          <form action={submit} className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1">
-            <div className="space-y-2">
-              <Label htmlFor="title">Title</Label>
-              <Input
-                id="title"
-                name="title"
-                value={title}
-                onChange={(event) => {
-                  // The one and only place this ref is set — see its
-                  // declaration above for why.
-                  titleEditedRef.current = true;
-                  setTitle(event.target.value);
-                }}
-                required
-                autoFocus
-              />
-              {visibleSearchStatus === 'loading' ? (
-                <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
-                  <Loader2 className="size-3 animate-spin" aria-hidden />
-                  Searching…
-                </p>
-              ) : visibleSearchStatus === 'empty' ? (
-                <p className="text-muted-foreground text-xs">No matches found — fill the details in by hand.</p>
-              ) : null}
-              {error === null ? null : (
-                <p role="alert" className="text-destructive text-sm">
-                  {error}
+          <form action={submit} className="flex min-h-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-1">
+              <div className="space-y-2">
+                <Label htmlFor="title">Title</Label>
+                <Input
+                  id="title"
+                  name="title"
+                  value={title}
+                  onChange={(event) => {
+                    // The one and only place this ref is set — see its
+                    // declaration above for why.
+                    titleEditedRef.current = true;
+                    setTitle(event.target.value);
+                  }}
+                  required
+                  autoFocus
+                />
+                {visibleSearchStatus === 'loading' ? (
+                  <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                    <Loader2 className="size-3 animate-spin" aria-hidden />
+                    Searching…
+                  </p>
+                ) : visibleSearchStatus === 'empty' ? (
+                  <p className="text-muted-foreground text-xs">No matches found — fill the details in by hand.</p>
+                ) : null}
+                {error === null ? null : (
+                  <p role="alert" className="text-destructive text-sm">
+                    {error}
+                  </p>
+                )}
+              </div>
+
+              {visibleSuggestions.length === 0 ? null : (
+                <ul className="grid grid-cols-3 gap-2 rounded-md border p-2 sm:grid-cols-6">
+                  {visibleSuggestions.map((suggestion) => (
+                    <li key={suggestion.externalId}>
+                      <button
+                        type="button"
+                        onClick={() => applySuggestion(suggestion)}
+                        className="hover:ring-ring block w-full overflow-hidden rounded text-left hover:ring-2"
+                      >
+                        <span className="bg-muted relative block aspect-[3/4] w-full">
+                          {suggestion.coverUrl === null ? null : (
+                            <Image src={suggestion.coverUrl} alt="" fill sizes="120px" className="object-cover" />
+                          )}
+                        </span>
+                        <span className="line-clamp-2 p-1 text-xs">
+                          {suggestion.title}
+                          {suggestion.releaseYear === null ? '' : ` (${suggestion.releaseYear})`}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {metacritic === null && averagePlaytimeHours === null && esrbRating === null ? null : (
+                <p className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                  {metacritic === null ? null : <span>Metacritic {metacritic}</span>}
+                  {averagePlaytimeHours === null ? null : <span>~{averagePlaytimeHours}h to beat</span>}
+                  {esrbRating === null ? null : <span>ESRB {esrbRating}</span>}
                 </p>
               )}
-            </div>
 
-            {visibleSuggestions.length === 0 ? null : (
-              <ul className="grid grid-cols-3 gap-2 rounded-md border p-2 sm:grid-cols-6">
-                {visibleSuggestions.map((suggestion) => (
-                  <li key={suggestion.externalId}>
-                    <button
-                      type="button"
-                      onClick={() => applySuggestion(suggestion)}
-                      className="hover:ring-ring block w-full overflow-hidden rounded text-left hover:ring-2"
-                    >
-                      <span className="bg-muted relative block aspect-[3/4] w-full">
-                        {suggestion.coverUrl === null ? null : (
-                          <Image src={suggestion.coverUrl} alt="" fill sizes="120px" className="object-cover" />
-                        )}
-                      </span>
-                      <span className="line-clamp-2 p-1 text-xs">
-                        {suggestion.title}
-                        {suggestion.releaseYear === null ? '' : ` (${suggestion.releaseYear})`}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {metacritic === null && averagePlaytimeHours === null && esrbRating === null ? null : (
-              <p className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                {metacritic === null ? null : <span>Metacritic {metacritic}</span>}
-                {averagePlaytimeHours === null ? null : <span>~{averagePlaytimeHours}h to beat</span>}
-                {esrbRating === null ? null : <span>ESRB {esrbRating}</span>}
-              </p>
-            )}
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FieldSelect
-                id="platform"
-                label="Platform"
-                value={platform}
-                onChange={(value) => setPlatform(value as typeof platform)}
-                // `pc` is excluded going forward (see PLATFORM_PICKER_OPTIONS),
-                // but a hypothetical EXISTING `pc` game must still show its real
-                // platform when edited rather than a blank Select whose current
-                // value matches no item in the list.
-                options={(platform === 'pc' ? [...PLATFORM_PICKER_OPTIONS, 'pc' as const] : PLATFORM_PICKER_OPTIONS).map(
-                  (value) => ({ value, label: PLATFORM_LABELS[value] }),
-                )}
-              />
-              <FieldSelect
-                id="status"
-                label="Status"
-                value={status}
-                onChange={(value) => setStatus(value as typeof status)}
-                options={GAME_STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] }))}
-              />
-              <Field
-                id="hours"
-                label="Hours played"
-                value={hoursFieldValue}
-                onChange={setHoursFieldValue}
-                placeholder="23.5"
-                disabled={steamOwned}
-                hint={steamOwned ? 'From Steam' : null}
-              />
-              <div className="sm:col-span-2">
-                {showSplit ? (
-                  <PlayYearsPanel
-                    value={playYears}
-                    onChange={setPlayYears}
-                    totalTenths={fromHoursInput(hoursFieldValue) ?? 0}
-                  />
-                ) : (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-muted-foreground -ml-2 gap-1.5 px-2"
-                    onClick={() => setShowSplit(true)}
-                  >
-                    <Plus className="size-4" aria-hidden />
-                    Split across years
-                  </Button>
-                )}
-              </div>
-              <Field id="rating" label="Rating (1-5)" defaultValue={game?.rating ?? ''} placeholder="4" />
               {/*
-               * Radix's Checkbox renders a hidden native input mirroring its
-               * state (`name`/`value` bubble through to real FormData), so an
-               * UNCHECKED box omits the "platinum" key entirely — same as a
-               * plain HTML checkbox. `parse()` in game-actions.ts relies on
-               * exactly that to tell "not earned" apart from "not touched."
-               * Uncontrolled (`defaultChecked`, not `checked`/`onCheckedChange`)
-               * like the other plain `Field`s above, unlike platform/status
-               * (which need controlled state only because Radix's Select does
-               * not post a native form value at all).
+               * Three tabs instead of one long scrolling grid — the field
+               * count didn't drop (progressive disclosure already tried
+               * that and real usage still found it too dense/scrolly for an
+               * already-filled-out game), but no single view now shows more
+               * than ~8 fields at once.
+               *
+               * `forceMount` + CSS-hide on the inactive state, never
+               * Radix's default (unmount the inactive panel). Every field
+               * below is a native named input/hidden-input that reaches the
+               * server ONLY because it is present in the DOM at submit time
+               * (see this file's own doc comment on `submit()`).
+               * `game-actions.ts`'s `parse()` treats an ABSENT key on
+               * update as "explicitly cleared," so letting an inactive tab
+               * unmount would silently null out every field on whichever
+               * tab isn't showing the moment Save is clicked — the same
+               * class of bug the earlier disclosure-toggle version of this
+               * dialog had to avoid the same way.
                */}
-              <div className="flex items-center gap-2">
-                <Checkbox id="platinum" name="platinum" value="true" defaultChecked={game?.platinum ?? false} />
-                <Label htmlFor="platinum" className="cursor-pointer font-normal">
-                  Platinum trophy earned
-                </Label>
-              </div>
+              <Tabs defaultValue="progress">
+                <TabsList>
+                  <TabsTrigger value="details">Details</TabsTrigger>
+                  <TabsTrigger value="progress">Progress</TabsTrigger>
+                  <TabsTrigger value="notes">Notes</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="details" forceMount className="pt-4 data-[state=inactive]:hidden">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FieldSelect
+                      id="platform"
+                      label="Platform"
+                      value={platform}
+                      onChange={(value) => setPlatform(value as typeof platform)}
+                      // `pc` is excluded going forward (see PLATFORM_PICKER_OPTIONS),
+                      // but a hypothetical EXISTING `pc` game must still show its real
+                      // platform when edited rather than a blank Select whose current
+                      // value matches no item in the list.
+                      options={(platform === 'pc'
+                        ? [...PLATFORM_PICKER_OPTIONS, 'pc' as const]
+                        : PLATFORM_PICKER_OPTIONS
+                      ).map((value) => ({ value, label: PLATFORM_LABELS[value] }))}
+                    />
+                    <FieldSelect
+                      id="ownership"
+                      label="Ownership"
+                      value={ownership === '' ? OWNERSHIP_UNSET : ownership}
+                      onChange={(value) => setOwnership(value === OWNERSHIP_UNSET ? '' : (value as typeof ownership))}
+                      options={[
+                        { value: OWNERSHIP_UNSET, label: 'Not set' },
+                        ...GAME_OWNERSHIPS.map((value) => ({
+                          value,
+                          label: value === 'physical' ? 'Physical' : 'Digital',
+                        })),
+                      ]}
+                    />
+                    <Field
+                      id="priceDollars"
+                      label="Price paid"
+                      defaultValue={game?.priceCents == null ? '' : (game.priceCents / 100).toFixed(2)}
+                      placeholder="59.99"
+                    />
+                    {/* Genre/Developer/Publisher are almost always IGDB-filled and
+                        rarely hand-edited — a compact click-to-edit control instead
+                        of three permanently-open input boxes, matching the density
+                        of the read-only Metacritic/beat-time/ESRB strip above. */}
+                    <InlineField id="genre" label="Genre" value={genre} onChange={setGenre} placeholder="Action RPG" />
+                    <InlineField id="developer" label="Developer" value={developer} onChange={setDeveloper} />
+                    <InlineField id="publisher" label="Publisher" value={publisher} onChange={setPublisher} />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="progress" forceMount className="pt-4 data-[state=inactive]:hidden">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <FieldSelect
+                      id="status"
+                      label="Status"
+                      value={status}
+                      onChange={(value) => setStatus(value as typeof status)}
+                      options={GAME_STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] }))}
+                    />
+                    <Field
+                      id="hours"
+                      label="Hours played"
+                      value={hoursFieldValue}
+                      onChange={setHoursFieldValue}
+                      placeholder="23.5"
+                      disabled={steamOwned}
+                      hint={steamOwned ? 'From Steam' : null}
+                    />
+                    <div className="sm:col-span-2">
+                      {showSplit ? (
+                        <PlayYearsPanel
+                          value={playYears}
+                          onChange={setPlayYears}
+                          totalTenths={fromHoursInput(hoursFieldValue) ?? 0}
+                        />
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="text-muted-foreground -ml-2 gap-1.5 px-2"
+                          onClick={() => setShowSplit(true)}
+                        >
+                          <Plus className="size-4" aria-hidden />
+                          Split across years
+                        </Button>
+                      )}
+                    </div>
+                    <Field id="rating" label="Rating (1-5)" defaultValue={game?.rating ?? ''} placeholder="4" />
+                    <Field
+                      id="firstPlayedYear"
+                      label="First played (year)"
+                      defaultValue={game?.firstPlayedYear ?? ''}
+                      placeholder="2026"
+                    />
+                    <Field
+                      id="achievementsUnlocked"
+                      label="Achievements earned"
+                      defaultValue={game?.achievementsUnlocked ?? ''}
+                      placeholder="42"
+                      disabled={steamOwned}
+                      hint={steamOwned ? 'From Steam' : null}
+                    />
+                    <Field
+                      id="achievementsTotal"
+                      label="Achievements total"
+                      defaultValue={game?.achievementsTotal ?? ''}
+                      placeholder="54"
+                      disabled={steamOwned}
+                      hint={steamOwned ? 'From Steam' : null}
+                    />
+                    {/*
+                     * Radix's Checkbox renders a hidden native input mirroring its
+                     * state (`name`/`value` bubble through to real FormData), so an
+                     * UNCHECKED box omits the "platinum" key entirely — same as a
+                     * plain HTML checkbox. `parse()` in game-actions.ts relies on
+                     * exactly that to tell "not earned" apart from "not touched."
+                     * Uncontrolled (`defaultChecked`, not `checked`/`onCheckedChange`)
+                     * like the other plain `Field`s above, unlike platform/status
+                     * (which need controlled state only because Radix's Select does
+                     * not post a native form value at all).
+                     */}
+                    <div className="flex items-center gap-2">
+                      <Checkbox id="platinum" name="platinum" value="true" defaultChecked={game?.platinum ?? false} />
+                      <Label htmlFor="platinum" className="cursor-pointer font-normal">
+                        Platinum trophy earned
+                      </Label>
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="notes" forceMount className="pt-4 data-[state=inactive]:hidden">
+                  <div className="space-y-2">
+                    <Label htmlFor="notes">Notes</Label>
+                    <Textarea
+                      id="notes"
+                      name="notes"
+                      defaultValue={game?.notes ?? ''}
+                      placeholder="e.g. 6 hrs of that was the DLC in 2026"
+                      rows={6}
+                    />
+                  </div>
+                </TabsContent>
+              </Tabs>
             </div>
 
-            {/* `variant="ghost"` + a rotating chevron, not the plain
-                underlined-link style `Split across years` above uses —
-                THAT toggle only ever goes one way (reveal, never hide
-                again), so a plain link reads fine for it. This one is
-                genuinely bidirectional (show/hide), and real usage found a
-                plain-text link didn't read as an interactive control at
-                all next to a form full of plain field labels — the ghost
-                background + icon make it unmistakably a button. */}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground -ml-2 gap-1.5 px-2"
-              onClick={() => setShowAdvanced((current) => !current)}
-            >
-              {showAdvanced ? 'Fewer details' : 'More details'}
-              <ChevronDown className={cn('size-4 transition-transform', showAdvanced && 'rotate-180')} aria-hidden />
-            </Button>
-
-            {/*
-             * CSS-hide, never conditionally unmount. Every field below is a
-             * native named input that reaches the server ONLY because it is
-             * present in the DOM at submit time (see this file's own doc
-             * comment on `submit()` — only a handful of fields go through an
-             * explicit `formData.set(...)`, everything else relies on native
-             * form collection). `game-actions.ts`'s `parse()` treats an
-             * ABSENT key on an update as "explicitly cleared." Unmounting
-             * this block behind `showAdvanced` would silently null out every
-             * one of these fields on save, any time the section is collapsed
-             * — `hidden` keeps them mounted (and still submitted) while
-             * visually hiding them, which is the whole reason this is a
-             * class toggle and not a `{showAdvanced && <div>...}` guard.
-             */}
-            <div className={cn('grid gap-4 sm:grid-cols-2', !showAdvanced && 'hidden')}>
-              <Field id="firstPlayedYear" label="First played (year)" defaultValue={game?.firstPlayedYear ?? ''} placeholder="2026" />
-              <FieldSelect
-                id="ownership"
-                label="Ownership"
-                value={ownership === '' ? OWNERSHIP_UNSET : ownership}
-                onChange={(value) => setOwnership(value === OWNERSHIP_UNSET ? '' : (value as typeof ownership))}
-                options={[
-                  { value: OWNERSHIP_UNSET, label: 'Not set' },
-                  ...GAME_OWNERSHIPS.map((value) => ({ value, label: value === 'physical' ? 'Physical' : 'Digital' })),
-                ]}
-              />
-              <Field
-                id="achievementsUnlocked"
-                label="Achievements earned"
-                defaultValue={game?.achievementsUnlocked ?? ''}
-                placeholder="42"
-                disabled={steamOwned}
-                hint={steamOwned ? 'From Steam' : null}
-              />
-              <Field
-                id="achievementsTotal"
-                label="Achievements total"
-                defaultValue={game?.achievementsTotal ?? ''}
-                placeholder="54"
-                disabled={steamOwned}
-                hint={steamOwned ? 'From Steam' : null}
-              />
-              <Field id="priceDollars" label="Price paid" defaultValue={game?.priceCents == null ? '' : (game.priceCents / 100).toFixed(2)} placeholder="59.99" />
-              <Field id="genre" label="Genre" value={genre} onChange={setGenre} placeholder="Action RPG" />
-              <Field id="developer" label="Developer" value={developer} onChange={setDeveloper} />
-              <Field id="publisher" label="Publisher" value={publisher} onChange={setPublisher} />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="notes">Notes</Label>
-              <Textarea
-                id="notes"
-                name="notes"
-                defaultValue={game?.notes ?? ''}
-                placeholder="e.g. 6 hrs of that was the DLC in 2026"
-                rows={3}
-              />
-            </div>
-
-            <DialogFooter className="justify-between sm:justify-between">
+            {/* Outside the scrolling region, on purpose — Save/Remove stay
+                reachable without scrolling down through whichever tab is
+                open, instead of living at the bottom of the same scroll
+                area as the fields. */}
+            <DialogFooter className="mt-4 justify-between border-t pt-4 sm:justify-between">
               {game === null ? (
                 <span />
               ) : (
@@ -601,6 +622,88 @@ function FieldSelect({
           ))}
         </SelectContent>
       </Select>
+    </div>
+  );
+}
+
+/**
+ * Plain text until clicked, then a real input — for Genre/Developer/
+ * Publisher, which are almost always filled by an IGDB pick and rarely
+ * hand-edited. Three permanently-open input boxes for fields that are read
+ * far more than they're typed into is exactly the density this dialog was
+ * asked to cut. Deliberately NOT Finance's `InlineEditText`
+ * (`src/components/finance/inline-edit-text.tsx`): that component commits
+ * via an `onSave` callback fired once on blur, fitting Finance's row-dense
+ * tables where each row saves independently through its own Server Action.
+ * This dialog has no such per-field save — every field reaches the server
+ * together through ONE native form submit — so this needs `value`/
+ * `onChange` wired into the same controlled state `genre`/`developer`/
+ * `publisher` already use for IGDB auto-fill, not a fire-and-forget save.
+ *
+ * The hidden input is what actually reaches `FormData` — it always mirrors
+ * the current value, mounted at all times, regardless of whether the owner
+ * is looking at the button or the input. Toggling `editing` only changes
+ * which VISIBLE control has focus, never whether the value is submitted;
+ * this is the same "never let a field go missing from the DOM at submit
+ * time" rule `submit()`'s own doc comment and the Tabs `forceMount` above
+ * are both built around.
+ */
+function InlineField({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  readonly id: string;
+  readonly label: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly placeholder?: string;
+}): React.ReactElement {
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <input type="hidden" name={id} value={value} readOnly />
+      {editing ? (
+        <Input
+          id={id}
+          defaultValue={value}
+          autoFocus
+          // Read by `DialogContent`'s `onEscapeKeyDown` above — see that
+          // comment for why a marker attribute, checked against
+          // `event.target`, is what actually stops Escape from closing the
+          // whole dialog (a bubble-phase `stopPropagation()` here cannot).
+          data-inline-field-editing="true"
+          {...(placeholder === undefined ? {} : { placeholder })}
+          onFocus={(event) => event.target.select()}
+          onBlur={(event) => {
+            setEditing(false);
+            onChange(event.target.value.trim());
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') event.currentTarget.blur();
+            // Escape discards without saving — leaves `onChange` uncalled,
+            // same idiom Finance's `InlineEditText` uses.
+            if (event.key === 'Escape') setEditing(false);
+          }}
+        />
+      ) : (
+        <button
+          type="button"
+          id={id}
+          onClick={() => setEditing(true)}
+          title={value || undefined}
+          className={cn(
+            'hover:bg-muted/50 flex h-9 w-full items-center rounded-md border border-dashed px-3 text-left text-sm transition-colors',
+            value ? '' : 'text-muted-foreground italic',
+          )}
+        >
+          <span className="truncate">{value || placeholder || 'Not set'}</span>
+        </button>
+      )}
     </div>
   );
 }

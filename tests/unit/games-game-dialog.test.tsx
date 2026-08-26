@@ -346,7 +346,13 @@ describe('GameDialog Steam provenance', () => {
     // `status` is a Radix `Select` — its accessible control is the trigger
     // button (`role="combobox"`), labelled via FieldSelect's `htmlFor`.
     expect(screen.getByLabelText('Status')).not.toBeDisabled();
-    expect(screen.getByLabelText('Notes')).not.toBeDisabled();
+    // `getByRole('textbox', ...)`, not `getByLabelText` — the Notes TAB
+    // TRIGGER and the Notes FIELD's own `<label>` share the exact same
+    // text, and the tabpanel's Radix-generated `aria-labelledby` (pointing
+    // at the trigger) makes `getByLabelText('Notes')` ambiguous between the
+    // two. Scoping by role sidesteps it: only the textarea has
+    // `role="textbox"`, the trigger has `role="tab"`.
+    expect(screen.getByRole('textbox', { name: 'Notes' })).not.toBeDisabled();
   });
 
   it('keeps the play-year split editable even when the total is Steam-owned', () => {
@@ -363,94 +369,146 @@ describe('GameDialog Steam provenance', () => {
 });
 
 /**
- * Progressive disclosure of the "advanced" fields (first played year,
- * ownership, achievements, price, genre/developer/publisher). The default
- * state is data-aware — expanded for a game that already has any of that
- * data, collapsed otherwise — rather than always starting collapsed, so
- * opening an already-filled-out game never visually hides the owner's own
- * data. Field-level assertions (disabled/value/FormData) elsewhere in this
- * file deliberately keep using `getByLabelText` regardless of expansion
- * state: hiding via a CSS class, not unmounting, means every advanced field
- * stays in the DOM (and in submitted FormData) either way — see
- * `game-dialog.tsx`'s own comment on why unmounting would silently null out
- * these fields on save.
+ * The dialog is split into three tabs (Details / Progress / Notes) instead
+ * of one long scrolling grid — progressive disclosure (hide/show behind a
+ * "More details" toggle) was tried first and real usage still found an
+ * already-filled-out game too dense/scrolly, since it opened expanded by
+ * design. Tabs cap what's visible at once regardless of how much data a
+ * game already has.
+ *
+ * `forceMount` on every `TabsContent`, not Radix's default (unmount the
+ * inactive panel), is the same "never let a field go missing from the DOM
+ * at submit time" rule the old disclosure toggle needed — these tests
+ * assert every field is still present, still submitted, on whichever tab
+ * ISN'T currently showing.
  */
-describe('GameDialog — progressive disclosure', () => {
-  it('starts collapsed for a new game with no advanced data yet', () => {
-    render(<GameDialog game={null} open onOpenChange={() => {}} />);
-    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
-  });
-
-  it('starts collapsed for an existing game with no advanced data', () => {
-    render(
-      <GameDialog
-        game={game({
-          firstPlayedYear: null,
-          ownership: null,
-          achievementsUnlocked: null,
-          achievementsTotal: null,
-          priceCents: null,
-          genre: null,
-          developer: null,
-          publisher: null,
-        })}
-        open
-        onOpenChange={() => {}}
-      />,
-    );
-    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
-  });
-
-  it('starts expanded for an existing game that already has advanced data', () => {
-    // The default fixture has genre/developer/publisher/price/achievements
-    // already filled in.
+describe('GameDialog — tabs', () => {
+  it('defaults to the Progress tab, with Details and Notes present but inactive', () => {
     render(<GameDialog game={game()} open onOpenChange={() => {}} />);
-    expect(screen.getByRole('button', { name: 'Fewer details' })).toBeInTheDocument();
+
+    expect(screen.getByRole('tab', { name: 'Progress' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'false');
+
+    // Status lives on Progress (the active tab) — visible immediately.
+    expect(screen.getByLabelText('Status')).toBeInTheDocument();
   });
 
-  it('toggles the disclosure label when clicked', async () => {
+  it('switches tabs on click, without losing the other tabs\' fields from the DOM', async () => {
     const user = userEvent.setup();
-    render(<GameDialog game={null} open onOpenChange={() => {}} />);
+    render(<GameDialog game={game()} open onOpenChange={() => {}} />);
 
-    await user.click(screen.getByRole('button', { name: 'More details' }));
-    expect(screen.getByRole('button', { name: 'Fewer details' })).toBeInTheDocument();
+    // Genre lives on Details — present but inactive before switching.
+    const genreButtonBefore = screen.getByRole('button', { name: 'Genre' });
+    expect(genreButtonBefore).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Fewer details' }));
-    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Details' }));
+    expect(screen.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByLabelText('Platform')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Notes' }));
+    expect(screen.getByRole('tab', { name: 'Notes' })).toHaveAttribute('aria-selected', 'true');
+    // `getByRole('textbox', ...)`, not `getByLabelText` — see the Steam
+    // provenance suite above for why the two are ambiguous here.
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeInTheDocument();
+
+    // Switching away from Progress didn't unmount Status.
+    expect(screen.getByLabelText('Status')).toBeInTheDocument();
   });
 
-  it('still submits a collapsed advanced field untouched, not cleared (CSS-hide, not unmount)', async () => {
+  it('submits fields from every tab, not just whichever one is currently active', async () => {
     updateGameAction.mockClear();
     const user = userEvent.setup();
-    render(
-      <GameDialog
-        game={game({
-          firstPlayedYear: null,
-          ownership: null,
-          achievementsUnlocked: null,
-          achievementsTotal: null,
-          priceCents: null,
-          genre: null,
-          developer: null,
-          publisher: null,
-        })}
-        open
-        onOpenChange={() => {}}
-      />,
-    );
+    // Default tab is Progress — Genre/Developer/Publisher (Details) and
+    // Notes (Notes tab) are never clicked into before Save.
+    render(<GameDialog game={game({ genre: 'Action RPG', notes: 'Great game' })} open onOpenChange={() => {}} />);
 
-    // Collapsed by construction (no advanced data) — save without ever
-    // opening "More details."
-    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
       expect(updateGameAction).toHaveBeenCalledTimes(1);
     });
     const submitted = updateGameAction.mock.calls[0]![1];
-    // The genre field still reached the server as an empty string (present,
-    // matching its current empty value) — not simply absent from the
-    // FormData, which is what an unmount-based implementation would produce.
-    expect(submitted.has('genre')).toBe(true);
+    // Present with their real values, not merely present — an unmount-based
+    // tab implementation would have dropped these keys from FormData
+    // entirely, which `parse()` in game-actions.ts reads as "explicitly
+    // cleared."
+    expect(submitted.get('genre')).toBe('Action RPG');
+    expect(submitted.get('notes')).toBe('Great game');
+  });
+});
+
+/**
+ * Genre/Developer/Publisher: plain text until clicked, then a real input —
+ * see `InlineField`'s own doc comment in game-dialog.tsx for why this isn't
+ * Finance's `InlineEditText`. The hidden input is what actually reaches
+ * `FormData`; these tests cover both the read state and the edit-then-blur
+ * commit path.
+ */
+describe('GameDialog — Genre/Developer/Publisher inline fields', () => {
+  it('shows the current value as plain text, not an input, until clicked', async () => {
+    const user = userEvent.setup();
+    render(<GameDialog game={game({ genre: 'Roguelike' })} open onOpenChange={() => {}} />);
+    await user.click(screen.getByRole('tab', { name: 'Details' }));
+
+    expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Roguelike');
+    expect(screen.queryByRole('textbox', { name: 'Genre' })).not.toBeInTheDocument();
+  });
+
+  it('reveals a real input on click and commits the typed value on blur', async () => {
+    const user = userEvent.setup();
+    render(<GameDialog game={game({ genre: 'Roguelike' })} open onOpenChange={() => {}} />);
+    await user.click(screen.getByRole('tab', { name: 'Details' }));
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    const input = screen.getByRole('textbox', { name: 'Genre' });
+    await user.clear(input);
+    await user.type(input, 'Metroidvania');
+    await user.tab(); // blur
+
+    expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Metroidvania');
+  });
+
+  /**
+   * Regression: pressing Escape to cancel just THIS field's edit used to
+   * bubble up and trigger Radix Dialog's own Escape-to-close handler,
+   * closing the entire dialog instead of just reverting the one field.
+   * Caught by a live browser check, not by any test before this one.
+   */
+  it('pressing Escape cancels only the field edit, without closing the whole dialog', async () => {
+    const user = userEvent.setup();
+    const onOpenChange = vi.fn();
+    render(<GameDialog game={game({ genre: 'Roguelike' })} open onOpenChange={onOpenChange} />);
+    await user.click(screen.getByRole('tab', { name: 'Details' }));
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    const input = screen.getByRole('textbox', { name: 'Genre' });
+    await user.clear(input);
+    await user.type(input, 'Something else');
+    await user.keyboard('{Escape}');
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Roguelike');
+  });
+
+  it('submits the edited value, not the original', async () => {
+    updateGameAction.mockClear();
+    const user = userEvent.setup();
+    render(<GameDialog game={game({ genre: 'Roguelike' })} open onOpenChange={() => {}} />);
+    await user.click(screen.getByRole('tab', { name: 'Details' }));
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    const input = screen.getByRole('textbox', { name: 'Genre' });
+    await user.clear(input);
+    await user.type(input, 'Metroidvania');
+    await user.tab();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateGameAction).toHaveBeenCalledTimes(1);
+    });
+    const submitted = updateGameAction.mock.calls[0]![1];
+    expect(submitted.get('genre')).toBe('Metroidvania');
   });
 });

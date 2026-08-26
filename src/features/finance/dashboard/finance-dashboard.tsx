@@ -97,13 +97,12 @@ export function FinanceDashboard({
           the page-level actions (Transactions, Import statement) that used to
           sit in their own separate row above this one. All of it — period
           selector, view toggle, divider, and the page-level actions — is one
-          `actions` slot on the shared `PageHeader`; see that component's own
-          doc comment for why this is the one caller that needs `className`/
-          `titleClassName`. */}
+          `actions` slot on the shared `PageHeader`. This bar used to get a
+          bordered/`bg-card` box treatment distinct from every other header
+          in the app; that was reverted in favor of one flat, borderless
+          header style everywhere, Finance and Games alike. */}
       <PageHeader
         title="Finance"
-        titleClassName="text-lg"
-        className="rounded-lg border bg-card px-4 py-3"
         actions={
           <>
             <MonthNavigator year={year} month={month} years={years} mode={view} />

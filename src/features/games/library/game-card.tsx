@@ -83,8 +83,12 @@ export function GameCard({
         'group flex flex-col rounded-lg border text-left',
         'transition-colors hover:border-foreground/20 hover:bg-muted/40',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
+        // Ring alone was easy to miss scanning a full grid — real usage
+        // asked for the card's own background to carry the signal, not just
+        // a thin border, so a platinum'd card visibly stands out among
+        // plain ones at a glance, not just on close inspection.
         game.platinum &&
-          'border-slate-300 ring-2 ring-slate-400/60 dark:border-slate-500/70 dark:ring-slate-400/40',
+          'border-slate-300 bg-slate-400/15 ring-2 ring-slate-400/60 dark:border-slate-500/70 dark:bg-slate-400/20 dark:ring-slate-400/40',
       )}
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">

@@ -178,7 +178,11 @@ function UpcomingGameCard({
     <div
       className={cn(
         'flex flex-col rounded-lg border',
-        wishlisted && 'border-violet-300 ring-1 ring-violet-400/50 dark:border-violet-500/50 dark:ring-violet-400/30',
+        // Background tint, not just the ring — same reasoning as the
+        // library's platinum card treatment (`game-card.tsx`): a border
+        // alone was easy to miss scanning a full grid.
+        wishlisted &&
+          'border-violet-300 bg-violet-400/15 ring-1 ring-violet-400/50 dark:border-violet-500/50 dark:bg-violet-400/20 dark:ring-violet-400/30',
       )}
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">
