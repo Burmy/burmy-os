@@ -8,7 +8,6 @@ import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import type { Game } from '@/server/db/games/games';
-import type { PsnTokenAge } from '@/server/games/psn-token-age';
 import { GAME_PLATFORMS, GAME_STATUSES, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { PsnSyncButton } from '../sync/psn-sync-button';
@@ -34,9 +33,6 @@ export function LibraryView({
   games,
   steamConfigured = false,
   psnConfigured = false,
-  steamLastSyncedAt = null,
-  psnLastSyncedAt = null,
-  psnTokenAge = { status: 'unknown', ageDays: null },
 }: {
   readonly games: readonly Game[];
   /**
@@ -56,12 +52,11 @@ export function LibraryView({
    * states must be independent too.
    */
   readonly psnConfigured?: boolean;
-  /** From `getLastSyncedTimesAction` — threaded straight to `SyncButton`. */
-  readonly steamLastSyncedAt?: Date | null;
-  /** From `getLastSyncedTimesAction` — threaded straight to `PsnSyncButton`. */
-  readonly psnLastSyncedAt?: Date | null;
-  /** From `getPsnTokenAgeAction` — threaded straight to `PsnSyncButton`. */
-  readonly psnTokenAge?: PsnTokenAge;
+  // Last-synced times and PSN token age used to be threaded all the way
+  // down to `SyncButton`/`PsnSyncButton` for their under-button captions.
+  // That status now lives in Settings → Games → Sync
+  // (`games-sync-section.tsx`), so the Library page no longer needs to fetch
+  // or pass it here at all — see those two buttons' own doc comments.
 }): React.ReactElement {
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -168,8 +163,8 @@ export function LibraryView({
               Add game
             </Button>
 
-            <SyncButton configured={steamConfigured} lastSyncedAt={steamLastSyncedAt} />
-            <PsnSyncButton configured={psnConfigured} lastSyncedAt={psnLastSyncedAt} tokenAge={psnTokenAge} />
+            <SyncButton configured={steamConfigured} />
+            <PsnSyncButton configured={psnConfigured} />
           </>
         }
       />

@@ -145,14 +145,11 @@ describe('SyncButton', () => {
     expect(advanceSteamSyncAction).not.toHaveBeenCalled();
   });
 
-  it('shows a "Synced …" line when a last-successful-sync time is provided', () => {
-    render(<SyncButton configured={true} lastSyncedAt={new Date(Date.now() - 60_000)} />);
-
-    expect(screen.getByText(/synced 1 minute ago/i)).toBeInTheDocument();
-  });
-
-  it('renders no synced line at all when the source has never synced', () => {
-    render(<SyncButton configured={true} lastSyncedAt={null} />);
+  // The "Synced …" caption moved to Settings → Games → Sync
+  // (`games-sync-section.test.tsx`) now that this button is a clean
+  // single-line control — see `sync-button.tsx`'s own doc comment.
+  it('renders as a single control with no synced/status caption in the configured, idle state', () => {
+    render(<SyncButton configured={true} />);
 
     expect(screen.queryByText(/synced/i)).not.toBeInTheDocument();
   });

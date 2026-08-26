@@ -1,0 +1,92 @@
+import { SonyTokenLink } from '@/features/games/sync/psn-sync-button';
+import { formatRelativeTime } from '@/features/games/sync/relative-time';
+import type { PsnTokenAge } from '@/server/games/psn-token-age';
+
+/**
+ * Settings → Games → Sync — the standing home for Steam/PlayStation
+ * connection state, last-synced times, and PSN token age, now that
+ * `SyncButton`/`PsnSyncButton` on the Library screen are clean single-line
+ * controls with no caption of their own (see those two components' doc
+ * comments). This is a pure, presentational component: all the data is
+ * fetched by the Settings page itself via the same actions the Library page
+ * used to call for the buttons —
+ * `isSteamConfiguredAction`/`isPsnConfiguredAction` (`sync-actions.ts`/
+ * `psn-actions.ts`), `getLastSyncedTimesAction`, and `getPsnTokenAgeAction`
+ * — reused rather than reimplemented.
+ *
+ * Reuses `SonyTokenLink` from `psn-sync-button.tsx` for the one clickable
+ * `ca.account.sony.com` link, rather than a second copy of the URL.
+ */
+export function GamesSyncSection({
+  steamConfigured,
+  steamLastSyncedAt,
+  psnConfigured,
+  psnLastSyncedAt,
+  psnTokenAge,
+}: {
+  readonly steamConfigured: boolean;
+  readonly steamLastSyncedAt: Date | null;
+  readonly psnConfigured: boolean;
+  readonly psnLastSyncedAt: Date | null;
+  readonly psnTokenAge: PsnTokenAge;
+}): React.ReactElement {
+  return (
+    <ul className="mt-3 divide-y border-t border-b">
+      <li className="py-2 text-sm">
+        <span className="font-medium">Steam</span>
+        {steamConfigured ? (
+          <p className="text-muted-foreground text-xs">
+            Connected
+            {steamLastSyncedAt ? ` · Synced ${formatRelativeTime(steamLastSyncedAt)}` : ' — not yet synced'}
+          </p>
+        ) : (
+          <p className="text-muted-foreground text-xs">
+            Not connected — set <code className="font-mono">STEAM_API_KEY</code> and{' '}
+            <code className="font-mono">STEAM_ID</code> to enable sync.
+          </p>
+        )}
+      </li>
+
+      <li className="py-2 text-sm">
+        <span className="font-medium">PlayStation</span>
+        {psnConfigured ? (
+          <>
+            <p className="text-muted-foreground text-xs">
+              Connected
+              {psnLastSyncedAt ? ` · Synced ${formatRelativeTime(psnLastSyncedAt)}` : ' — not yet synced'}
+            </p>
+            <PsnTokenAgeLine tokenAge={psnTokenAge} />
+          </>
+        ) : (
+          <p className="text-muted-foreground text-xs">
+            Not connected — set <code className="font-mono">PSN_NPSSO</code> to enable sync. Get one from{' '}
+            <SonyTokenLink /> while logged in to PlayStation in this browser.
+          </p>
+        )}
+      </li>
+    </ul>
+  );
+}
+
+/**
+ * The current token's age, with the same warning threshold `PsnSyncButton`
+ * used to render inline (`psnTokenAge`'s own doc comment in
+ * `psn-token-age.ts`) — `'unknown'` stated plainly rather than left blank,
+ * since a blank field would read as "fresh," which is not a known fact.
+ */
+function PsnTokenAgeLine({ tokenAge }: { readonly tokenAge: PsnTokenAge }): React.ReactElement {
+  if (tokenAge.status === 'unknown') {
+    return <p className="text-muted-foreground text-xs">Token age unknown — no successful sync with it yet.</p>;
+  }
+
+  if (tokenAge.status === 'warning') {
+    return (
+      <p className="text-xs text-amber-600 dark:text-amber-500">
+        Token {tokenAge.ageDays}d old — may expire soon. Get a new one from <SonyTokenLink /> while logged in to
+        PlayStation in this browser.
+      </p>
+    );
+  }
+
+  return <p className="text-muted-foreground text-xs">Token {tokenAge.ageDays}d old.</p>;
+}

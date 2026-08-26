@@ -202,35 +202,14 @@ describe('PsnSyncButton', () => {
     expect(screen.getByRole('button', { name: /sync with playstation/i })).not.toBeDisabled();
   });
 
-  it('shows a combined "Synced … · token …d old" line when configured with history', () => {
-    render(
-      <PsnSyncButton
-        configured={true}
-        lastSyncedAt={new Date(Date.now() - 3 * 24 * 60 * 60_000)}
-        tokenAge={{ status: 'normal', ageDays: 12 }}
-      />,
-    );
+  // The combined "Synced … · token …d old" caption, and the token-age
+  // unknown/warning states, moved to Settings → Games → Sync
+  // (`games-sync-section.test.tsx`) now that this button is a clean
+  // single-line control — see `psn-sync-button.tsx`'s own doc comment.
+  it('renders as a single control with no synced/token caption in the configured, idle state', () => {
+    render(<PsnSyncButton configured={true} />);
 
-    expect(screen.getByText(/synced 3 days ago/i)).toBeInTheDocument();
-    expect(screen.getByText(/token 12d old/i)).toBeInTheDocument();
-  });
-
-  it('states plainly that token age is unknown, rather than implying a fresh token, when never synced', () => {
-    render(<PsnSyncButton configured={true} lastSyncedAt={null} tokenAge={{ status: 'unknown', ageDays: null }} />);
-
-    expect(screen.getByText(/token age unknown/i)).toBeInTheDocument();
     expect(screen.queryByText(/synced/i)).not.toBeInTheDocument();
-  });
-
-  it('surfaces a visible warning once the token is old enough that expiry could be near', () => {
-    render(
-      <PsnSyncButton
-        configured={true}
-        lastSyncedAt={new Date(Date.now() - 60_000)}
-        tokenAge={{ status: 'warning', ageDays: 52 }}
-      />,
-    );
-
-    expect(screen.getByText(/52d old — may expire soon/i)).toBeInTheDocument();
+    expect(screen.queryByText(/token/i)).not.toBeInTheDocument();
   });
 });

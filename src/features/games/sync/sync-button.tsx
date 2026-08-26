@@ -6,7 +6,6 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
-import { formatRelativeTime } from './relative-time';
 import { advanceSteamSyncAction, advanceSyncEnrichmentAction, startSteamSyncAction } from './sync-actions';
 
 type SyncState =
@@ -26,6 +25,14 @@ type SyncState =
  * disabled with a standing, visible explanation — never hidden, and never a
  * thrown error.
  *
+ * A clean, SINGLE-LINE control — no "Synced …" caption underneath. That
+ * status now lives in Settings → Games → Sync (`games-sync-section.tsx`,
+ * fed by the same `getLastSyncedTimesAction`), which is where the Library
+ * header's `flex items-center` row of "Add game"/the view toggle/this
+ * button needs it to stay: every other control there is one line tall, and
+ * a variable-height caption made this one taller and vertically offset from
+ * the rest.
+ *
  * ─────────────────────────────────────────────────────────────────────────────
  * THE PROGRESS LOOP ONLY EVER BRANCHES ON `done`
  *
@@ -39,21 +46,7 @@ type SyncState =
  * would strand a run at the same short-of-total / stuck-at-total spots.
  * ─────────────────────────────────────────────────────────────────────────────
  */
-export function SyncButton({
-  configured,
-  lastSyncedAt = null,
-}: {
-  readonly configured: boolean;
-  /**
-   * The most recent time a Steam sync run reached `ready`/`committed`
-   * (`getLastSyncedTimesAction`), or `null` when Steam has never
-   * successfully synced. Rendered as a small "Synced …" line under the
-   * button, omitted entirely rather than printed as "never synced" — an
-   * absent line is honest; permanent "never synced" chrome is noise the
-   * owner has to read past on every visit.
-   */
-  readonly lastSyncedAt?: Date | null;
-}): React.ReactElement {
+export function SyncButton({ configured }: { readonly configured: boolean }): React.ReactElement {
   const router = useRouter();
   const [state, setState] = useState<SyncState>({ phase: 'idle' });
 
@@ -102,16 +95,13 @@ export function SyncButton({
 
   if (!configured) {
     return (
-      <div className="flex flex-col items-end gap-1">
-        {/* Kept to one short line, matching PsnSyncButton — the full
-            sentence is on hover. Still VISIBLE rather than tooltip-only: a
-            silently disabled button gives no clue why sync does nothing. */}
-        <Button
-          size="sm"
-          variant="outline"
-          disabled
-          title="Set STEAM_API_KEY and STEAM_ID to enable Steam sync."
-        >
+      // Single line: the button plus a short, still-VISIBLE (never
+      // tooltip-only) hint naming both required vars, so a silently
+      // disabled button never leaves the owner guessing why sync does
+      // nothing. Full context — connection state, last synced — lives in
+      // Settings; this stays just enough to be self-explanatory in place.
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="outline" disabled title="Set STEAM_API_KEY and STEAM_ID to enable Steam sync.">
           <RefreshCw className="size-4" aria-hidden />
           Sync with Steam
         </Button>
@@ -128,18 +118,15 @@ export function SyncButton({
   const busy = state.phase !== 'idle';
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <Button size="sm" variant="outline" onClick={run} disabled={busy}>
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
-        {state.phase === 'running'
-          ? `${state.cursor} of ${state.total} games checked`
-          : state.phase === 'enriching'
-            ? 'Adding cover art…'
-            : state.phase === 'starting'
-              ? 'Starting…'
-              : 'Sync with Steam'}
-      </Button>
-      {lastSyncedAt ? <p className="text-muted-foreground text-xs">Synced {formatRelativeTime(lastSyncedAt)}</p> : null}
-    </div>
+    <Button size="sm" variant="outline" onClick={run} disabled={busy}>
+      {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RefreshCw className="size-4" aria-hidden />}
+      {state.phase === 'running'
+        ? `${state.cursor} of ${state.total} games checked`
+        : state.phase === 'enriching'
+          ? 'Adding cover art…'
+          : state.phase === 'starting'
+            ? 'Starting…'
+            : 'Sync with Steam'}
+    </Button>
   );
 }
