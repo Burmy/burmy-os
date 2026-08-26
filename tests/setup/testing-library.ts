@@ -45,3 +45,17 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   }
   globalThis.ResizeObserver = ResizeObserverPolyfill as unknown as typeof ResizeObserver;
 }
+
+/**
+ * jsdom does not implement `Element.prototype.scrollIntoView` either (same
+ * "no real layout engine" reason as `ResizeObserver` above). Radix's
+ * `Select` calls it to bring the current/selected item into view whenever
+ * the content mounts already open — harmless to no-op here since these
+ * tests never assert on scroll position, only that the select opens and a
+ * pick commits. First caught by `games-game-page.test.tsx`'s inline
+ * Select-editing tests (`InlineEditSelect` opens with `defaultOpen`, unlike
+ * the click-to-open selects elsewhere that happened not to hit this path).
+ */
+if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView === 'undefined') {
+  Element.prototype.scrollIntoView = function scrollIntoView(): void {};
+}

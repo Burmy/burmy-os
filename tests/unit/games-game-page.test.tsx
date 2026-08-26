@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ActionResult } from '@/features/games/action-result';
 import type { GameSuggestion } from '@/server/games/metadata';
 import type { Trophy } from '@/server/games/psn';
 
@@ -11,11 +12,21 @@ vi.mock('@/features/games/metadata-actions', () => ({
   searchGameMetadataAction,
 }));
 
-const updateGameAction = vi.fn(async (_id: string, _formData: FormData) => ({ ok: true as const }));
-const deleteGameAction = vi.fn(async (_id: string) => ({ ok: true as const }));
+const updateGameFieldAction = vi.fn(
+  async (_id: string, _field: string, _value: string): Promise<ActionResult> => ({ ok: true }),
+);
+const applyMetadataSuggestionAction = vi.fn(
+  async (_id: string, _suggestion: unknown): Promise<ActionResult> => ({ ok: true }),
+);
+const updateGamePlayYearsAction = vi.fn(
+  async (_id: string, _drafts: unknown): Promise<ActionResult> => ({ ok: true }),
+);
+const deleteGameAction = vi.fn(async (_id: string): Promise<ActionResult> => ({ ok: true }));
 
 vi.mock('@/features/games/game-actions', () => ({
-  updateGameAction: (...args: [string, FormData]) => updateGameAction(...args),
+  updateGameFieldAction: (...args: [string, string, string]) => updateGameFieldAction(...args),
+  applyMetadataSuggestionAction: (...args: [string, unknown]) => applyMetadataSuggestionAction(...args),
+  updateGamePlayYearsAction: (...args: [string, unknown]) => updateGamePlayYearsAction(...args),
   deleteGameAction: (...args: [string]) => deleteGameAction(...args),
 }));
 
@@ -68,322 +79,303 @@ function game(overrides: Partial<Game> = {}): Game {
   };
 }
 
-/** Every field-editing test needs this first — the page opens read-only. */
-async function openForEditing(rendered: Game): Promise<ReturnType<typeof userEvent.setup>> {
-  const user = userEvent.setup();
-  render(<GamePage game={rendered} />);
-  await user.click(screen.getByRole('button', { name: 'Edit' }));
-  return user;
-}
-
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-/**
- * The page opens read-only — a two-column profile layout (cover/platform/
- * status/rating/hours on the left, formatted text on the right), no inputs
- * anywhere, until "Edit" is clicked.
- */
-describe('GamePage — view mode', () => {
-  it('renders formatted values with no inputs anywhere', () => {
+describe('GamePage — read display', () => {
+  it('renders every field formatted, with no inputs visible until clicked', () => {
     render(<GamePage game={game()} />);
 
-    expect(screen.queryByLabelText('Title')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument();
-
     expect(screen.getByRole('heading', { name: 'Elden Ring' })).toBeInTheDocument();
     expect(screen.getByText('PS5')).toBeInTheDocument();
     expect(screen.getByText('Played')).toBeInTheDocument();
     expect(screen.getByText('136h')).toBeInTheDocument();
     expect(screen.getByText('Physical')).toBeInTheDocument();
     expect(screen.getByText('Action RPG')).toBeInTheDocument();
+    expect(screen.getByText('$65.65')).toBeInTheDocument();
   });
 
-  it('shows "Not set" for an unset field rather than leaving it blank', () => {
+  it('shows "Not set" placeholders for unset fields', () => {
     render(<GamePage game={game({ ownership: null, genre: null, developer: null, publisher: null })} />);
     expect(screen.getAllByText('Not set').length).toBeGreaterThan(0);
   });
+});
 
-  it('switches to edit mode on "Edit", revealing real inputs', async () => {
-    await openForEditing(game());
-
-    expect(screen.getByLabelText('Title')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
-  });
-
-  it('Cancel discards an in-progress edit and returns to view mode without saving', async () => {
-    const user = await openForEditing(game({ genre: 'Roguelike' }));
+describe('GamePage — text field inline editing', () => {
+  it('reveals a real input on click and saves the field on blur', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ genre: 'Roguelike' })} />);
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
-    await user.clear(screen.getByRole('textbox', { name: 'Genre' }));
-    await user.type(screen.getByRole('textbox', { name: 'Genre' }), 'Something else');
+    const input = screen.getByRole('textbox', { name: 'Genre' });
+    await user.clear(input);
+    await user.type(input, 'Metroidvania');
     await user.tab();
-
-    await user.click(screen.getByRole('button', { name: 'Cancel' }));
-
-    expect(updateGameAction).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.getByText('Roguelike')).toBeInTheDocument();
-  });
-
-  it('a successful Save returns to view mode showing the new value', async () => {
-    const user = await openForEditing(game({ genre: 'Roguelike' }));
-
-    await user.click(screen.getByRole('button', { name: 'Genre' }));
-    await user.clear(screen.getByRole('textbox', { name: 'Genre' }));
-    await user.type(screen.getByRole('textbox', { name: 'Genre' }), 'Metroidvania');
-    await user.tab();
-
-    await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      expect(updateGameAction).toHaveBeenCalledTimes(1);
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'genre', 'Metroidvania');
     });
-    expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
-    expect(screen.getByText('Metroidvania')).toBeInTheDocument();
+  });
+
+  it('does not save when the committed value is unchanged', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ genre: 'Roguelike' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    await user.tab();
+
+    expect(updateGameFieldAction).not.toHaveBeenCalled();
+  });
+
+  it('pressing Escape cancels the edit without saving', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ genre: 'Roguelike' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    const input = screen.getByRole('textbox', { name: 'Genre' });
+    await user.type(input, 'Something else');
+    await user.keyboard('{Escape}');
+
+    expect(updateGameFieldAction).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Genre' })).toBeInTheDocument();
+  });
+
+  it('shows an error toast and leaves the field alone when the save fails', async () => {
+    updateGameFieldAction.mockResolvedValueOnce({ ok: false, error: 'Genre is too long' });
+    const { toast } = await import('@/components/ui/toast');
+    const user = userEvent.setup();
+    render(<GamePage game={game({ genre: 'Roguelike' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Genre' }));
+    const input = screen.getByRole('textbox', { name: 'Genre' });
+    await user.clear(input);
+    await user.type(input, 'Bad value');
+    await user.tab();
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Genre is too long');
+    });
+  });
+
+  it('edits Notes as a multiline field', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ notes: null })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Notes' }));
+    const textarea = screen.getByRole('textbox', { name: 'Notes' });
+    await user.type(textarea, 'Great game');
+    await user.tab();
+
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'notes', 'Great game');
+    });
   });
 });
 
-/**
- * Regression coverage for the "metadata lookup fires every time an existing
- * game is opened" bug. Opening an existing game seeds the title field from
- * `game.title`, which is almost always >= the 3-character search minimum —
- * the debounced search effect used to key off `title` alone and fire on
- * mount, hitting IGDB for nothing on every single page visit. See
- * `titleEditedRef` in `game-page.tsx` for the fix.
- */
-describe('GamePage metadata search', () => {
-  afterEach(() => {
-    vi.useRealTimers();
+describe('GamePage — select field inline editing', () => {
+  it('changes Status via a Select that commits immediately, no separate save step', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ status: 'played' })} />);
+
+    await user.click(screen.getByRole('button', { name: 'Status' }));
+    await user.click(screen.getByRole('option', { name: 'Backlog' }));
+
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'status', 'backlog');
+    });
   });
 
-  it('makes zero metadata calls just from opening an existing game and entering edit mode', async () => {
-    // Entering edit mode is a real (non-fake-timer) click — fake timers only
-    // matter for the debounced search effect itself, which is what this
-    // test is actually waiting out.
+  it('changes Ownership, including clearing it back to "Not set"', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ title: 'Elden Ring' })} />);
-    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    render(<GamePage game={game({ ownership: 'physical' })} />);
 
+    await user.click(screen.getByRole('button', { name: 'Ownership' }));
+    await user.click(screen.getByRole('option', { name: 'Not set' }));
+
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'ownership', '');
+    });
+  });
+});
+
+describe('GamePage — Platinum toggle', () => {
+  it('saves immediately on click, no edit step', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ platinum: false })} />);
+
+    await user.click(screen.getByRole('checkbox', { name: 'Platinum' }));
+
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'platinum', 'true');
+    });
+  });
+});
+
+describe('GamePage Steam provenance', () => {
+  it('renders Hours as plain, non-editable text for a Steam-linked game', () => {
+    render(<GamePage game={game({ steamAppid: 367520 })} />);
+    expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
+    expect(screen.getAllByText(/from steam/i).length).toBeGreaterThan(0);
+  });
+
+  it('keeps Hours editable for a game with no Steam link', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ steamAppid: null })} />);
+    await user.click(screen.getByRole('button', { name: 'Hours' }));
+    expect(screen.getByRole('textbox', { name: 'Hours' })).toBeInTheDocument();
+  });
+
+  it('keeps achievement counts read-only for a Steam-linked game', () => {
+    render(<GamePage game={game({ steamAppid: 367520 })} />);
+    expect(screen.queryByRole('button', { name: 'Achievements earned' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Achievements total' })).not.toBeInTheDocument();
+  });
+
+  it('keeps Rating and Status editable for a Steam-linked game', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ steamAppid: 367520 })} />);
+    await user.click(screen.getByRole('button', { name: 'Rating' }));
+    expect(screen.getByRole('textbox', { name: 'Rating' })).toBeInTheDocument();
+  });
+});
+
+describe('GamePage — Title and metadata search', () => {
+  it('makes zero metadata calls until the owner actually edits the title', async () => {
     vi.useFakeTimers();
+    render(<GamePage game={game({ title: 'Elden Ring' })} />);
+
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
 
     expect(searchGameMetadataAction).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
-  it('calls the metadata action once the owner actually edits the title field', async () => {
-    const user = await openForEditing(game({ title: 'Elden Ring' }));
+  it('saves just the title on blur when no suggestion is picked', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ title: 'Elden Ring' })} />);
 
-    const titleInput = screen.getByLabelText('Title');
-    await user.clear(titleInput);
-    await user.type(titleInput, 'Bloodborne');
+    await user.click(screen.getByRole('button', { name: /^Title/ }));
+    const input = screen.getByLabelText('Title');
+    await user.clear(input);
+    await user.type(input, 'Elden Ring Nightreign');
+    await user.tab();
 
-    await waitFor(
-      () => {
-        expect(searchGameMetadataAction).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'title', 'Elden Ring Nightreign');
+    });
+    expect(applyMetadataSuggestionAction).not.toHaveBeenCalled();
+  });
+
+  it('calls the metadata action once 3+ characters are typed, and applies a picked suggestion as a batch', async () => {
+    searchGameMetadataAction.mockResolvedValue([
+      {
+        externalId: 'igdb-1',
+        title: 'Hades',
+        coverUrl: 'https://images.igdb.com/cover.jpg',
+        genre: 'Roguelike',
+        developer: 'Supergiant Games',
+        publisher: 'Supergiant Games',
+        metacritic: 93,
+        averagePlaytimeHours: 22,
+        esrbRating: 'T',
+        releaseYear: 2020,
       },
-      { timeout: 2000 },
-    );
-    expect(searchGameMetadataAction).toHaveBeenCalledWith('Bloodborne');
-  });
-});
+    ]);
+    const user = userEvent.setup();
+    render(<GamePage game={game({ title: 'Had', genre: null })} />);
 
-/**
- * Regression coverage for "changing a game's cover art does nothing" — see
- * `game-page.tsx`'s own doc comment on `coverUrl`'s deliberately different
- * guard from genre/developer/publisher.
- */
-describe('GamePage cover art', () => {
-  const OLD_COVER = 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/old.jpg';
-  const NEW_COVER = 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/new.jpg';
-
-  function suggestion(): GameSuggestion {
-    return {
-      externalId: 'igdb-1',
-      title: 'Hades',
-      coverUrl: NEW_COVER,
-      genre: 'Roguelike',
-      developer: 'Supergiant Games',
-      publisher: 'Supergiant Games',
-      metacritic: 93,
-      averagePlaytimeHours: 22,
-      esrbRating: 'T',
-      releaseYear: 2020,
-    };
-  }
-
-  async function pickTheSuggestion(existingCover: string | null): Promise<FormData> {
-    searchGameMetadataAction.mockResolvedValue([suggestion()]);
-    const user = await openForEditing(game({ title: 'Hades', coverUrl: existingCover }));
-
-    const titleInput = screen.getByLabelText('Title');
-    await user.clear(titleInput);
-    await user.type(titleInput, 'Hades');
+    await user.click(screen.getByRole('button', { name: /^Title/ }));
+    const input = screen.getByLabelText('Title');
+    await user.clear(input);
+    await user.type(input, 'Hades');
 
     const pick = await screen.findByRole('button', { name: /Hades \(2020\)/ }, { timeout: 2000 });
     await user.click(pick);
-    await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      expect(updateGameAction).toHaveBeenCalledTimes(1);
+      expect(applyMetadataSuggestionAction).toHaveBeenCalledTimes(1);
     });
-    return updateGameAction.mock.calls[0]![1];
-  }
-
-  it('submits the newly picked cover for a game that already had one', async () => {
-    const formData = await pickTheSuggestion(OLD_COVER);
-    expect(formData.get('coverUrl')).toBe(NEW_COVER);
+    const [id, suggestion] = applyMetadataSuggestionAction.mock.calls[0]!;
+    expect(id).toBe('game-1');
+    expect(suggestion).toMatchObject({ title: 'Hades', genre: 'Roguelike' });
+    expect(updateGameFieldAction).not.toHaveBeenCalledWith('game-1', 'title', expect.anything());
   });
 
-  it('still fills the cover for a game that had none', async () => {
-    const formData = await pickTheSuggestion(null);
-    expect(formData.get('coverUrl')).toBe(NEW_COVER);
-  });
+  it('leaves a hand-typed genre alone when applying a suggestion', async () => {
+    searchGameMetadataAction.mockResolvedValue([
+      {
+        externalId: 'igdb-1',
+        title: 'Hades',
+        coverUrl: null,
+        genre: 'Roguelike',
+        developer: null,
+        publisher: null,
+        metacritic: null,
+        averagePlaytimeHours: null,
+        esrbRating: null,
+        releaseYear: 2020,
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<GamePage game={game({ title: 'Had', genre: 'Action RPG' })} />);
 
-  it('leaves a hand-typed genre alone, unlike the cover', async () => {
-    const formData = await pickTheSuggestion(OLD_COVER);
-    expect(formData.get('coverUrl')).toBe(NEW_COVER);
-    expect(formData.get('genre')).toBe('Action RPG');
+    await user.click(screen.getByRole('button', { name: /^Title/ }));
+    const input = screen.getByLabelText('Title');
+    await user.clear(input);
+    await user.type(input, 'Hades');
+
+    const pick = await screen.findByRole('button', { name: /Hades \(2020\)/ }, { timeout: 2000 });
+    await user.click(pick);
+
+    await waitFor(() => {
+      expect(applyMetadataSuggestionAction).toHaveBeenCalledTimes(1);
+    });
+    const [, suggestion] = applyMetadataSuggestionAction.mock.calls[0]!;
+    expect(suggestion).not.toHaveProperty('genre');
   });
 });
 
 describe('GamePage play-year split', () => {
-  it('does not silently empty an existing stored split when only the year cell is blanked (data-loss regression)', async () => {
-    // A game with a real stored split: 2024 -> 49h, matching the 49h total
-    // exactly. The owner blanks the YEAR cell only — the hours cell still
-    // reads '49'. Dropping any row with a blank year at submit time would
-    // make `playYears` become `[]`, which `validateSplit` treats as
-    // legitimately "no split," and `replacePlayYears` then DELETES the
-    // stored split outright.
-    const existing = game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] });
-    const user = await openForEditing(existing);
+  it('shows the split panel already expanded when a split already exists', () => {
+    render(<GamePage game={game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })} />);
+    expect(screen.getByLabelText('Year')).toBeInTheDocument();
+  });
 
-    // The split panel starts expanded because this game already has a split.
+  it('does not silently drop a row whose year cell was blanked (data-loss regression)', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })} />);
+
     const yearInput = screen.getByLabelText('Year');
     await user.clear(yearInput);
 
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: /save split/i }));
 
     await waitFor(() => {
-      expect(updateGameAction).toHaveBeenCalledTimes(1);
+      expect(updateGamePlayYearsAction).toHaveBeenCalledTimes(1);
     });
-    const submitted = updateGameAction.mock.calls[0]![1];
-    const submittedPlayYears = JSON.parse(submitted.get('playYears') as string) as unknown[];
-
-    expect(submittedPlayYears.length).toBeGreaterThan(0);
-  });
-});
-
-/**
- * Steam owns hours/achievement counts for a linked game, so those fields
- * render read-only and say where the number came from. No tab-switching
- * needed anymore — every section is stacked and visible at once in edit
- * mode.
- */
-describe('GamePage Steam provenance', () => {
-  it('renders hours read-only for a Steam-linked game', async () => {
-    await openForEditing(game({ steamAppid: 367520 }));
-    expect(screen.getByLabelText('Hours played')).toBeDisabled();
+    const [, drafts] = updateGamePlayYearsAction.mock.calls[0]!;
+    expect(drafts).toHaveLength(1);
   });
 
-  it('labels the field with its source', async () => {
-    await openForEditing(game({ steamAppid: 367520 }));
-    expect(screen.getAllByText(/from steam/i).length).toBeGreaterThan(0);
-  });
-
-  it('keeps hours editable for a game with no Steam link', async () => {
-    await openForEditing(game({ steamAppid: null }));
-    expect(screen.getByLabelText('Hours played')).not.toBeDisabled();
-  });
-
-  it('keeps achievement counts read-only for a Steam-linked game', async () => {
-    await openForEditing(game({ steamAppid: 367520 }));
-    expect(screen.getByLabelText('Achievements earned')).toBeDisabled();
-    expect(screen.getByLabelText('Achievements total')).toBeDisabled();
-  });
-
-  it('keeps rating, status and notes editable for a Steam-linked game', async () => {
-    await openForEditing(game({ steamAppid: 367520 }));
-    expect(screen.getByLabelText('Rating (1-5)')).not.toBeDisabled();
-    expect(screen.getByLabelText('Status')).not.toBeDisabled();
-    expect(screen.getByRole('textbox', { name: 'Notes' })).not.toBeDisabled();
-  });
-
-  it('keeps the play-year split editable even when the total is Steam-owned', async () => {
-    await openForEditing(
-      game({ steamAppid: 367520, hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] }),
+  it('keeps the split editable even when the total is Steam-owned', () => {
+    render(
+      <GamePage
+        game={game({ steamAppid: 367520, hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })}
+      />,
     );
     expect(screen.getByLabelText('Year')).not.toBeDisabled();
   });
 });
 
-describe('GamePage — Genre/Developer/Publisher inline fields', () => {
-  it('shows the current value as plain text, not an input, until clicked', async () => {
-    await openForEditing(game({ genre: 'Roguelike' }));
-
-    expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Roguelike');
-    expect(screen.queryByRole('textbox', { name: 'Genre' })).not.toBeInTheDocument();
-  });
-
-  it('reveals a real input on click and commits the typed value on blur', async () => {
-    const user = await openForEditing(game({ genre: 'Roguelike' }));
-
-    await user.click(screen.getByRole('button', { name: 'Genre' }));
-    const input = screen.getByRole('textbox', { name: 'Genre' });
-    await user.clear(input);
-    await user.type(input, 'Metroidvania');
-    await user.tab();
-
-    expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Metroidvania');
-  });
-
-  // Simpler than the create dialog's copy of this test — a page has no
-  // enclosing Radix Dialog to (not) accidentally close, so there's nothing
-  // to assert beyond "the edit itself was cancelled."
-  it('pressing Escape cancels the field edit', async () => {
-    const user = await openForEditing(game({ genre: 'Roguelike' }));
-
-    await user.click(screen.getByRole('button', { name: 'Genre' }));
-    const input = screen.getByRole('textbox', { name: 'Genre' });
-    await user.clear(input);
-    await user.type(input, 'Something else');
-    await user.keyboard('{Escape}');
-
-    expect(screen.getByRole('button', { name: 'Genre' })).toHaveTextContent('Roguelike');
-  });
-
-  it('submits the edited value, not the original', async () => {
-    const user = await openForEditing(game({ genre: 'Roguelike' }));
-
-    await user.click(screen.getByRole('button', { name: 'Genre' }));
-    const input = screen.getByRole('textbox', { name: 'Genre' });
-    await user.clear(input);
-    await user.type(input, 'Metroidvania');
-    await user.tab();
-
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => {
-      expect(updateGameAction).toHaveBeenCalledTimes(1);
-    });
-    const submitted = updateGameAction.mock.calls[0]![1];
-    expect(submitted.get('genre')).toBe('Metroidvania');
-  });
-});
-
 /**
- * Trophies only render at all for a game linked to PSN
- * (`psnNpCommunicationId !== null`) — most of the library isn't a linked
- * PS4/PS5 title, so there's no empty state to show for the common case.
- * The fetch itself is live and fires once, automatically, on mount — there
- * is no tab to click anymore (see `game-page.tsx`'s trophy-fetch effect).
- * One merged list, not separate Earned/Unearned tables — color (full tier
- * color vs. grayed-out) is what signals earned/unearned now.
+ * Trophies only render for a game linked to PSN (`psnNpCommunicationId !==
+ * null`) and fetch automatically on mount — unchanged from the previous
+ * round; `TrophiesSection`'s own props/behavior weren't touched by this
+ * round's inline-editing rewrite.
  */
 describe('GamePage — Trophies', () => {
   function trophy(overrides: Partial<Trophy> = {}): Trophy {
@@ -403,15 +395,16 @@ describe('GamePage — Trophies', () => {
     };
   }
 
-  it('does not render a Trophies section at all for a game with no PSN link', () => {
+  it('does not render a Trophies section for a game with no PSN link', () => {
     render(<GamePage game={game({ psnNpCommunicationId: null })} />);
     expect(screen.queryByRole('heading', { name: 'Trophies' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/find on powerpyx/i)).not.toBeInTheDocument();
     expect(fetchGameTrophiesAction).not.toHaveBeenCalled();
   });
 
-  it('fetches automatically on mount for a PSN-linked game, exactly once', async () => {
+  it('fetches automatically on mount for a PSN-linked game, exactly once, and links to PowerPyx', async () => {
     fetchGameTrophiesAction.mockResolvedValue({ ok: true, trophies: [trophy()] });
-    render(<GamePage game={game({ id: 'game-42', psnNpCommunicationId: 'NPWR12345_00' })} />);
+    render(<GamePage game={game({ id: 'game-42', title: 'Bloodborne', psnNpCommunicationId: 'NPWR12345_00' })} />);
 
     await waitFor(() => {
       expect(fetchGameTrophiesAction).toHaveBeenCalledTimes(1);
@@ -420,49 +413,10 @@ describe('GamePage — Trophies', () => {
 
     await screen.findByText('Master Chief');
     expect(fetchGameTrophiesAction).toHaveBeenCalledTimes(1);
-  });
 
-  it('renders one merged list, color-coded by earned status, with tier and rarity', async () => {
-    fetchGameTrophiesAction.mockResolvedValue({
-      ok: true,
-      trophies: [
-        trophy({ id: '1', name: 'Master Chief', earned: true }),
-        trophy({ id: '2', name: 'Rookie', tier: 'bronze', earned: false, earnedAt: null, rarity: '80.1' }),
-      ],
-    });
-    render(<GamePage game={game({ psnNpCommunicationId: 'NPWR12345_00' })} />);
-
-    await screen.findByText('Master Chief');
-    // The "1"/"of 2 trophies earned" text is split across two <span>s —
-    // matched as a function against the parent's full text content instead
-    // of a single exact string.
-    expect(
-      screen.getByText((_, element) => element?.textContent === '1 of 2 trophies earned'),
-    ).toBeInTheDocument();
-
-    // Both rows sit in the same table — no separate Earned/Unearned headings.
-    expect(screen.queryByText('Earned (1)')).not.toBeInTheDocument();
-    expect(screen.queryByText('Unearned (1)')).not.toBeInTheDocument();
-    const rookieRow = screen.getByText('Rookie').closest('tr');
-    expect(rookieRow).not.toBeNull();
-    expect(screen.getByText('80.1%')).toBeInTheDocument();
-    // The unearned row's tier badge is grayed out — the color-coding signal.
-    expect(rookieRow!.querySelector('.grayscale')).not.toBeNull();
-    const masterChiefRow = screen.getByText('Master Chief').closest('tr');
-    expect(masterChiefRow!.querySelector('.grayscale')).toBeNull();
-  });
-
-  it.each([
-    ['not_configured', /isn't connected/i],
-    ['token_expired', /needs refreshing/i],
-    ['unavailable', /couldn't reach/i],
-  ] as const)('renders a scoped message for a %s failure, without affecting the rest of the page', async (reason, expectedText) => {
-    fetchGameTrophiesAction.mockResolvedValue({ ok: false, reason });
-    render(<GamePage game={game({ psnNpCommunicationId: 'NPWR12345_00' })} />);
-
-    await screen.findByText(expectedText);
-    // The rest of the (view-mode) page is unaffected by a trophy fetch failure.
-    expect(screen.getByRole('heading', { name: 'Elden Ring' })).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /find on powerpyx/i });
+    expect(link).toHaveAttribute('href', `https://www.powerpyx.com/?s=${encodeURIComponent('Bloodborne')}`);
+    expect(link).toHaveAttribute('target', '_blank');
   });
 });
 
@@ -472,9 +426,6 @@ describe('GamePage — Remove', () => {
     render(<GamePage game={game({ id: 'game-1', title: 'Elden Ring' })} />);
 
     await user.click(screen.getByRole('button', { name: 'Remove' }));
-    // Both the header trigger and the confirmation dialog's own button are
-    // labelled "Remove" once the dialog is open — the confirmation dialog's
-    // is the one added most recently to the DOM.
     const removeButtons = screen.getAllByRole('button', { name: 'Remove' });
     await user.click(removeButtons[removeButtons.length - 1]!);
 

@@ -50,6 +50,21 @@
   --font-sans:
     ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+  /* `--font-display` itself (the Space Grotesk value) is set on <html> in
+     src/app/layout.tsx via next/font's `variable` option — this just adds
+     the system-sans fallback chain and exposes it as a `font-display`
+     Tailwind utility. Headings only; body/UI text stays `--font-sans`. */
+  --font-display: var(--font-display), ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  /* Modest type-scale bump — real usage found the app's UI text too small to
+     read comfortably. Overriding these two Tailwind v4 scale tokens is one
+     central change that cascades to every `text-xs`/`text-sm` usage in both
+     Finance and Games, rather than hand-editing every className. `text-base`
+     (16px) is left alone. */
+  --text-xs: 0.8125rem; /* 13px, was 12px */
+  --text-xs--line-height: 1.4;
+  --text-sm: 0.9375rem; /* 15px, was 14px */
+  --text-sm--line-height: 1.5;
 }
 
 /* Expose the tokens below as Tailwind utilities (bg-background, text-muted-foreground, …). */
@@ -73,6 +88,12 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* The one accent color added by the "Signal Violet" pass — a scalpel, not
+     a paintbrush (see globals.css's own `--brand` doc comment below). Kept
+     entirely separate from shadcn's existing `--accent` token, which already
+     means "hover/muted surface" everywhere and must keep meaning that. */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
@@ -127,6 +148,20 @@
   --input: #e4e4e7;
   --ring: #a1a1aa;
 
+  /**
+   * "Signal Violet" — the app's one accent color, added for real usage that
+   * found the app reading as scattered/grey/static. Deliberately used
+   * sparingly (hover states, active/selected indicators, one or two "hero"
+   * numbers per page, focus accents) — never the resting fill of a primary
+   * button, never a replacement for `--primary`/`--accent` above, which keep
+   * their existing neutral meanings. Chosen specifically to avoid colliding
+   * with Finance's existing semantic colors: green = income, amber/orange =
+   * expense, red = destructive/net-negative (`--destructive` above) — violet
+   * touches none of those, so "is this button destructive?" never comes up.
+   */
+  --brand: #9333ea;
+  --brand-foreground: #fafafa;
+
   --chart-income: #16a34a;
   --chart-expense: #d97706;
   --chart-net-negative: #b91c1c;
@@ -171,6 +206,11 @@
     --input: #27272a;
     --ring: #52525b;
 
+    /* See the light `:root` block's `--brand` doc comment — brighter here
+       for legibility against a near-black background. */
+    --brand: #a855f7;
+    --brand-foreground: #fafafa;
+
     --chart-income: #4ade80;
     --chart-expense: #fb923c;
     --chart-net-negative: #f87171;
@@ -214,6 +254,10 @@
   --border: #27272a;
   --input: #27272a;
   --ring: #52525b;
+
+  /* See the light `:root` block's `--brand` doc comment. */
+  --brand: #a855f7;
+  --brand-foreground: #fafafa;
 
   --chart-income: #4ade80;
   --chart-expense: #fb923c;
@@ -277,4 +321,36 @@ button:not(:disabled) {
  */
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/**
+ * A thin, theme-matched scrollbar everywhere — the OS-default scrollbar
+ * track (chunky, unstyled) was called out as looking unpolished against a
+ * long list (the trophy table in particular). This doesn't remove scrolling
+ * — a 30+ row list still needs to scroll — it just stops the browser's
+ * default chrome from standing out against everything else in the app.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--muted-foreground);
 }

@@ -9,6 +9,7 @@ import { type Game, type GameInput, createGame, deleteGame, getGame, updateGame 
 import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
 import { findDuplicateYear, validateSplit } from '@/server/games/play-years';
+import { isRealPlayYearDraft, type PlayYearDraft } from '@/features/games/play-years-panel';
 import { GAME_OWNERSHIPS, GAME_PLATFORMS, GAME_STATUSES } from '@/server/games/taxonomy';
 import { type ActionResult, fail, ok } from './action-result';
 
@@ -377,6 +378,268 @@ export async function updateGameAction(id: string, formData: FormData): Promise<
     // owner can't see, and re-adding it would collide as a duplicate.
     revalidatePath('/games', 'layout');
     return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/**
+ * One scalar field per key, for the per-field inline-editing UI
+ * (`game-page.tsx`) — click a value, edit just that one, it saves on its
+ * own. Deliberately ONE generic action rather than ~14 near-identical
+ * granular ones (Finance's `InlineEditText` precedent uses a separate
+ * action per field, but a transaction row only has two inline-editable
+ * fields; Games has far more simple scalars, so a single action validating
+ * against a per-field schema slice is the better-justified shape here).
+ *
+ * `coverUrl`/`metacritic`/`averagePlaytimeHours`/`esrbRating` are excluded
+ * on purpose — they have no direct input control anywhere in the UI, only
+ * ever written together as a batch by `applyMetadataSuggestionAction`
+ * below.
+ */
+const GAME_FIELD_SCHEMAS = {
+  title: z.string().trim().min(1, 'Title is required').max(300),
+  platform: z.enum(GAME_PLATFORMS),
+  status: z.enum(GAME_STATUSES),
+  ownership: z.enum(GAME_OWNERSHIPS),
+  developer: z.string().trim().max(300),
+  publisher: z.string().trim().max(300),
+  genre: z.string().trim().max(200),
+  notes: z.string().trim().max(2000),
+  rating: z.coerce.number().int().min(1).max(5),
+  firstPlayedYear: z.coerce.number().int().min(1970).max(2100),
+  achievementsUnlocked: z.coerce.number().int().min(0).max(10_000),
+  achievementsTotal: z.coerce.number().int().min(0).max(10_000),
+  priceDollars: z.coerce.number().min(0).max(10_000),
+  hours: z.string(),
+  platinum: z.coerce.boolean(),
+} as const;
+
+export type GameFieldKey = keyof typeof GAME_FIELD_SCHEMAS;
+
+/** Same mutable-partial shape `parse()` above uses, for the same reason. */
+type MutableGameInputPatch = Partial<{ -readonly [K in keyof GameInput]: GameInput[K] }>;
+
+/** Fields whose value a Steam-linked game's own sync run owns — see `stripSteamOwnedFields`. */
+const STEAM_OWNED_FIELDS: ReadonlySet<GameFieldKey> = new Set(['hours', 'achievementsUnlocked', 'achievementsTotal']);
+
+export async function updateGameFieldAction(id: string, field: GameFieldKey, rawValue: string): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  let gameId: string;
+  let existing: Game;
+  try {
+    gameId = idSchema.parse(id);
+    existing = await getGame(owner.userId, gameId);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  if (existing.steamAppid !== null && STEAM_OWNED_FIELDS.has(field)) {
+    return fail("This field is set automatically from Steam and can't be edited here.");
+  }
+
+  const trimmed = rawValue.trim();
+  // Every optional field clears on an empty commit — the same "absent means
+  // cleared" rule `parse()`'s `clearing` branch applies for the full-form
+  // path, just decided per-field instead of per-submit. `title`/`platform`/
+  // `status` can't be blanked this way; their own schemas below reject an
+  // empty string on their own terms (`min(1)`/enum membership), so no
+  // special-casing is needed for those three.
+  const patch: MutableGameInputPatch = {};
+  try {
+    switch (field) {
+      case 'title':
+        patch.title = GAME_FIELD_SCHEMAS.title.parse(trimmed);
+        break;
+      case 'platform':
+        patch.platform = GAME_FIELD_SCHEMAS.platform.parse(trimmed);
+        break;
+      case 'status':
+        patch.status = GAME_FIELD_SCHEMAS.status.parse(trimmed);
+        break;
+      case 'ownership':
+        patch.ownership = trimmed === '' ? null : GAME_FIELD_SCHEMAS.ownership.parse(trimmed);
+        break;
+      case 'developer':
+        patch.developer = trimmed === '' ? null : GAME_FIELD_SCHEMAS.developer.parse(trimmed);
+        break;
+      case 'publisher':
+        patch.publisher = trimmed === '' ? null : GAME_FIELD_SCHEMAS.publisher.parse(trimmed);
+        break;
+      case 'genre':
+        patch.genre = trimmed === '' ? null : GAME_FIELD_SCHEMAS.genre.parse(trimmed);
+        break;
+      case 'notes':
+        patch.notes = trimmed === '' ? null : GAME_FIELD_SCHEMAS.notes.parse(trimmed);
+        break;
+      case 'rating':
+        patch.rating = trimmed === '' ? null : GAME_FIELD_SCHEMAS.rating.parse(trimmed);
+        break;
+      case 'firstPlayedYear':
+        patch.firstPlayedYear = trimmed === '' ? null : GAME_FIELD_SCHEMAS.firstPlayedYear.parse(trimmed);
+        break;
+      case 'achievementsUnlocked':
+        patch.achievementsUnlocked = trimmed === '' ? null : GAME_FIELD_SCHEMAS.achievementsUnlocked.parse(trimmed);
+        break;
+      case 'achievementsTotal':
+        patch.achievementsTotal = trimmed === '' ? null : GAME_FIELD_SCHEMAS.achievementsTotal.parse(trimmed);
+        break;
+      case 'priceDollars':
+        patch.priceCents =
+          trimmed === '' ? null : Math.round(GAME_FIELD_SCHEMAS.priceDollars.parse(trimmed) * 100);
+        break;
+      case 'hours': {
+        if (trimmed === '') {
+          patch.hoursTenths = null;
+          break;
+        }
+        const tenths = fromHoursInput(trimmed);
+        if (tenths === null) {
+          throw new z.ZodError([
+            { code: 'custom', path: ['hours'], message: 'Hours must be a number like 23 or 23.5' },
+          ]);
+        }
+        patch.hoursTenths = tenths;
+        break;
+      }
+      case 'platinum':
+        patch.platinum = GAME_FIELD_SCHEMAS.platinum.parse(rawValue);
+        break;
+    }
+  } catch (error) {
+    return toResult(error);
+  }
+
+  // `title`/`platform` are reasserted at their EXISTING values, never
+  // touched by this call unless `field` is one of them — `updateGame`'s
+  // `GameInput` parameter requires both, but Drizzle's `.set()` only writes
+  // the keys actually present in `patch`, so this is a true single-column
+  // patch, not a full-row overwrite (see that function's own comment).
+  try {
+    await updateGame(owner.userId, gameId, { title: existing.title, platform: existing.platform, ...patch });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/**
+ * Applying a picked metadata suggestion touches several fields at once
+ * (title, cover art, and whichever of genre/developer/publisher were still
+ * empty) — a genuinely multi-field user action, unlike every other field
+ * above, so it gets its own action rather than forcing it through
+ * `updateGameFieldAction`'s one-field-at-a-time shape. `genre`/`developer`/
+ * `publisher` are passed through AS THE CLIENT COMPUTED THEM (only included
+ * when that field was empty at pick time) — same "never silently replace a
+ * hand-typed value" rule the old edit form enforced, just decided
+ * client-side before the call instead of server-side inside `parse()`.
+ */
+export async function applyMetadataSuggestionAction(
+  id: string,
+  suggestion: {
+    readonly title: string;
+    readonly coverUrl: string | null;
+    readonly genre?: string;
+    readonly developer?: string;
+    readonly publisher?: string;
+    readonly metacritic: number | null;
+    readonly averagePlaytimeHours: number | null;
+    readonly esrbRating: string | null;
+  },
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  let gameId: string;
+  let existing: Game;
+  try {
+    gameId = idSchema.parse(id);
+    existing = await getGame(owner.userId, gameId);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  const patch: Partial<GameInput> = {
+    title: GAME_FIELD_SCHEMAS.title.parse(suggestion.title),
+    coverUrl: suggestion.coverUrl,
+    metacritic: suggestion.metacritic,
+    averagePlaytimeHours: suggestion.averagePlaytimeHours,
+    esrbRating: suggestion.esrbRating,
+    ...(suggestion.genre === undefined ? {} : { genre: suggestion.genre }),
+    ...(suggestion.developer === undefined ? {} : { developer: suggestion.developer }),
+    ...(suggestion.publisher === undefined ? {} : { publisher: suggestion.publisher }),
+  };
+
+  try {
+    await updateGame(owner.userId, gameId, { ...patch, title: patch.title ?? existing.title, platform: existing.platform });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/**
+ * The year-by-year split is an array, not a scalar — it doesn't fit
+ * `updateGameFieldAction`'s one-field-at-a-time shape, so it keeps its own
+ * dedicated action (unchanged validation from the old whole-form path:
+ * duplicate-year check, then the split must sum to the game's OWN current
+ * total — Steam's, if linked, since only Steam's total is authoritative for
+ * a linked game; the owner's own hand-entered total otherwise).
+ */
+export async function updateGamePlayYearsAction(
+  id: string,
+  drafts: readonly PlayYearDraft[],
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  let gameId: string;
+  let existing: Game;
+  try {
+    gameId = idSchema.parse(id);
+    existing = await getGame(owner.userId, gameId);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  let playYears: { year: number; hoursTenths: number }[];
+  try {
+    const parsedDrafts = playYearsSchema.parse(drafts.filter(isRealPlayYearDraft));
+    playYears = parsedDrafts.map((draft, index) => {
+      const tenths = fromHoursInput(draft.hours);
+      if (tenths === null) {
+        throw new z.ZodError([
+          {
+            code: 'custom',
+            path: ['playYears', index, 'hours'],
+            message: `"${draft.hours}" is not a valid number of hours`,
+          },
+        ]);
+      }
+      return { year: draft.year, hoursTenths: tenths };
+    });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  const duplicateYear = findDuplicateYear(playYears);
+  if (duplicateYear !== null) {
+    return fail(`Year ${duplicateYear} appears more than once in the split.`);
+  }
+
+  const validation = validateSplit(existing.hoursTenths ?? 0, playYears);
+  if (!validation.ok) {
+    return fail('The year-by-year split must add up to the total hours.');
+  }
+
+  try {
+    await replacePlayYears(owner.userId, gameId, playYears);
+  } catch (error) {
+    return toResult(error);
   }
 
   revalidatePath('/games', 'layout');

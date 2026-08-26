@@ -1,7 +1,8 @@
 'use client';
 
-import { Loader2 } from 'lucide-react';
+import { motion } from 'motion/react';
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TrophyTierBadge } from '@/components/games/trophy-tier-badge';
 import type { PsnFailure } from '@/server/db/games/psn-client';
@@ -57,14 +58,7 @@ function formatEarnedDate(iso: string): string {
  * unrequested API call (`getTitleTrophyGroups`).
  */
 export function TrophiesSection({ state }: { readonly state: TrophyFetchState }): React.ReactElement {
-  if (state.status === 'idle' || state.status === 'loading') {
-    return (
-      <p className="text-muted-foreground flex items-center justify-center gap-1.5 py-8 text-sm">
-        <Loader2 className="size-4 animate-spin" aria-hidden />
-        Loading trophies…
-      </p>
-    );
-  }
+  if (state.status === 'idle' || state.status === 'loading') return <TrophyListSkeleton />;
 
   if (state.status === 'failed') {
     return <p className="text-muted-foreground py-8 text-center text-sm">{FAILURE_MESSAGES[state.reason]}</p>;
@@ -77,12 +71,38 @@ export function TrophiesSection({ state }: { readonly state: TrophyFetchState })
   const earnedCount = state.trophies.filter((trophy) => trophy.earned).length;
 
   return (
-    <div className="space-y-2">
+    <motion.div
+      className="space-y-2"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.2 }}
+    >
       <p className="text-sm">
         <span className="tabular font-medium">{earnedCount}</span>
         <span className="text-muted-foreground"> of {state.trophies.length} trophies earned</span>
       </p>
       <TrophyList trophies={sortTrophies(state.trophies)} />
+    </motion.div>
+  );
+}
+
+/** Content-shaped placeholder for the fetch, in place of a bare spinner. */
+function TrophyListSkeleton(): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-5 w-40" />
+      <div className="space-y-1">
+        {Array.from({ length: 8 }, (_, index) => (
+          <div key={index} className="flex items-center gap-3 py-2">
+            <Skeleton className="size-6 shrink-0 rounded-md" />
+            <div className="flex-1 space-y-1.5">
+              <Skeleton className="h-3.5 w-1/3" />
+              <Skeleton className="h-3 w-2/3" />
+            </div>
+            <Skeleton className="h-3 w-16 shrink-0" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

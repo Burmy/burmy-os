@@ -1,21 +1,29 @@
-import Image from 'next/image';
-import { Gamepad2 } from 'lucide-react';
+'use client';
 
+import Image from 'next/image';
+import { Gamepad2, Star } from 'lucide-react';
+
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { PlatinumBadge } from '@/components/games/platinum-badge';
-import { RatingStars } from '@/components/games/rating-stars';
+import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
+import type { ActionResult } from '@/features/games/action-result';
+import type { GameFieldKey } from '@/features/games/game-actions';
 import { formatHours, hours } from '@/server/games/hours';
 import { PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
+import { PLATFORM_PICKER_OPTIONS } from '@/server/games/taxonomy';
+import { InlineEditField, InlineEditSelect } from './inline-edit-row';
+
+const STATUS_OPTIONS = ['backlog', 'wanted', 'playing', 'played'] as const satisfies readonly GameStatus[];
 
 /**
  * The page's persistent left column — cover art plus the same "at a
  * glance" facts `GameCard` shows in the library gallery (platform, rating,
- * hours), always read-only regardless of whether the right column is in
- * view or edit mode. Deliberately NOT `StatusBadge`: that component
- * returns `null` for `played`/`playing` (the majority library state, kept
- * invisible in a dense grid), which would leave a detail page's status row
- * blank for most games — this renders `STATUS_LABELS` as plain text
- * instead, so a status is always visible here.
+ * hours), every one of them independently inline-editable now (see
+ * `inline-edit-row.tsx`'s own doc comment for why the whole page moved off
+ * a single Edit/Save toggle).
  */
 export function GameSummaryPanel({
   coverUrl,
@@ -25,6 +33,8 @@ export function GameSummaryPanel({
   rating,
   hoursTenths,
   platinum,
+  steamOwned,
+  onSaveField,
 }: {
   readonly coverUrl: string | null;
   readonly title: string;
@@ -33,9 +43,11 @@ export function GameSummaryPanel({
   readonly rating: number | null;
   readonly hoursTenths: number | null;
   readonly platinum: boolean;
+  readonly steamOwned: boolean;
+  readonly onSaveField: (field: GameFieldKey, value: string) => Promise<ActionResult>;
 }): React.ReactElement {
   return (
-    <div className="space-y-3 sm:sticky sm:top-6">
+    <div className="space-y-4 sm:sticky sm:top-6">
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
         {coverUrl === null || coverUrl === '' ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
@@ -50,30 +62,86 @@ export function GameSummaryPanel({
         {platinum ? <PlatinumBadge className="absolute top-2 right-2" /> : null}
       </div>
 
-      <dl className="space-y-1.5 text-sm">
-        <div className="flex items-center justify-between">
-          <dt className="text-muted-foreground">Platform</dt>
-          <dd>{PLATFORM_LABELS[platform]}</dd>
+      <div className="divide-y">
+        <InlineEditSelect
+          label="Platform"
+          value={platform}
+          displayValue={PLATFORM_LABELS[platform]}
+          options={(platform === 'pc' ? [...PLATFORM_PICKER_OPTIONS, 'pc' as const] : PLATFORM_PICKER_OPTIONS).map(
+            (value) => ({ value, label: PLATFORM_LABELS[value] }),
+          )}
+          onSave={(value) => onSaveField('platform', value)}
+        />
+        <InlineEditSelect
+          label="Status"
+          value={status}
+          displayValue={STATUS_LABELS[status]}
+          options={STATUS_OPTIONS.map((value) => ({ value, label: STATUS_LABELS[value] }))}
+          onSave={(value) => onSaveField('status', value)}
+        />
+        <RatingRow rating={rating} onSave={(value) => onSaveField('rating', value)} />
+        <InlineEditField
+          label="Hours"
+          value={hoursTenths === null ? '' : String(hoursTenths / 10)}
+          displayValue={hoursTenths === null ? undefined : formatHours(hours(hoursTenths))}
+          placeholder="Not tracked"
+          disabled={steamOwned}
+          disabledHint="From Steam"
+          onSave={(value) => onSaveField('hours', value)}
+        />
+        <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
+          <Label htmlFor="platinum-toggle" className="text-muted-foreground cursor-pointer font-normal">
+            Platinum
+          </Label>
+          <Checkbox
+            id="platinum-toggle"
+            checked={platinum}
+            onCheckedChange={(checked) => {
+              void onSaveField('platinum', checked === true ? 'true' : '').then((result) => {
+                if (!result.ok) toast.error(result.error);
+              });
+            }}
+          />
         </div>
-        <div className="flex items-center justify-between">
-          <dt className="text-muted-foreground">Status</dt>
-          <dd>{STATUS_LABELS[status]}</dd>
-        </div>
-        {rating === null ? null : (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Rating</dt>
-            <dd>
-              <RatingStars rating={rating} />
-            </dd>
-          </div>
-        )}
-        {hoursTenths === null ? null : (
-          <div className="flex items-center justify-between">
-            <dt className="text-muted-foreground">Hours</dt>
-            <dd className="tabular">{formatHours(hours(hoursTenths))}</dd>
-          </div>
-        )}
-      </dl>
+      </div>
     </div>
+  );
+}
+
+/**
+ * Rating shows as stars when idle (matching the library gallery's own
+ * `RatingStars`), but editing five individual star buttons that each save
+ * independently would be five separate round-trips for one value — instead
+ * clicking any star reveals the same plain numeric `InlineEditField` every
+ * other scalar field uses, pre-filled, so the actual commit is still one
+ * save.
+ */
+function RatingRow({
+  rating,
+  onSave,
+}: {
+  readonly rating: number | null;
+  readonly onSave: (value: string) => Promise<ActionResult>;
+}): React.ReactElement {
+  return (
+    <InlineEditField
+      label="Rating"
+      value={rating === null ? '' : String(rating)}
+      displayValue={
+        rating === null ? undefined : (
+          <span className="inline-flex items-center gap-0.5" aria-label={`${rating} out of 5`}>
+            {[1, 2, 3, 4, 5].map((position) => (
+              <Star
+                key={position}
+                aria-hidden
+                className={cn('size-3.5', position <= rating ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/30')}
+              />
+            ))}
+          </span>
+        )
+      }
+      placeholder="Not rated"
+      onSave={onSave}
+    />
   );
 }

@@ -17,8 +17,8 @@ export function Section({
   readonly children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="rounded-lg border bg-card p-5">
-      <h2 className="text-sm font-medium">{title}</h2>
+    <section className="rounded-lg border bg-card p-6">
+      <h2 className="font-display text-base font-medium">{title}</h2>
       {description ? <p className="text-muted-foreground text-xs">{description}</p> : null}
       <div className="mt-3">{children}</div>
     </section>
