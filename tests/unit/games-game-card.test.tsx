@@ -58,4 +58,18 @@ describe('GameCard — platinum treatment', () => {
     const card = screen.getByRole('button');
     expect(card.className).not.toMatch(/ring-slate-400/);
   });
+
+  /**
+   * Real usage found the previous circular platinum badge hard to tell
+   * apart from the (also circular) wishlist badge on the Upcoming tab —
+   * see `platinum-badge.tsx`'s own doc comment. It moved to a rounded-square
+   * medallion for a distinct silhouette; this guards that shape decision.
+   */
+  it('renders the platinum badge as a rounded-square medallion, not a circle', () => {
+    render(<GameCard game={game({ platinum: true })} onOpen={vi.fn()} />);
+
+    const badge = screen.getByTitle('Platinum');
+    expect(badge.className).toMatch(/\brounded-lg\b/);
+    expect(badge.className).not.toMatch(/rounded-full/);
+  });
 });

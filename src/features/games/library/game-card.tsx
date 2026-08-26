@@ -22,47 +22,41 @@ import { formatHours, hours } from '@/server/games/hours';
  * and a mixed grid never looks ragged.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * STATUS BADGE LIVES AT THE BOTTOM OF THE COVER, NOT THE TOP.
+ * STATUS BADGE STAYS AT THE BOTTOM OF THE COVER, NOT THE TOP.
  *
  * Portrait box art almost always carries the game's own logo/title treatment
  * across the top third of the cover — a badge pinned to the top-left corner
  * sat directly on top of it (reported: "Completed" over DISHONORED 2's own
  * logo, unreadable in both directions — the badge fought the art and the art
  * fought the badge). The bottom of a cover is far more often plain
- * background art, so the badge moves there instead, backed by `StatusBadge`'s
+ * background art, so the badge lives there instead, backed by `StatusBadge`'s
  * `variant="onImage"` (an opaque pill, legible against arbitrary art without
  * reaching for a gradient scrim — see that component for why).
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * PLATINUM ALSO GETS A CARD-LEVEL RING, NOT JUST THE BADGE.
+ * PLATINUM MOVED TO ITS OWN TOP-RIGHT CORNER, NOT SHARING THE STATUS ROW.
  *
- * `PlatinumBadge` alone is a 24px icon at the bottom of the cover — no larger
- * than the status pill beside it, and with `StatusBadge` now returning `null`
- * for `played` (the overwhelming majority of the library), a platinum is
- * often the ONLY signal on the card at all. A grid of covers needs it to read
- * at a glance, not on close inspection, so the outer card itself picks up a
- * metallic ring/border in the exact same slate-300/slate-400 register
- * `PlatinumBadge` already uses — not a new color, not a gradient background,
- * just a frame — so a scan of the gallery makes every platinum obvious
- * without turning the grid into a casino.
+ * The platinum badge used to share the bottom row with the status badge —
+ * real usage found the two blurred together at a glance ("hard to tell"),
+ * on top of the badge itself being too small/low-contrast. It now sits
+ * independently at `top-2 right-2`; status stays at the bottom, now
+ * uncontested. This is a smaller-footprint change than it might sound: the
+ * original bottom-placement fix above was about a full-width TEXT PILL
+ * colliding with a logo across the top third of the cover — this is a
+ * ~36px icon-only medallion in one corner, not a wide element spanning the
+ * top. Also gets a card-level ring/border in the exact same slate-300/
+ * slate-400 register `PlatinumBadge` uses — not a new color, just a frame —
+ * so a scan of the gallery makes every platinum obvious without turning the
+ * grid into a casino.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function GameCard({
   game,
   onOpen,
-  size = 'default',
 }: {
   readonly game: Game;
   readonly onOpen: (game: Game) => void;
-  /**
-   * `'large'` gives the currently-`playing` game a wider grid span (see
-   * `GameGrid`) so it reads as the one thing actively in progress without
-   * scrolling. The cover's own `aspect-[3/4]` then grows the card's height to
-   * match, with no separate row-span needed — see `GameGrid`'s `items-start`
-   * comment for why that matters.
-   */
-  readonly size?: 'default' | 'large';
 }): React.ReactElement {
   return (
     <button
@@ -89,9 +83,8 @@ export function GameCard({
         'group flex flex-col rounded-lg border text-left',
         'transition-colors hover:border-foreground/20 hover:bg-muted/40',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
-        size === 'large' && 'col-span-2',
         game.platinum &&
-          'border-slate-300 ring-1 ring-slate-400/60 dark:border-slate-500/70 dark:ring-slate-400/40',
+          'border-slate-300 ring-2 ring-slate-400/60 dark:border-slate-500/70 dark:ring-slate-400/40',
       )}
     >
       <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">
@@ -119,10 +112,10 @@ export function GameCard({
             className="object-cover transition-transform group-hover:scale-[1.03]"
           />
         )}
-        <div className="absolute inset-x-2 bottom-2 flex items-end justify-between gap-1.5">
+        <div className="absolute inset-x-2 bottom-2">
           <StatusBadge status={game.status} variant="onImage" />
-          {game.platinum ? <PlatinumBadge /> : null}
         </div>
+        {game.platinum ? <PlatinumBadge className="absolute top-2 right-2" /> : null}
       </div>
 
       <div className="flex flex-1 flex-col gap-1 p-3">

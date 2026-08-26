@@ -57,49 +57,55 @@ const rows: readonly GameStatRow[] = [
  * `games-stats.test.ts` and by manual verification, not here.
  */
 describe('GamesDashboard', () => {
-  it('renders every top-level group as a titled Section, with no bare heading between them', () => {
+  it('renders Year by year, Trends, Breakdown, Top 3, and Highlights as titled Sections', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    for (const title of ['Library', 'Money', 'Year by year', 'Trends', 'Breakdown', 'Top 3', 'Highlights']) {
+    for (const title of ['Year by year', 'Trends', 'Breakdown', 'Top 3', 'Highlights']) {
       expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
   });
 
-  it('shows exactly one stat row of 4 in Library: Games, Hours played, Platinums, Backlog', () => {
+  /**
+   * Library/Money used to be two separate boxed, titled `Section`s. They're
+   * now one bare stat-card row with no heading and no bordering box at
+   * all — matching Finance's own top-row convention exactly (its
+   * Income/Expenses/... row, and its `InsightsSection` mini-cards, are both
+   * bare too; only Finance's charts get boxed).
+   */
+  it('does not render Library or Money as their own titled Section — the stat-card row is bare', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    const library = screen.getByRole('heading', { name: 'Library' }).closest('section') as HTMLElement;
-    for (const label of ['Games', 'Hours played', 'Platinums', 'Backlog']) {
-      expect(within(library).getByText(label)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Library' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Money' })).not.toBeInTheDocument();
+  });
+
+  it('shows exactly one bare stat-card row of 6: Games, Hours played, Platinums, Backlog, Total spend, Cost per hour', () => {
+    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    for (const label of ['Games', 'Hours played', 'Platinums', 'Backlog', 'Total spend', 'Cost per hour']) {
+      expect(screen.getByText(label)).toBeInTheDocument();
     }
     // No longer their own standalone cards — folded into hints instead.
-    expect(within(library).queryByText('Average rating')).not.toBeInTheDocument();
-    expect(within(library).queryByText('Average Metacritic')).not.toBeInTheDocument();
-    expect(within(library).queryByText('Average playtime')).not.toBeInTheDocument();
+    expect(screen.queryByText('Average rating')).not.toBeInTheDocument();
+    expect(screen.queryByText('Average Metacritic')).not.toBeInTheDocument();
+    expect(screen.queryByText('Average playtime')).not.toBeInTheDocument();
+    expect(screen.queryByText('Average price')).not.toBeInTheDocument();
+    expect(screen.queryByText('Backlog value')).not.toBeInTheDocument();
   });
 
   it('folds average rating and average Metacritic into the Games card hint', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    const library = screen.getByRole('heading', { name: 'Library' }).closest('section') as HTMLElement;
     // rating: (5 + 4) / 2 = 4.5; metacritic: (96 + 90) / 2 = 93.
-    expect(within(library).getByText(/4\.5★ avg rating/)).toBeInTheDocument();
-    expect(within(library).getByText(/93 avg Metacritic/)).toBeInTheDocument();
+    expect(screen.getByText(/4\.5★ avg rating/)).toBeInTheDocument();
+    expect(screen.getByText(/93 avg Metacritic/)).toBeInTheDocument();
   });
 
   it('folds average playtime into the Hours played card hint', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    const library = screen.getByRole('heading', { name: 'Library' }).closest('section') as HTMLElement;
     // Hours logged: 1360 and 200 tenths -> average 780 tenths -> 78h.
-    expect(within(library).getByText(/78h avg per game/)).toBeInTheDocument();
+    expect(screen.getByText(/78h avg per game/)).toBeInTheDocument();
   });
 
-  it('shows exactly two cards in Money: Total spend and Cost per hour', () => {
+  it('folds backlog value into the Cost per hour card hint', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    const money = screen.getByRole('heading', { name: 'Money' }).closest('section') as HTMLElement;
-    expect(within(money).getByText('Total spend')).toBeInTheDocument();
-    expect(within(money).getByText('Cost per hour')).toBeInTheDocument();
-    // No longer their own standalone cards — folded into hints instead.
-    expect(within(money).queryByText('Average price')).not.toBeInTheDocument();
-    expect(within(money).queryByText('Backlog value')).not.toBeInTheDocument();
-    expect(within(money).getByText(/sitting in backlog/)).toBeInTheDocument();
+    expect(screen.getByText(/sitting in backlog/)).toBeInTheDocument();
   });
 
   it('does not render a "vs. prev" column in the Year by year table', () => {

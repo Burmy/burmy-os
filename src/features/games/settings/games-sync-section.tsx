@@ -1,15 +1,18 @@
-import { SonyTokenLink } from '@/features/games/sync/psn-sync-button';
+import { PsnSyncButton, SonyTokenLink } from '@/features/games/sync/psn-sync-button';
 import { formatRelativeTime } from '@/features/games/sync/relative-time';
+import { SyncButton } from '@/features/games/sync/sync-button';
 import type { PsnTokenAge } from '@/server/games/psn-token-age';
 
 /**
  * Settings → Games → Sync — the standing home for Steam/PlayStation
- * connection state, last-synced times, and PSN token age, now that
- * `SyncButton`/`PsnSyncButton` on the Library screen are clean single-line
- * controls with no caption of their own (see those two components' doc
- * comments). This is a pure, presentational component: all the data is
- * fetched by the Settings page itself via the same actions the Library page
- * used to call for the buttons —
+ * connection state, last-synced times, PSN token age, AND the actual sync
+ * trigger buttons. The buttons used to live on the Library screen's top bar;
+ * they moved here entirely (no lightweight link left behind on Library) so
+ * that connecting/syncing a source and reading its status live in one place.
+ * `SyncButton`/`PsnSyncButton` are self-contained Client Components needing
+ * only a `configured: boolean` prop, so relocating them was a pure move, not
+ * a rewrite. This component is otherwise still pure/presentational: all the
+ * data is fetched by the Settings page itself via
  * `isSteamConfiguredAction`/`isPsnConfiguredAction` (`sync-actions.ts`/
  * `psn-actions.ts`), `getLastSyncedTimesAction`, and `getPsnTokenAgeAction`
  * — reused rather than reimplemented.
@@ -31,38 +34,44 @@ export function GamesSyncSection({
   readonly psnTokenAge: PsnTokenAge;
 }): React.ReactElement {
   return (
-    <ul className="mt-3 divide-y border-t border-b">
-      <li className="py-2 text-sm">
-        <span className="font-medium">Steam</span>
-        {steamConfigured ? (
-          <p className="text-muted-foreground text-xs">
-            Connected
-            {steamLastSyncedAt ? ` · Synced ${formatRelativeTime(steamLastSyncedAt)}` : ' — not yet synced'}
-          </p>
-        ) : (
-          <p className="text-muted-foreground text-xs">
-            Not connected — set <code className="font-mono">STEAM_API_KEY</code> and{' '}
-            <code className="font-mono">STEAM_ID</code> to enable sync.
-          </p>
-        )}
-      </li>
-
-      <li className="py-2 text-sm">
-        <span className="font-medium">PlayStation</span>
-        {psnConfigured ? (
-          <>
+    <ul className="mt-3 divide-y">
+      <li className="flex items-center justify-between gap-3 py-2 text-sm">
+        <div>
+          <span className="font-medium">Steam</span>
+          {steamConfigured ? (
             <p className="text-muted-foreground text-xs">
               Connected
-              {psnLastSyncedAt ? ` · Synced ${formatRelativeTime(psnLastSyncedAt)}` : ' — not yet synced'}
+              {steamLastSyncedAt ? ` · Synced ${formatRelativeTime(steamLastSyncedAt)}` : ' — not yet synced'}
             </p>
-            <PsnTokenAgeLine tokenAge={psnTokenAge} />
-          </>
-        ) : (
-          <p className="text-muted-foreground text-xs">
-            Not connected — set <code className="font-mono">PSN_NPSSO</code> to enable sync. Get one from{' '}
-            <SonyTokenLink /> while logged in to PlayStation in this browser.
-          </p>
-        )}
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              Not connected — set <code className="font-mono">STEAM_API_KEY</code> and{' '}
+              <code className="font-mono">STEAM_ID</code> to enable sync.
+            </p>
+          )}
+        </div>
+        <SyncButton configured={steamConfigured} />
+      </li>
+
+      <li className="flex items-center justify-between gap-3 py-2 text-sm">
+        <div>
+          <span className="font-medium">PlayStation</span>
+          {psnConfigured ? (
+            <>
+              <p className="text-muted-foreground text-xs">
+                Connected
+                {psnLastSyncedAt ? ` · Synced ${formatRelativeTime(psnLastSyncedAt)}` : ' — not yet synced'}
+              </p>
+              <PsnTokenAgeLine tokenAge={psnTokenAge} />
+            </>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              Not connected — set <code className="font-mono">PSN_NPSSO</code> to enable sync. Get one from{' '}
+              <SonyTokenLink /> while logged in to PlayStation in this browser.
+            </p>
+          )}
+        </div>
+        <PsnSyncButton configured={psnConfigured} />
       </li>
     </ul>
   );

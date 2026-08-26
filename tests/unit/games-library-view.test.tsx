@@ -18,13 +18,6 @@ vi.mock('@/features/games/metadata-actions', () => ({
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-// The header renders `SyncButton` and `PsnSyncButton` (Tasks 6 and PSN Task 4)
-// unconditionally now, and both call `useRouter()` even when their own click
-// handler is never exercised — these tests don't render inside a real
-// Next.js app router, so it needs a mock like every other `next/navigation`
-// usage in this suite.
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
-
 const { LibraryView } = await import('@/features/games/library/library-view');
 
 type Game = Parameters<typeof LibraryView>[0]['games'][number];
@@ -128,14 +121,14 @@ describe('LibraryView', () => {
     render(
       <LibraryView
         games={[
-          game({ id: 'a', title: 'Match', status: 'played', platform: 'steam' }),
-          game({ id: 'b', title: 'Wrong status', status: 'backlog', platform: 'steam' }),
-          game({ id: 'c', title: 'Wrong platform', status: 'played', platform: 'ps5' }),
+          game({ id: 'a', title: 'Match', status: 'backlog', platform: 'steam' }),
+          game({ id: 'b', title: 'Wrong status', status: 'played', platform: 'steam' }),
+          game({ id: 'c', title: 'Wrong platform', status: 'backlog', platform: 'ps5' }),
         ]}
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /^played/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^backlog/i }));
     await userEvent.click(screen.getByRole('button', { name: /^steam/i }));
 
     expect(screen.getByText('Match')).toBeInTheDocument();
@@ -171,13 +164,30 @@ describe('LibraryView', () => {
     expect(screen.queryByRole('button', { name: /^other/i })).not.toBeInTheDocument();
   });
 
-  it('does not render a status filter chip for a status with zero games', () => {
+  it('does not render a status filter chip for backlog/wanted with zero games', () => {
     render(<LibraryView games={[game({ id: 'a', status: 'played' })]} />);
 
-    expect(screen.getByRole('button', { name: /^played/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^wanted/i })).not.toBeInTheDocument();
+  });
+
+  it('never renders playing or played as status filter chips, even with nonzero counts', () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', status: 'played' }),
+          game({ id: 'b', status: 'played' }),
+          game({ id: 'c', status: 'playing' }),
+          game({ id: 'd', status: 'backlog' }),
+        ]}
+      />,
+    );
+
+    // Backlog is a real candidate and has a nonzero count, so it renders —
+    // proving playing/played's absence isn't just a zero-count coincidence.
+    expect(screen.getByRole('button', { name: /^backlog/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^played/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
   });
 
   it('labels the steam platform chip "Steam / PC"', () => {
@@ -249,25 +259,6 @@ describe('LibraryView', () => {
     expect(screen.getByText('136h')).toBeInTheDocument();
   });
 
-  // Task 4 (PSN integration): a SEPARATE PlayStation sync button sits beside
-  // the Steam one, disabled by default (the safe state) exactly like
-  // `steamConfigured` defaults to `false` above.
-  it('renders a separate, disabled-by-default PlayStation sync button beside the Steam one', () => {
-    render(<LibraryView games={[]} />);
-
-    expect(screen.getByRole('button', { name: /sync with steam/i })).toBeInTheDocument();
-    const psnButton = screen.getByRole('button', { name: /sync with playstation/i });
-    expect(psnButton).toBeInTheDocument();
-    expect(psnButton).toBeDisabled();
-  });
-
-  it('enables the PlayStation sync button independently of the Steam one', () => {
-    render(<LibraryView games={[]} steamConfigured={false} psnConfigured={true} />);
-
-    expect(screen.getByRole('button', { name: /sync with steam/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /sync with playstation/i })).not.toBeDisabled();
-  });
-
   /**
    * "Upcoming games" plan, Task 5: `wanted` (wishlist) rows are hidden from
    * the default view and revealed only by their own status chip — see
@@ -335,65 +326,52 @@ describe('LibraryView', () => {
   });
 
   /**
-   * "Playing pinned and larger" — the status model change made `played`
-   * invisible (95% of a real library was sitting in one undifferentiated
-   * status), and in exchange `playing` — the one game actually being acted
-   * on — gets pinned to the front and, in the gallery, a wider card.
+   * `playing` used to be pinned to the front of the grid/table and rendered
+   * as an oversized 2-column hero card in the gallery — that special
+   * treatment was deliberately removed (it read as more noise than signal
+   * once Backlog/Wanted became the only chip-filterable statuses). This is
+   * an explicit "stays this way" guard, not a regression to fix.
    */
-  describe('playing pinned first', () => {
-    it('sorts a playing game first while leaving every other status in its existing relative order', () => {
-      render(
-        <LibraryView
-          games={[
-            game({ id: 'a', title: 'Alpha', status: 'backlog' }),
-            game({ id: 'b', title: 'Bravo', status: 'playing' }),
-            game({ id: 'c', title: 'Charlie', status: 'backlog' }),
-          ]}
-        />,
-      );
+  it('treats a playing game identically to backlog/played — no sort pin, no larger card', () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', title: 'Alpha', status: 'backlog' }),
+          game({ id: 'b', title: 'Bravo', status: 'playing' }),
+          game({ id: 'c', title: 'Charlie', status: 'backlog' }),
+        ]}
+      />,
+    );
 
-      // GameCard's `aria-label` is "Title — Status[— Platinum]" — the em
-      // dash is present on every card and nothing else on the page, so this
-      // selects exactly the rendered cards, in DOM order.
-      const cards = screen.getAllByRole('button', { name: /—/ });
-      expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
-        'Bravo — Playing',
-        'Alpha — Backlog',
-        'Charlie — Backlog',
-      ]);
-    });
+    // GameCard's `aria-label` still includes status text unconditionally
+    // (independent of whether a visual badge renders — see status-badge.tsx)
+    // — the em dash selects exactly the rendered cards, in DOM order, so
+    // this also proves there is no sort-to-front.
+    const cards = screen.getAllByRole('button', { name: /—/ });
+    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
+      'Alpha — Backlog',
+      'Bravo — Playing',
+      'Charlie — Backlog',
+    ]);
 
-    it('pins playing first in the table view too, not just the gallery', async () => {
-      render(
-        <LibraryView
-          games={[
-            game({ id: 'a', title: 'Alpha', status: 'backlog' }),
-            game({ id: 'b', title: 'Bravo', status: 'playing' }),
-          ]}
-        />,
-      );
+    const playingCard = screen.getByRole('button', { name: 'Bravo — Playing' });
+    expect(playingCard.className).not.toMatch(/\bcol-span-2\b/);
+  });
 
-      await userEvent.click(screen.getByRole('button', { name: /table view/i }));
+  it('does not pin a playing game first in the table view either', async () => {
+    render(
+      <LibraryView
+        games={[
+          game({ id: 'a', title: 'Alpha', status: 'backlog' }),
+          game({ id: 'b', title: 'Bravo', status: 'playing' }),
+        ]}
+      />,
+    );
 
-      const rows = screen.getAllByRole('row').slice(1); // drop the header row
-      expect(rows[0]).toHaveTextContent('Bravo');
-      expect(rows[1]).toHaveTextContent('Alpha');
-    });
+    await userEvent.click(screen.getByRole('button', { name: /table view/i }));
 
-    it('renders the playing card larger than the rest in the gallery view, and does not resize the table row', () => {
-      render(
-        <LibraryView
-          games={[
-            game({ id: 'a', title: 'Alpha', status: 'backlog' }),
-            game({ id: 'b', title: 'Bravo', status: 'playing' }),
-          ]}
-        />,
-      );
-
-      const playingCard = screen.getByRole('button', { name: 'Bravo — Playing' });
-      const backlogCard = screen.getByRole('button', { name: 'Alpha — Backlog' });
-      expect(playingCard.className).toMatch(/\bcol-span-2\b/);
-      expect(backlogCard.className).not.toMatch(/\bcol-span-2\b/);
-    });
+    const rows = screen.getAllByRole('row').slice(1); // drop the header row
+    expect(rows[0]).toHaveTextContent('Alpha');
+    expect(rows[1]).toHaveTextContent('Bravo');
   });
 });

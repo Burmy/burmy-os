@@ -178,7 +178,10 @@ export interface UpcomingMonth {
 const LATER_KEY = 'later';
 const LATER_LABEL = 'Later / TBD';
 
-const MONTH_NAMES = [
+// Exported for reuse by `upcoming-view.tsx`'s per-card release-date text —
+// keeps month-name formatting in exactly one place rather than a second
+// local copy in the client component.
+export const MONTH_NAMES = [
   'January',
   'February',
   'March',

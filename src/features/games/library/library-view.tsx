@@ -8,10 +8,8 @@ import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import type { Game } from '@/server/db/games/games';
-import { GAME_PLATFORMS, GAME_STATUSES, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
+import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
-import { PsnSyncButton } from '../sync/psn-sync-button';
-import { SyncButton } from '../sync/sync-button';
 import { GameDialog } from './game-dialog';
 import { GameGrid } from './game-grid';
 import { GameTable } from './game-table';
@@ -19,6 +17,12 @@ import { GameTable } from './game-table';
 type ViewMode = 'gallery' | 'table';
 type StatusFilter = GameStatus | 'all';
 type PlatformFilter = GamePlatform | 'all';
+// `playing`/`played` are deliberately excluded from the status chip row —
+// `played` is the majority-default state for ~95% of the library and
+// `playing` covers at most one game at a time, so neither is a useful
+// library-wide filter. `wanted`/`backlog` are the two actionable buckets an
+// owner actually filters by.
+const STATUS_CHIP_STATUSES = ['backlog', 'wanted'] as const satisfies readonly GameStatus[];
 // Provenance, not platform — `game.steamAppid !== null` is the same signal
 // game-dialog.tsx uses to render Hours/Achievements read-only, independent
 // of the `platform` field (a `steam` platform game can still be unlinked).
@@ -31,32 +35,8 @@ type PlatformFilter = GamePlatform | 'all';
  */
 export function LibraryView({
   games,
-  steamConfigured = false,
-  psnConfigured = false,
 }: {
   readonly games: readonly Game[];
-  /**
-   * Whether `STEAM_API_KEY`/`STEAM_ID` are set, computed server-side by the
-   * Library page (`isSteamConfiguredAction`) — a Client Component cannot
-   * read those env vars itself. Defaults to `false` (the safe, disabled-
-   * with-explanation state) so existing callers and tests that don't pass it
-   * keep working unchanged.
-   */
-  readonly steamConfigured?: boolean;
-  /**
-   * Whether `PSN_NPSSO` is set, computed server-side by the Library page
-   * (`isPsnConfiguredAction`) — same reasoning as `steamConfigured` above,
-   * and the same safe `false` default. Kept as its OWN prop rather than
-   * folded into `steamConfigured`: the two Sync buttons are deliberately
-   * independent (see `PsnSyncButton`'s own doc comment), so their configured
-   * states must be independent too.
-   */
-  readonly psnConfigured?: boolean;
-  // Last-synced times and PSN token age used to be threaded all the way
-  // down to `SyncButton`/`PsnSyncButton` for their under-button captions.
-  // That status now lives in Settings → Games → Sync
-  // (`games-sync-section.tsx`), so the Library page no longer needs to fetch
-  // or pass it here at all — see those two buttons' own doc comments.
 }): React.ReactElement {
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -96,17 +76,6 @@ export function LibraryView({
       );
     });
   }, [games, status, platform, search]);
-
-  // `playing` pinned first, within the existing order otherwise — a stable
-  // sort (guaranteed by the spec since ES2019) that only ever compares "is
-  // this the one game currently in progress," so every other status keeps
-  // whatever relative order `visible` already had. The gallery additionally
-  // renders a `playing` card larger (`GameGrid`/`GameCard`'s `size` prop);
-  // the table gets the reordering but NOT a taller row — a dense list has no
-  // room for a "featured" row without becoming noise.
-  const sortedVisible = useMemo(() => {
-    return [...visible].sort((a, b) => (a.status === 'playing' ? 0 : 1) - (b.status === 'playing' ? 0 : 1));
-  }, [visible]);
 
   const counts = useMemo(() => {
     const byStatus = new Map<GameStatus, number>();
@@ -162,9 +131,6 @@ export function LibraryView({
               <Plus className="size-4" />
               Add game
             </Button>
-
-            <SyncButton configured={steamConfigured} />
-            <PsnSyncButton configured={psnConfigured} />
           </>
         }
       />
@@ -193,8 +159,10 @@ export function LibraryView({
                 Three "All …" chips that only ever restated the same total
                 were the bulk of this row's clutter. */}
             {/* A status with zero games in the library is noise, not a real filter —
-                same principle as the platform chips below. */}
-            {GAME_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
+                same principle as the platform chips below. Playing/Played are
+                excluded unconditionally (see STATUS_CHIP_STATUSES), not just
+                when zero-count. */}
+            {STATUS_CHIP_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
               <FilterChip
                 key={value}
                 label={STATUS_LABELS[value]}
@@ -253,9 +221,9 @@ export function LibraryView({
           No games match this filter.
         </p>
       ) : view === 'gallery' ? (
-        <GameGrid games={sortedVisible} onOpen={setEditing} />
+        <GameGrid games={visible} onOpen={setEditing} />
       ) : (
-        <GameTable games={sortedVisible} onOpen={setEditing} />
+        <GameTable games={visible} onOpen={setEditing} />
       )}
 
       <GameDialog

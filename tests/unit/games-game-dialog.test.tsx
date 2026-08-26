@@ -361,3 +361,96 @@ describe('GameDialog Steam provenance', () => {
     expect(screen.getByLabelText('Year')).not.toBeDisabled();
   });
 });
+
+/**
+ * Progressive disclosure of the "advanced" fields (first played year,
+ * ownership, achievements, price, genre/developer/publisher). The default
+ * state is data-aware — expanded for a game that already has any of that
+ * data, collapsed otherwise — rather than always starting collapsed, so
+ * opening an already-filled-out game never visually hides the owner's own
+ * data. Field-level assertions (disabled/value/FormData) elsewhere in this
+ * file deliberately keep using `getByLabelText` regardless of expansion
+ * state: hiding via a CSS class, not unmounting, means every advanced field
+ * stays in the DOM (and in submitted FormData) either way — see
+ * `game-dialog.tsx`'s own comment on why unmounting would silently null out
+ * these fields on save.
+ */
+describe('GameDialog — progressive disclosure', () => {
+  it('starts collapsed for a new game with no advanced data yet', () => {
+    render(<GameDialog game={null} open onOpenChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
+  });
+
+  it('starts collapsed for an existing game with no advanced data', () => {
+    render(
+      <GameDialog
+        game={game({
+          firstPlayedYear: null,
+          ownership: null,
+          achievementsUnlocked: null,
+          achievementsTotal: null,
+          priceCents: null,
+          genre: null,
+          developer: null,
+          publisher: null,
+        })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
+  });
+
+  it('starts expanded for an existing game that already has advanced data', () => {
+    // The default fixture has genre/developer/publisher/price/achievements
+    // already filled in.
+    render(<GameDialog game={game()} open onOpenChange={() => {}} />);
+    expect(screen.getByRole('button', { name: 'Fewer details' })).toBeInTheDocument();
+  });
+
+  it('toggles the disclosure label when clicked', async () => {
+    const user = userEvent.setup();
+    render(<GameDialog game={null} open onOpenChange={() => {}} />);
+
+    await user.click(screen.getByRole('button', { name: 'More details' }));
+    expect(screen.getByRole('button', { name: 'Fewer details' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Fewer details' }));
+    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
+  });
+
+  it('still submits a collapsed advanced field untouched, not cleared (CSS-hide, not unmount)', async () => {
+    updateGameAction.mockClear();
+    const user = userEvent.setup();
+    render(
+      <GameDialog
+        game={game({
+          firstPlayedYear: null,
+          ownership: null,
+          achievementsUnlocked: null,
+          achievementsTotal: null,
+          priceCents: null,
+          genre: null,
+          developer: null,
+          publisher: null,
+        })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+
+    // Collapsed by construction (no advanced data) — save without ever
+    // opening "More details."
+    expect(screen.getByRole('button', { name: 'More details' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      expect(updateGameAction).toHaveBeenCalledTimes(1);
+    });
+    const submitted = updateGameAction.mock.calls[0]![1];
+    // The genre field still reached the server as an empty string (present,
+    // matching its current empty value) — not simply absent from the
+    // FormData, which is what an unmount-based implementation would produce.
+    expect(submitted.has('genre')).toBe(true);
+  });
+});

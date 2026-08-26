@@ -87,6 +87,33 @@ describe('UpcomingView — month ordering', () => {
   });
 });
 
+describe('UpcomingView — release date on the card', () => {
+  it('renders a month-precision release date for a dated card', () => {
+    render(<UpcomingView {...baseProps({ months: [month({ games: [upcomingGame({ releaseDate: '2026-11-01' })] })] })} />);
+
+    // Appears twice — once as the section header, once on the card itself
+    // (new: the card used to omit it entirely, relying solely on which
+    // section it happened to render under).
+    expect(screen.getAllByText('November 2026')).toHaveLength(2);
+  });
+
+  it('renders nothing extra for a Later/TBD card with no known release date', () => {
+    render(
+      <UpcomingView
+        {...baseProps({
+          months: [
+            month({ key: 'later', label: 'Later / TBD', games: [upcomingGame({ title: 'TBD Game', releaseDate: null })] }),
+          ],
+        })}
+      />,
+    );
+
+    // The section header already says "Later / TBD" — the card itself
+    // should not repeat any date text.
+    expect(screen.getAllByText('Later / TBD')).toHaveLength(1);
+  });
+});
+
 describe('UpcomingView — already-wishlisted state', () => {
   it('renders "Added", not the add control, for a game whose igdbId is already wishlisted', () => {
     render(

@@ -5,7 +5,9 @@ import { StatusBadge } from '@/components/games/status-badge';
 import { GAME_STATUSES, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GameStatus } from '@/server/games/taxonomy';
 
-const VISIBLE_STATUSES = GAME_STATUSES.filter((status): status is Exclude<GameStatus, 'played'> => status !== 'played');
+const VISIBLE_STATUSES = GAME_STATUSES.filter(
+  (status): status is Exclude<GameStatus, 'played' | 'playing'> => status !== 'played' && status !== 'playing',
+);
 
 describe('StatusBadge', () => {
   /**
@@ -21,6 +23,21 @@ describe('StatusBadge', () => {
 
   it('renders nothing for a played game, onImage variant', () => {
     const { container } = render(<StatusBadge status="played" variant="onImage" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  /**
+   * `playing` lost its distinct badge (and hero-card sizing, and sort-pin —
+   * see `library-view.tsx`) — it now renders identically to `played`: no
+   * badge in either variant.
+   */
+  it('renders nothing for a playing game, default variant', () => {
+    const { container } = render(<StatusBadge status="playing" />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders nothing for a playing game, onImage variant', () => {
+    const { container } = render(<StatusBadge status="playing" variant="onImage" />);
     expect(container).toBeEmptyDOMElement();
   });
 

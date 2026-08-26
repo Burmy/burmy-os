@@ -1,8 +1,29 @@
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { GamesSyncSection } from '@/features/games/settings/games-sync-section';
 import type { PsnTokenAge } from '@/server/games/psn-token-age';
+
+// `GamesSyncSection` now renders the real `SyncButton`/`PsnSyncButton` (they
+// moved here from the Library screen's top bar) — both call `useRouter()`
+// and import their own server actions, so this file needs the same mocks
+// `games-sync-button.test.tsx`/`games-psn-sync-button.test.tsx` already use,
+// even though none of the tests below click a button.
+vi.mock('@/features/games/sync/sync-actions', () => ({
+  startSteamSyncAction: vi.fn(),
+  advanceSteamSyncAction: vi.fn(),
+  advanceSyncEnrichmentAction: vi.fn(),
+}));
+
+vi.mock('@/features/games/sync/psn-actions', () => ({
+  startPsnSyncAction: vi.fn(),
+  advancePsnSyncAction: vi.fn(),
+}));
+
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+
+vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+const { GamesSyncSection } = await import('@/features/games/settings/games-sync-section');
 
 function props(overrides: Partial<Parameters<typeof GamesSyncSection>[0]> = {}): Parameters<typeof GamesSyncSection>[0] {
   return {
@@ -19,14 +40,38 @@ describe('GamesSyncSection — not configured', () => {
   it('names both required Steam vars and the PSN var, with a real clickable Sony link', () => {
     render(<GamesSyncSection {...props()} />);
 
-    expect(screen.getByText('STEAM_API_KEY')).toBeInTheDocument();
-    expect(screen.getByText('STEAM_ID')).toBeInTheDocument();
-    expect(screen.getByText('PSN_NPSSO')).toBeInTheDocument();
+    // Each var name now appears twice — once in this component's own
+    // paragraph, once in the real SyncButton/PsnSyncButton's own
+    // not-configured hint (both render for real here since the sync trigger
+    // buttons moved into this section) — so these assert "at least one",
+    // not exactly one.
+    expect(screen.getAllByText('STEAM_API_KEY').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('STEAM_ID').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('PSN_NPSSO').length).toBeGreaterThan(0);
 
-    const link = screen.getByRole('link', { name: /ca\.account\.sony\.com/i });
-    expect(link).toHaveAttribute('href', 'https://ca.account.sony.com/api/v1/ssocookie');
-    expect(link).toHaveAttribute('target', '_blank');
-    expect(link).toHaveAttribute('rel', 'noreferrer');
+    const links = screen.getAllByRole('link', { name: /ca\.account\.sony\.com/i });
+    expect(links.length).toBeGreaterThan(0);
+    for (const link of links) {
+      expect(link).toHaveAttribute('href', 'https://ca.account.sony.com/api/v1/ssocookie');
+      expect(link).toHaveAttribute('target', '_blank');
+      expect(link).toHaveAttribute('rel', 'noreferrer');
+    }
+  });
+
+  it('renders both sync buttons disabled when neither source is configured', () => {
+    render(<GamesSyncSection {...props()} />);
+
+    expect(screen.getByRole('button', { name: /sync with steam/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /sync with playstation/i })).toBeDisabled();
+  });
+});
+
+describe('GamesSyncSection — sync buttons', () => {
+  it('enables each sync button independently once its own source is configured', () => {
+    render(<GamesSyncSection {...props({ steamConfigured: true, psnConfigured: false })} />);
+
+    expect(screen.getByRole('button', { name: /sync with steam/i })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: /sync with playstation/i })).toBeDisabled();
   });
 });
 

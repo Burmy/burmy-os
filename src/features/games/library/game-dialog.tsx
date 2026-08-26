@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { Loader2, Trash2 } from 'lucide-react';
+import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState, useTransition } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -19,6 +19,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
+import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { fromHoursInput, hours, toHoursInput } from '@/server/games/hours';
 import {
@@ -106,6 +107,27 @@ export function GameDialog({
     (game?.playYears ?? []).map((row) => ({ year: String(row.year), hours: toHoursInput(hours(row.hoursTenths)) })),
   );
   const [showSplit, setShowSplit] = useState((game?.playYears ?? []).length > 0);
+  // Progressive disclosure: catalog metadata (genre/developer/publisher),
+  // Steam-provenance numbers already summarized elsewhere, and one-time/
+  // rare-edit facts (first played year, ownership, price) start hidden
+  // behind "More details" — UNLESS the game being edited already has any of
+  // them filled in, in which case starting collapsed would hide the owner's
+  // own previously-entered data every time they reopen an already-filled-out
+  // game. Computed once from `game` at mount, which is safe because
+  // `GameDialog` is fully remounted per game (`library-view.tsx`'s
+  // `key={editing?.id ?? ...}`), not re-rendered with a new `game` prop in
+  // place.
+  const [showAdvanced, setShowAdvanced] = useState(
+    game !== null &&
+      (game.firstPlayedYear !== null ||
+        game.ownership !== null ||
+        game.achievementsUnlocked !== null ||
+        game.achievementsTotal !== null ||
+        game.priceCents !== null ||
+        game.genre !== null ||
+        game.developer !== null ||
+        game.publisher !== null),
+  );
   // A linked game has its total hours and achievement counts written by
   // Steam sync (see `commitSyncRun` in src/server/db/games/sync.ts), so this
   // form must not let the owner type over them — the Hours/Achievements
@@ -368,13 +390,73 @@ export function GameDialog({
                     totalTenths={fromHoursInput(hoursFieldValue) ?? 0}
                   />
                 ) : (
-                  <Button type="button" variant="link" size="sm" className="px-0" onClick={() => setShowSplit(true)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground -ml-2 gap-1.5 px-2"
+                    onClick={() => setShowSplit(true)}
+                  >
+                    <Plus className="size-4" aria-hidden />
                     Split across years
                   </Button>
                 )}
               </div>
-              <Field id="firstPlayedYear" label="First played (year)" defaultValue={game?.firstPlayedYear ?? ''} placeholder="2026" />
               <Field id="rating" label="Rating (1-5)" defaultValue={game?.rating ?? ''} placeholder="4" />
+              {/*
+               * Radix's Checkbox renders a hidden native input mirroring its
+               * state (`name`/`value` bubble through to real FormData), so an
+               * UNCHECKED box omits the "platinum" key entirely — same as a
+               * plain HTML checkbox. `parse()` in game-actions.ts relies on
+               * exactly that to tell "not earned" apart from "not touched."
+               * Uncontrolled (`defaultChecked`, not `checked`/`onCheckedChange`)
+               * like the other plain `Field`s above, unlike platform/status
+               * (which need controlled state only because Radix's Select does
+               * not post a native form value at all).
+               */}
+              <div className="flex items-center gap-2">
+                <Checkbox id="platinum" name="platinum" value="true" defaultChecked={game?.platinum ?? false} />
+                <Label htmlFor="platinum" className="cursor-pointer font-normal">
+                  Platinum trophy earned
+                </Label>
+              </div>
+            </div>
+
+            {/* `variant="ghost"` + a rotating chevron, not the plain
+                underlined-link style `Split across years` above uses —
+                THAT toggle only ever goes one way (reveal, never hide
+                again), so a plain link reads fine for it. This one is
+                genuinely bidirectional (show/hide), and real usage found a
+                plain-text link didn't read as an interactive control at
+                all next to a form full of plain field labels — the ghost
+                background + icon make it unmistakably a button. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground -ml-2 gap-1.5 px-2"
+              onClick={() => setShowAdvanced((current) => !current)}
+            >
+              {showAdvanced ? 'Fewer details' : 'More details'}
+              <ChevronDown className={cn('size-4 transition-transform', showAdvanced && 'rotate-180')} aria-hidden />
+            </Button>
+
+            {/*
+             * CSS-hide, never conditionally unmount. Every field below is a
+             * native named input that reaches the server ONLY because it is
+             * present in the DOM at submit time (see this file's own doc
+             * comment on `submit()` — only a handful of fields go through an
+             * explicit `formData.set(...)`, everything else relies on native
+             * form collection). `game-actions.ts`'s `parse()` treats an
+             * ABSENT key on an update as "explicitly cleared." Unmounting
+             * this block behind `showAdvanced` would silently null out every
+             * one of these fields on save, any time the section is collapsed
+             * — `hidden` keeps them mounted (and still submitted) while
+             * visually hiding them, which is the whole reason this is a
+             * class toggle and not a `{showAdvanced && <div>...}` guard.
+             */}
+            <div className={cn('grid gap-4 sm:grid-cols-2', !showAdvanced && 'hidden')}>
+              <Field id="firstPlayedYear" label="First played (year)" defaultValue={game?.firstPlayedYear ?? ''} placeholder="2026" />
               <FieldSelect
                 id="ownership"
                 label="Ownership"
@@ -401,23 +483,6 @@ export function GameDialog({
                 disabled={steamOwned}
                 hint={steamOwned ? 'From Steam' : null}
               />
-              {/*
-               * Radix's Checkbox renders a hidden native input mirroring its
-               * state (`name`/`value` bubble through to real FormData), so an
-               * UNCHECKED box omits the "platinum" key entirely — same as a
-               * plain HTML checkbox. `parse()` in game-actions.ts relies on
-               * exactly that to tell "not earned" apart from "not touched."
-               * Uncontrolled (`defaultChecked`, not `checked`/`onCheckedChange`)
-               * like the other plain `Field`s above, unlike platform/status
-               * (which need controlled state only because Radix's Select does
-               * not post a native form value at all).
-               */}
-              <div className="flex items-center gap-2">
-                <Checkbox id="platinum" name="platinum" value="true" defaultChecked={game?.platinum ?? false} />
-                <Label htmlFor="platinum" className="cursor-pointer font-normal">
-                  Platinum trophy earned
-                </Label>
-              </div>
               <Field id="priceDollars" label="Price paid" defaultValue={game?.priceCents == null ? '' : (game.priceCents / 100).toFixed(2)} placeholder="59.99" />
               <Field id="genre" label="Genre" value={genre} onChange={setGenre} placeholder="Action RPG" />
               <Field id="developer" label="Developer" value={developer} onChange={setDeveloper} />

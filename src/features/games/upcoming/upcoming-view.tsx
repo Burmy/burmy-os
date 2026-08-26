@@ -9,8 +9,25 @@ import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import { MONTH_NAMES } from '@/server/games/upcoming';
 import type { UpcomingMonth, UpcomingMonthGame } from '@/server/games/upcoming';
 import { addToWishlistAction, promoteReleasedWantedGamesAction } from './wishlist-actions';
+
+/**
+ * `releaseDate` is always `YYYY-MM-01` (month precision only — IGDB's
+ * month-precision rows carry no real day, see the type's own doc comment in
+ * `upcoming.ts`) or `null` for the trailing Later/TBD bucket. Parsed from the
+ * string parts directly, never via `new Date(...)`: a `Date` constructed
+ * from a bare `YYYY-MM-DD` string is UTC-midnight, which can display as the
+ * PREVIOUS day in a negative-UTC-offset timezone — the exact class of hazard
+ * `upcoming.ts`'s own header comment already flags for raw IGDB dates.
+ */
+function formatReleaseMonth(releaseDate: string | null): string | null {
+  if (releaseDate === null) return null;
+  const [year, month] = releaseDate.split('-');
+  const monthIndex = Number(month) - 1;
+  return `${MONTH_NAMES[monthIndex]} ${year}`;
+}
 
 /**
  * The "Upcoming games" tab: IGDB's PS5/PC releases over the next 12 months
@@ -140,7 +157,12 @@ function MonthSection({
  * marker sits at the BOTTOM corner, not top, for the same reason
  * `game-card.tsx` keeps its own badges off the top of the cover: box art
  * commonly carries a logo across the top third, and the bottom is far more
- * often plain background art.
+ * often plain background art. Stays CIRCULAR (unlike `PlatinumBadge`, which
+ * moved to a rounded-square medallion) — the two never compete on the same
+ * card (a wishlist candidate can't be platinum'd), so there was no "blurs
+ * together" complaint to fix here; only size/contrast were raised, so this
+ * got the same size-6→size-8, ring-1→ring-2, and a fully opaque background
+ * bump `PlatinumBadge` got, without changing its shape.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 function UpcomingGameCard({
@@ -150,6 +172,8 @@ function UpcomingGameCard({
   readonly game: UpcomingMonthGame;
   readonly wishlisted: boolean;
 }): React.ReactElement {
+  const releaseMonth = formatReleaseMonth(game.releaseDate);
+
   return (
     <div
       className={cn(
@@ -178,9 +202,9 @@ function UpcomingGameCard({
           <span
             aria-hidden
             title="On your wishlist"
-            className="absolute right-2 bottom-2 inline-flex size-6 items-center justify-center rounded-full bg-violet-500/90 text-white shadow-sm ring-1 ring-violet-300/60"
+            className="absolute right-2 bottom-2 inline-flex size-8 items-center justify-center rounded-full bg-violet-500 text-white shadow-sm ring-2 ring-violet-300/60"
           >
-            <Heart className="size-3.5 fill-current" strokeWidth={2} />
+            <Heart className="size-4 fill-current" strokeWidth={2} />
           </span>
         ) : null}
       </div>
@@ -190,6 +214,11 @@ function UpcomingGameCard({
         <span className="text-muted-foreground text-xs">
           {game.platforms.map((platform) => PLATFORM_LABELS[platform]).join(' · ')}
         </span>
+        {/* Month-precision only (see `formatReleaseMonth`'s own doc comment)
+            — absent for the trailing Later/TBD bucket, where the section
+            header already conveys "no known date" and repeating that per
+            card would be redundant. */}
+        {releaseMonth === null ? null : <span className="text-muted-foreground text-xs">{releaseMonth}</span>}
         <div className="mt-auto pt-2">
           <AddToWishlistButton game={game} wishlisted={wishlisted} />
         </div>

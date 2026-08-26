@@ -24,13 +24,20 @@ import { YearlyBreakdownTable } from './yearly-breakdown-table';
 
 /**
  * Regrouped from an earlier 14-card, 7-chart, one-column layout that read as
- * an unsegmented wall of numbers. Every group here is a `Section` — no bare
- * `<h2>` anywhere on this page — and every card carries a headline number a
+ * an unsegmented wall of numbers. Every card carries a headline number a
  * reader can name at a glance; a number that only qualifies another (average
  * rating, average Metacritic, average playtime, average price, backlog
  * value) rides in that card's `hint` instead of standing alone as a card of
  * its own. Nothing here is deleted: every figure the old layout showed is
  * still present, either as a card or as a hint.
+ *
+ * The top stat-card row (games/hours/platinums/backlog/spend/cost-per-hour)
+ * is deliberately BARE — no `Section`, no heading — matching Finance's own
+ * top-row convention exactly (`finance-dashboard.tsx`'s Income/Expenses/...
+ * row and its `InsightsSection` mini-cards are both bare too). Everything
+ * below that row (Year by year, Trends, Breakdown, Top 3, Highlights) keeps
+ * its `Section` wrapper, again mirroring Finance: its own charts are boxed,
+ * only its stat-card rows are not.
  */
 export function GamesDashboard({
   rows,
@@ -67,41 +74,43 @@ export function GamesDashboard({
     financial.averagePriceCents === null ? undefined : `${formatPriceCents(financial.averagePriceCents)} avg per game`;
 
   return (
-    <div className="space-y-8">
-      <Section title="Library">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard label="Games" value={String(summary.totalGames)} {...(qualityHint === undefined ? {} : { hint: qualityHint })} />
-          <StatCard
-            label="Hours played"
-            value={formatHours(hours(summary.totalHoursTenths))}
-            {...(avgPlaytimeHint === undefined ? {} : { hint: avgPlaytimeHint })}
-          />
-          <StatCard label="Platinums" value={String(summary.platinumCount)} hint={`of ${summary.totalGames} games`} />
-          <StatCard label="Backlog" value={String(summary.backlogCount)} hint={`${summary.playingCount} in progress`} />
-        </div>
-      </Section>
-
-      <Section title="Money" description="What the library cost, and what's still sitting unplayed.">
-        <div className="grid grid-cols-2 gap-3">
-          <StatCard
-            label="Total spend"
-            value={formatPriceCents(financial.totalSpendCents)}
-            {...(avgPriceHint === undefined ? {} : { hint: avgPriceHint })}
-          />
-          <StatCard
-            label="Cost per hour"
-            value={financial.costPerHourCents === null ? '—' : `${formatPriceCents(financial.costPerHourCents)}/hr`}
-            hint={`${formatPriceCents(financial.backlogValueCents)} sitting in backlog`}
-          />
-        </div>
-      </Section>
+    <div className="space-y-4">
+      {/* Bare stat-card row, no Section/heading wrapper — matches Finance's
+          own top-row convention exactly (`finance-dashboard.tsx`'s 6-card
+          Income/Expenses/Net/... row has no enclosing box or heading
+          either, and Finance's `InsightsSection` mini-cards are the same:
+          bare `StatCard`s ARE the section, wrapping them in a second bordered
+          box under a heading just double-boxes the same information). Library
+          and Money used to be two separate boxed/headed groups; merged into
+          one 6-card row for the same reason Finance's row is one row, not
+          two. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <StatCard label="Games" value={String(summary.totalGames)} {...(qualityHint === undefined ? {} : { hint: qualityHint })} />
+        <StatCard
+          label="Hours played"
+          value={formatHours(hours(summary.totalHoursTenths))}
+          {...(avgPlaytimeHint === undefined ? {} : { hint: avgPlaytimeHint })}
+        />
+        <StatCard label="Platinums" value={String(summary.platinumCount)} hint={`of ${summary.totalGames} games`} />
+        <StatCard label="Backlog" value={String(summary.backlogCount)} hint={`${summary.playingCount} in progress`} />
+        <StatCard
+          label="Total spend"
+          value={formatPriceCents(financial.totalSpendCents)}
+          {...(avgPriceHint === undefined ? {} : { hint: avgPriceHint })}
+        />
+        <StatCard
+          label="Cost per hour"
+          value={financial.costPerHourCents === null ? '—' : `${formatPriceCents(financial.costPerHourCents)}/hr`}
+          hint={`${formatPriceCents(financial.backlogValueCents)} sitting in backlog`}
+        />
+      </div>
 
       <Section title="Year by year" description="Every number here is computed from your library, not stored.">
         <YearlyBreakdownTable rows={yearly.rows} unattributedTenths={yearly.unattributedTenths} currentYear={currentYear} />
       </Section>
 
       <Section title="Trends">
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-3">
           <ChartBlock label="Games per year">
             <GamesPerYearChart rows={yearly.rows} />
           </ChartBlock>
@@ -115,7 +124,7 @@ export function GamesDashboard({
       </Section>
 
       <Section title="Breakdown">
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           <ChartBlock label="Platforms">
             <DistributionChart slices={platforms} emptyMessage="No platforms recorded yet." />
           </ChartBlock>
