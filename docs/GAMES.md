@@ -342,14 +342,18 @@ from Finance (Games never imports Finance code, full stop); it exists because `p
 same signed-cents convention independently, as already documented under "Price is independent of
 Finance" above.
 
-The dashboard (`GamesDashboard`, `/games/stats`) groups its stat cards into three rows — **Library**
-(games, hours, backlog, completion rate), **Ratings & achievements** (average rating, average
-Metacritic, platinum count, average hours per game), and **Money** (total spend, average price,
-cost per hour, backlog value) — followed by the Yearly Breakdown table, a **Trends** row of three line
+The dashboard (`GamesDashboard`, `/games/stats`) is seven `Section`s holding eight stat cards in
+total — **Library** (Games, Hours played, Platinums, Backlog) and **Money** (Total spend, Cost per
+hour) — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
 charts (games / hours / trophies per year — a continuous year axis reads as a trend on a line the way
 disconnected bars don't; matches the owner's original spreadsheet, which kept exactly these three as
-line charts), a **Breakdown** row of four charts (platform / ownership / genre distribution, rating
-distribution), and the three-item Highlights row — nothing on that page reads a stored total anywhere.
+line charts), a **Breakdown** section of four charts (platform / ownership / genre distribution, rating
+distribution), a **Top 3** section of four leaderboard cards (most played, highest rated, most
+trophies, best value), and a two-card **Highlights** section (most-played developer, best year). There
+is no separate "Ratings & achievements" row: average rating and average Metacritic ride as a hint on
+the Games card, and average hours per game as a hint on Hours played — a number that only qualifies
+another lives in that card's `hint`, never as a card of its own — and there is no completion rate card
+at all, for the reason given just above. Nothing on that page reads a stored total anywhere.
 
 ---
 

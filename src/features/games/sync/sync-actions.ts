@@ -316,13 +316,14 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
  * one costs up to TWO IGDB requests (`searchGames`'s search, then its own
  * time-to-beat merge — see that function's doc comment in `igdb.ts`), so a
  * chunk of `ENRICHMENT_CHUNK_SIZE` games is at most `2 * ENRICHMENT_CHUNK_SIZE`
- * outbound requests per call. `igdb.ts`'s own self-imposed throttle
+ * outbound requests per call. This loop is the one caller that passes
+ * `searchGames(title, { paced: true })` — `igdb.ts`'s self-imposed throttle
  * (`MIN_INTERVAL_MS`, mirroring `scripts/backfill-game-metadata.mjs`'s
- * already-proven watermark) is what actually keeps the WHOLE request stream
- * under IGDB's documented 4 req/s limit, regardless of chunk size — this
- * constant exists for UI responsiveness (visible progress, no single call
- * stalling for tens of seconds), matching `CHUNK_SIZE` above's own reasoning
- * for the main sync walk.
+ * already-proven watermark) is scoped to that opt-in and is what actually
+ * keeps THIS request stream under IGDB's documented 4 req/s limit, regardless
+ * of chunk size — this constant exists for UI responsiveness (visible
+ * progress, no single call stalling for tens of seconds), matching
+ * `CHUNK_SIZE` above's own reasoning for the main sync walk.
  *
  * SEPARATE from `CHUNK_SIZE`: enrichment runs as its OWN chunked pass, after
  * a run reaches `ready`, over the fixed set of `new_game` changes it staged —
@@ -387,7 +388,7 @@ export async function advanceSyncEnrichmentAction(runId: string): Promise<Enrich
   const chunk = await listUnenrichedNewGameChanges(owner.userId, runId, ENRICHMENT_CHUNK_SIZE);
 
   for (const change of chunk) {
-    const suggestions = await searchGames(change.title);
+    const suggestions = await searchGames(change.title, { paced: true });
     const fill = resolveNewGameMetadataFill(change.title, suggestions);
     await markNewGameChangeEnriched(owner.userId, change.id, fill);
   }

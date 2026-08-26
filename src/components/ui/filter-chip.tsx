@@ -30,7 +30,7 @@ export function FilterChip({
       )}
     >
       {label}
-      <span className="ml-1.5 opacity-60">{count}</span>
+      <span className="tabular ml-1.5 opacity-60">{count}</span>
     </button>
   );
 }

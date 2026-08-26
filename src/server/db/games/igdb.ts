@@ -86,22 +86,41 @@ export function __resetIgdbTokenCacheForTests(): void {
 /**
  * Self-imposed throttle for IGDB's documented 4 requests/second limit — the
  * same watermark `scripts/backfill-game-metadata.mjs`'s `MIN_INTERVAL_MS`
- * already uses (260ms, a hair over the exact 250ms 4/s implies), ported here
- * because it can no longer be assumed that natural network latency alone
- * keeps every caller under the limit.
+ * already uses (260ms, a hair over the exact 250ms 4/s implies).
  *
- * Until the sync enrichment phase (`advanceSyncEnrichmentAction`,
- * `src/features/games/sync/sync-actions.ts`) existed, this module's only
- * callers were human-paced: the add/edit form's autocomplete (one keystroke
- * at a time) and "Upcoming games" (once per page load). Enrichment calls
- * `searchGames` several times in a tight server-side loop with no human
- * pacing at all, so the request stream now genuinely needs its own
- * self-imposed limit rather than relying on incidental round-trip latency.
+ * SCOPED TO THE ENRICHMENT PATH ONLY. `advanceSyncEnrichmentAction`
+ * (`src/features/games/sync/sync-actions.ts`) calls `searchGames` several
+ * times in a tight server-side loop with no human pacing at all — up to
+ * `2 * ENRICHMENT_CHUNK_SIZE` requests per call, across many round trips —
+ * so that request stream genuinely needs its own self-imposed limit. It
+ * opts in with `searchGames(title, { paced: true })`, which is threaded down
+ * into every `fetchToken`/`igdbPost` call this module makes on its behalf.
+ *
+ * Every OTHER caller — the add/edit form's autocomplete (one keystroke at a
+ * time, already 300ms-debounced client-side) and "Upcoming games" (once per
+ * page load) — calls unpaced and is never delayed by this watermark. Both
+ * are human-paced and have never exceeded the rate limit on their own; this
+ * throttle was added for the enrichment loop specifically and should not tax
+ * a caller that never needed it. An earlier version threw a single throttle
+ * around every request regardless of caller, which meant a keystroke in the
+ * add-game dialog queued behind whatever an in-flight enrichment run had
+ * already reserved on the shared watermark — potentially seconds of stall on
+ * top of the dialog's own debounce.
+ *
+ * Residual tradeoff, accepted rather than engineered around: an unpaced
+ * interactive search landing WHILE a paced enrichment run is in flight can
+ * briefly push the combined request rate above 4 req/s, since the two paths
+ * no longer coordinate with each other at all. That's fine — `igdbPost`
+ * already soft-fails a non-2xx response (a 429 included) by returning
+ * `null`, so the worst case is one un-enriched game or one empty
+ * autocomplete result, never a thrown error or a failed sync. Cross-caller
+ * coordination to prevent that brief overlap would be more machinery than
+ * the failure mode warrants for a single-owner app — do not add it.
  *
  * A single shared "earliest next request time" watermark, not a rolling
  * window — same reasoning the backfill script's own doc comment gives: it
- * bounds the WHOLE stream, not just an average, and matters here because a
- * single `searchGames` call already issues two sequential requests
+ * bounds the WHOLE paced stream, not just an average, and matters here
+ * because a single `searchGames` call already issues two sequential requests
  * (search, then time-to-beat) with nothing else to space them out.
  */
 const MIN_INTERVAL_MS = 260;
@@ -145,14 +164,14 @@ export function igdbConfigured(): boolean {
   return credentials() !== null;
 }
 
-async function fetchToken({ clientId, clientSecret }: Credentials): Promise<CachedToken | null> {
+async function fetchToken({ clientId, clientSecret }: Credentials, paced: boolean): Promise<CachedToken | null> {
   try {
     const params = new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
       grant_type: 'client_credentials',
     });
-    await throttle();
+    if (paced) await throttle();
     const response = await fetch(`${TOKEN_ENDPOINT}?${params.toString()}`, {
       method: 'POST',
       signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -174,9 +193,9 @@ async function fetchToken({ clientId, clientSecret }: Credentials): Promise<Cach
   }
 }
 
-async function getToken(creds: Credentials): Promise<string | null> {
+async function getToken(creds: Credentials, paced: boolean): Promise<string | null> {
   if (cachedToken !== null && cachedToken.expiresAt > Date.now()) return cachedToken.token;
-  cachedToken = await fetchToken(creds);
+  cachedToken = await fetchToken(creds, paced);
   return cachedToken?.token ?? null;
 }
 
@@ -195,19 +214,23 @@ function requestInit(token: string, clientId: string, body: string): RequestInit
  * Returns `null` (never throws) on missing credentials, a network error, a
  * non-2xx response, or no token being obtainable at all; the caller decides
  * how to treat `null` in its own soft-failure path.
+ *
+ * `paced` gates every `throttle()` call this request (and any token fetch it
+ * triggers) makes — see the throttle's own doc comment above for who should
+ * pass `true`.
  */
-async function igdbPost(endpoint: string, body: string, creds: Credentials): Promise<unknown> {
-  const token = await getToken(creds);
+async function igdbPost(endpoint: string, body: string, creds: Credentials, paced: boolean): Promise<unknown> {
+  const token = await getToken(creds, paced);
   if (token === null) return null;
 
-  await throttle();
+  if (paced) await throttle();
   let response = await fetch(endpoint, requestInit(token, creds.clientId, body));
 
   if (response.status === 401) {
     cachedToken = null;
-    const freshToken = await getToken(creds);
+    const freshToken = await getToken(creds, paced);
     if (freshToken === null) return null;
-    await throttle();
+    if (paced) await throttle();
     response = await fetch(endpoint, requestInit(freshToken, creds.clientId, body));
   }
 
@@ -215,14 +238,22 @@ async function igdbPost(endpoint: string, body: string, creds: Credentials): Pro
   return response.json();
 }
 
-export async function searchGames(query: string): Promise<GameSuggestion[]> {
+/**
+ * `paced: true` is for `advanceSyncEnrichmentAction`'s batch loop ONLY — see
+ * the throttle's own doc comment above. Every other caller (the add/edit
+ * form's autocomplete, "Upcoming games") omits it and runs unthrottled,
+ * since both are already human-paced and have never exceeded IGDB's rate
+ * limit on their own.
+ */
+export async function searchGames(query: string, options?: { readonly paced?: boolean }): Promise<GameSuggestion[]> {
+  const paced = options?.paced ?? false;
   const creds = credentials();
   if (creds === null) return [];
   if (query.trim() === '') return [];
 
   let suggestions: GameSuggestion[];
   try {
-    const payload = await igdbPost(GAMES_ENDPOINT, buildSearchQuery(query, SEARCH_LIMIT), creds);
+    const payload = await igdbPost(GAMES_ENDPOINT, buildSearchQuery(query, SEARCH_LIMIT), creds, paced);
     if (payload === null) return [];
     suggestions = toSuggestions(payload);
   } catch {
@@ -238,7 +269,7 @@ export async function searchGames(query: string): Promise<GameSuggestion[]> {
   if (gameIds.length === 0) return suggestions;
 
   try {
-    const timeToBeatPayload = await igdbPost(TIME_TO_BEAT_ENDPOINT, buildTimeToBeatQuery(gameIds), creds);
+    const timeToBeatPayload = await igdbPost(TIME_TO_BEAT_ENDPOINT, buildTimeToBeatQuery(gameIds), creds, paced);
     return timeToBeatPayload === null ? suggestions : withPlaytime(suggestions, timeToBeatPayload);
   } catch {
     // Time-to-beat is a bonus enrichment on an already-successful search;
@@ -270,7 +301,7 @@ export async function fetchUpcomingGames(): Promise<UpcomingGame[]> {
     horizon.setUTCMonth(horizon.getUTCMonth() + UPCOMING_WINDOW_MONTHS);
     const horizonSeconds = Math.floor(horizon.getTime() / 1000);
 
-    const payload = await igdbPost(GAMES_ENDPOINT, buildUpcomingQuery(nowSeconds, horizonSeconds, HYPE_FLOOR), creds);
+    const payload = await igdbPost(GAMES_ENDPOINT, buildUpcomingQuery(nowSeconds, horizonSeconds, HYPE_FLOOR), creds, false);
     return payload === null ? [] : toUpcomingGames(payload);
   } catch {
     // Network error, timeout, or malformed JSON — degrades to an empty tab.
