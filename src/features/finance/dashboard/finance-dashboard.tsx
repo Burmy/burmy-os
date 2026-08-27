@@ -68,16 +68,17 @@ export interface FinanceDashboardProps {
 }
 
 /**
- * Sections inside a dashboard sit 16px apart — the same distance as the gap
- * BETWEEN cards in a `StatCardGrid`, so the whole page runs on one spacing
- * value instead of switching to 32px at every section boundary.
+ * Sections inside a dashboard sit 24px apart — the same distance as the gap
+ * BETWEEN cards in a `StatCardGrid`, and the same one the library's cover grid
+ * uses. The whole page runs on one spacing value instead of switching at every
+ * section boundary.
  *
  * The page-level rhythm ABOVE this (title -> filter row -> content) stays 32px.
  * That belongs to the shared page contract (`PageHeader`/`FilterBar`), not to
  * either dashboard, and separating a page's chrome from its content is a
  * different job from separating two blocks of that content.
  */
-const SECTION_STACK = 'space-y-4';
+const SECTION_STACK = 'space-y-6';
 
 /**
  * Top-level composition only — every number here arrives already computed
@@ -202,7 +203,7 @@ export function FinanceDashboard({
             <StatCard label="Transactions" value={String(summary.transactionCount)} />
           </StatCardGrid>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <Section title="Income vs Expenses" description="Most recent months of activity">
               <IncomeExpenseTrendChart points={trend} />
             </Section>
@@ -211,7 +212,7 @@ export function FinanceDashboard({
             </Section>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <Section title="Spending by category" description="Selected month, largest first">
               <CategoryBreakdownChart categories={categoryBreakdown} />
             </Section>

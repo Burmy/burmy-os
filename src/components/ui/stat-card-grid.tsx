@@ -37,7 +37,10 @@ import { cn } from '@/lib/utils';
  * around. What matters is that a card is the same width on every screen it
  * appears on, which is what stops Finance and Games looking like two apps.
  *
- * `gap-4` is 16px, in both axes, and is the app's one card gap.
+ * `gap-6` is 24px, in both axes, and is the app's ONE card gap — the same one
+ * the library's cover grid uses (`game-grid.tsx`). Cards were 16px apart here
+ * and 24px there, which is the whole reason a stat row and a cover wall read as
+ * two different densities.
  *
  * `auto-rows-fr` makes EVERY ROW THE SAME HEIGHT. Without it a grid row sizes
  * to its own tallest card, so on Finance the first row (cards carrying two
@@ -54,6 +57,6 @@ export function StatCardGrid({
   readonly className?: string;
 }): React.ReactElement {
   return (
-    <div className={cn('grid auto-rows-fr grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4', className)}>{children}</div>
+    <div className={cn('grid auto-rows-fr grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4', className)}>{children}</div>
   );
 }
