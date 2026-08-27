@@ -7,6 +7,9 @@ import {
   isSteamId64,
   steamSyncFieldsToFill,
   toAchievementCounts,
+  buildGlobalRarityUrl,
+  toAchievements,
+  toGlobalRarity,
   toOwnedGames,
   toResolvedVanityUrl,
 } from '@/server/games/steam';
@@ -306,5 +309,95 @@ describe('steamSyncFieldsToFill', () => {
     expect(steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, null, null)).toEqual({
       steamAppid: 1_091_500,
     });
+  });
+});
+
+/**
+ * The detail parser behind persisted Steam achievements. Same payload
+ * `toAchievementCounts` reads — deliberately, so the stored count columns and
+ * the stored rows can never observe different moments and drift apart.
+ */
+describe('toAchievements', () => {
+  function payload(achievements: readonly unknown[]): unknown {
+    return { playerstats: { success: true, achievements } };
+  }
+
+  it('maps name, description and unlock state from a real response shape', () => {
+    const result = toAchievements(
+      payload([
+        { apiname: 'CHARMED', achieved: 1, unlocktime: 1_735_010_079, name: 'Charmed', description: 'Acquire your first Charm' },
+      ]),
+    );
+
+    expect(result).toEqual([
+      {
+        apiname: 'CHARMED',
+        name: 'Charmed',
+        description: 'Acquire your first Charm',
+        unlocked: true,
+        unlockTime: 1_735_010_079,
+      },
+    ]);
+  });
+
+  /**
+   * Steam sends an EMPTY STRING for a locked achievement's description, not a
+   * missing key. Storing `''` would render as a blank line under the name and
+   * read as "described as nothing" rather than "not revealed yet".
+   */
+  it('normalizes empty name/description strings to null', () => {
+    const result = toAchievements(payload([{ apiname: 'ZOTE', achieved: 0, unlocktime: 0, name: 'Rivalry', description: '' }]));
+
+    expect(result?.[0]?.description).toBeNull();
+    expect(result?.[0]?.unlocked).toBe(false);
+    expect(result?.[0]?.unlockTime).toBe(0);
+  });
+
+  it('skips an entry with no usable apiname rather than throwing', () => {
+    const result = toAchievements(payload([{ achieved: 1 }, { apiname: '', achieved: 1 }, { apiname: 'OK', achieved: 1 }]));
+    expect(result?.map((a) => a.apiname)).toEqual(['OK']);
+  });
+
+  /**
+   * `null`, not `[]`, and identical to `toAchievementCounts`: "this game
+   * defines no achievements" and "Steam did not answer" are different facts,
+   * and only the first should ever overwrite what is already stored.
+   */
+  it('returns null for a failed or empty response, never an empty array', () => {
+    expect(toAchievements({ playerstats: { success: false } })).toBeNull();
+    expect(toAchievements(payload([]))).toBeNull();
+    expect(toAchievements(null)).toBeNull();
+  });
+});
+
+describe('toGlobalRarity', () => {
+  it('keys by apiname, which Steam confusingly labels "name"', () => {
+    // Verified against the live endpoint: the `name` field holds the API key
+    // (`CHARMED`), not the display name.
+    const map = toGlobalRarity({
+      achievementpercentages: { achievements: [{ name: 'CHARMED', percent: '76.8' }, { name: 'ZOTE', percent: 4.1 }] },
+    });
+
+    expect(map.get('CHARMED')).toBe('76.8');
+    expect(map.get('ZOTE')).toBe('4.1');
+  });
+
+  /**
+   * An empty map, never a throw: rarity is enrichment, and a game whose global
+   * stats are unavailable must still get its achievements stored with a null
+   * rarity rather than failing the whole sync for that game.
+   */
+  it('returns an empty map for any unusable payload', () => {
+    expect(toGlobalRarity(null).size).toBe(0);
+    expect(toGlobalRarity({}).size).toBe(0);
+    expect(toGlobalRarity({ achievementpercentages: {} }).size).toBe(0);
+  });
+});
+
+describe('buildGlobalRarityUrl', () => {
+  it('targets the v2 global-percentages endpoint with the gameid', () => {
+    expect(buildGlobalRarityUrl(367_520)).toBe(
+      'https://api.steampowered.com/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=367520',
+    );
   });
 });

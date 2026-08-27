@@ -52,9 +52,16 @@
  */
 
 import { requireOwner } from '@/server/auth/owner';
+import { replaceGameTrophies } from '@/server/db/games/trophies';
 import { countPsnGames, listPsnGamesChunk, listPsnGamesForMatching } from '@/server/db/games/games';
 import { sumPlayYearsForGames } from '@/server/db/games/play-years';
-import { currentPsnTokenFingerprint, fetchPlayedTitles, fetchTrophyTitles, psnConfigured } from '@/server/db/games/psn-client';
+import {
+  currentPsnTokenFingerprint,
+  fetchGameTrophies,
+  fetchPlayedTitles,
+  fetchTrophyTitles,
+  psnConfigured,
+} from '@/server/db/games/psn-client';
 import {
   appendSyncChanges,
   createSyncRun,
@@ -65,6 +72,7 @@ import {
   listSyncChanges,
 } from '@/server/db/games/sync';
 import { bestTitleMatchAmong } from '@/server/games/metadata';
+import { npServiceNameForPlatform } from '@/server/games/psn';
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
 import {
   dedupePlayedTitles,
@@ -371,6 +379,33 @@ export async function advancePsnSyncAction(runId: string): Promise<PsnSyncProgre
       };
 
       changes.push(...planLinkedPsnGameChanges(stored, played, trophy));
+
+      // ─────────────────────────────────────────────────────────────────────
+      // TROPHIES ARE WRITTEN HERE, DIRECTLY — NOT STAGED AS A PROPOSED CHANGE.
+      //
+      // Everything above this line goes into `changes` for the owner to review
+      // and approve, because every field it touches (hours, achievement counts,
+      // platinum) is one the owner can type themselves, so a sync can only ever
+      // PROPOSE a correction to it. An individual earned trophy is not that: it
+      // is a fact about the past with no owner-authored counterpart, and asking
+      // for approval would be asking them to ratify reality.
+      //
+      // This is the +1 request per game (~74) that makes a full PSN sync
+      // noticeably slower, accepted deliberately in exchange for a game page
+      // that renders trophies instantly and for cross-game trophy queries
+      // existing at all.
+      //
+      // Failure is soft and per-game: `fetchGameTrophies` returns a
+      // `PsnFailure` string rather than throwing, and `replaceGameTrophies`
+      // ignores an empty set, so one game's trophy list failing to load leaves
+      // its stored rows untouched and never derails the run.
+      // ─────────────────────────────────────────────────────────────────────
+      if (game.psnNpCommunicationId !== null) {
+        const fetched = await fetchGameTrophies(game.psnNpCommunicationId, npServiceNameForPlatform(game.platform));
+        if (typeof fetched !== 'string') {
+          await replaceGameTrophies(owner.userId, game.id, 'psn', fetched);
+        }
+      }
     }
 
     const done = chunk.length === 0;

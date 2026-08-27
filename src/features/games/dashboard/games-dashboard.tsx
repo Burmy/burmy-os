@@ -13,7 +13,9 @@ import {
   buildYearlyBreakdown,
   findCallouts,
 } from '@/server/games/stats';
+import type { CloseToPlatinumRow, CompletionSummary, EarnedTrophyRow } from '@/server/db/games/trophies';
 import { type GamePlatform, PLATFORM_LABELS } from '@/server/games/taxonomy';
+import { CloseToPlatinumList, RarestEarnedList, RecentlyEarnedList } from './trophy-sections';
 import { DistributionChart } from './charts/distribution-chart';
 import { GamesPerYearChart } from './charts/games-per-year-chart';
 import { HoursPerYearChart } from './charts/hours-per-year-chart';
@@ -48,10 +50,22 @@ export function GamesDashboard({
   rows,
   playYears,
   currentYear,
+  completion,
+  closeToPlatinum,
+  recentlyEarned,
+  rarestEarned,
+  now,
 }: {
   readonly rows: readonly GameStatRow[];
   readonly playYears: readonly PlayYearRow[];
   readonly currentYear: number;
+  /** All four aggregated in SQL by `server/db/games/trophies.ts` — nothing is counted here. */
+  readonly completion: CompletionSummary;
+  readonly closeToPlatinum: readonly CloseToPlatinumRow[];
+  readonly recentlyEarned: readonly EarnedTrophyRow[];
+  readonly rarestEarned: readonly EarnedTrophyRow[];
+  /** Read once by the page, like `currentYear`, so "3d ago" stays deterministic and testable. */
+  readonly now: Date;
 }): React.ReactElement {
   const summary = buildLibrarySummary(rows);
   const financial = buildFinancialSummary(rows);
@@ -89,7 +103,15 @@ export function GamesDashboard({
           and Money used to be two separate boxed/headed groups; merged into
           one 6-card row for the same reason Finance's row is one row, not
           two. */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      {/* Seven cards across TWO rows (4 + 3), never one.
+          At six the seventh wrapped onto a line alone, which reads as a
+          mistake. But seven in one row does not fit either: at a typical
+          1500px window that leaves ~116px of content per card, and
+          "$2,460.67" at the stat type size clipped to "$2460…". `StatCard`
+          truncates by design (long values must not widen the grid), so the
+          failure was silent — a headline number quietly becoming unreadable.
+          Two rows of four give every card room for its value. */}
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         <StatCard label="Games" value={String(summary.totalGames)} {...(qualityHint === undefined ? {} : { hint: qualityHint })} />
         <StatCard
           label="Hours played"
@@ -97,6 +119,20 @@ export function GamesDashboard({
           {...(avgPlaytimeHint === undefined ? {} : { hint: avgPlaytimeHint })}
         />
         <StatCard label="Platinums" value={String(summary.platinumCount)} hint={`of ${summary.totalGames} games`} />
+        {/* Trophy-grained, and it says so: every trophy counts equally, across
+            BOTH PlayStation and Steam. The hint is game-grained instead —
+            "how many games are finished" is a different question from "what
+            fraction of all trophies do I hold," and conflating them is how a
+            completion figure starts misleading. */}
+        <StatCard
+          label="Completion"
+          value={completion.percent === null ? '—' : `${completion.percent}%`}
+          hint={
+            completion.trackedGames === 0
+              ? 'No trophies synced yet'
+              : `${completion.completeGames} complete · ${completion.trackedGames} tracked`
+          }
+        />
         <StatCard label="Backlog" value={String(summary.backlogCount)} hint={`${summary.playingCount} in progress`} />
         <StatCard
           label="Total spend"
@@ -109,6 +145,20 @@ export function GamesDashboard({
           hint={`${formatPriceCents(financial.backlogValueCents)} sitting in backlog`}
         />
       </div>
+
+      {/* Above `Year by year` deliberately: the hunt is current, the
+          year-by-year table is history, and history reads better underneath.
+          Rendered only when there is something to show — three empty-state
+          paragraphs side by side is more chrome than absent data deserves. */}
+      {closeToPlatinum.length > 0 || recentlyEarned.length > 0 || rarestEarned.length > 0 ? (
+        <Section title="Trophies">
+          <div className="grid gap-8 lg:grid-cols-3">
+            <CloseToPlatinumList rows={closeToPlatinum} />
+            <RecentlyEarnedList rows={recentlyEarned} now={now} />
+            <RarestEarnedList rows={rarestEarned} />
+          </div>
+        </Section>
+      ) : null}
 
       <Section title="Year by year" description="Every number here is computed from your library, not stored.">
         <YearlyBreakdownTable rows={yearly.rows} unattributedTenths={yearly.unattributedTenths} currentYear={currentYear} />

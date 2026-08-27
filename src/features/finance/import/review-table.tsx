@@ -141,9 +141,10 @@ export function ImportReviewTable({
 
   if (status === 'committed') {
     return (
-      <p className="text-muted-foreground mt-8 text-sm">
-        This import was already committed. Nothing left to review.
-      </p>
+      <div className="mt-8 space-y-6">
+        <p className="text-muted-foreground text-sm">This import was already committed. Nothing left to review.</p>
+        <BackupReminder />
+      </div>
     );
   }
   if (status === 'discarded') {
@@ -403,6 +404,58 @@ export function ImportReviewTable({
         destructive
         onConfirm={discard}
       />
+    </div>
+  );
+}
+
+/**
+ * The backup prompt, shown once an import is committed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY A REMINDER AND NOT AUTOMATION.
+ *
+ * `docs/DEPLOYMENT.md` sets the policy: an independent logical backup taken by
+ * hand at two triggers — after a meaningful import, and before a schema
+ * migration — with no new infrastructure. Supabase's free plan has no managed
+ * backups, and the old automated restic pipeline went away with the VPS.
+ *
+ * A manual policy's only real failure mode is forgetting, and a completed
+ * import IS trigger #1. So the app says so at the exact moment it applies,
+ * rather than relying on the owner to remember a document. It prints the
+ * command instead of running anything: this app never touches the filesystem
+ * or shells out, and a backup that the app took of itself, stored next to
+ * itself, would not be a backup anyway.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function BackupReminder(): React.ReactElement {
+  const command = 'pg_dump "$DATABASE_URL" -Fc -f "burmy-$(date +%F).dump"';
+
+  return (
+    <div className="bg-card rounded-md p-6">
+      <h2 className="font-display text-base font-medium">Back this up</h2>
+      <p className="text-muted-foreground mt-1 text-sm">
+        A real import is one of the two moments worth a backup. Run this against the direct (non-pooled) connection
+        string, and keep the file somewhere other than the database it came from.
+      </p>
+      <div className="mt-3 flex items-center gap-2">
+        <code className="bg-muted min-w-0 flex-1 truncate rounded-md px-3 py-2 font-mono text-xs">{command}</code>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            // `writeText` rejects without a secure context or clipboard
+            // permission. The command is visible either way, so a failure here
+            // costs the owner a manual selection, not the information.
+            navigator.clipboard.writeText(command).then(
+              () => toast.success('Command copied'),
+              () => toast.error('Could not copy — select the command instead.'),
+            );
+          }}
+        >
+          Copy
+        </Button>
+      </div>
     </div>
   );
 }

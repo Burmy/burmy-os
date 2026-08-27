@@ -98,8 +98,8 @@ import {
   toTrophyTitles,
   type PsnPlayedTitle,
   type PsnTrophyTitle,
-  type Trophy,
 } from '@/server/games/psn';
+import type { Trophy } from '@/server/games/trophies';
 
 const TIMEOUT_MS = 5_000;
 const MAX_PAGES = 20;

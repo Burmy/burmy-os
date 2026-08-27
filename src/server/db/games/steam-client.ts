@@ -47,10 +47,14 @@ import {
   buildResolveVanityUrl,
   isSteamId64,
   toAchievementCounts,
+  buildGlobalRarityUrl,
+  toAchievements,
+  toGlobalRarity,
   toOwnedGames,
   toResolvedVanityUrl,
   type AchievementCounts,
   type OwnedSteamGame,
+  type SteamAchievement,
 } from '@/server/games/steam';
 
 const TIMEOUT_MS = 5_000;
@@ -157,4 +161,43 @@ export async function fetchAchievementCounts(appid: number): Promise<Achievement
 
   const payload = await getJson(buildAchievementsUrl(creds.apiKey, steamId, appid));
   return payload === null ? null : toAchievementCounts(payload);
+}
+
+/**
+ * One game's achievements in full — detail AND counts — from a SINGLE
+ * `GetPlayerAchievements` response, plus global rarity from a second call.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS RETURNS BOTH, RATHER THAN THE CALLER MAKING TWO CALLS.
+ *
+ * `games.achievements_unlocked`/`achievements_total` and the per-achievement
+ * rows in `game_trophies` describe the same fact twice. Deriving them from one
+ * response makes disagreement impossible; two separate `fetch`es could observe
+ * different moments and silently drift. That is the whole reason this exists
+ * instead of the caller composing `fetchAchievementCounts` with a detail call.
+ *
+ * The rarity request is separate because Steam genuinely serves it from a
+ * different endpoint (it is global data about the game, not about the owner).
+ * It fails SOFT and independently: a game with no global stats still gets its
+ * achievements stored, with `rarityTenths: null` throughout.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function fetchAchievementDetail(
+  appid: number,
+): Promise<{ readonly achievements: SteamAchievement[]; readonly counts: AchievementCounts; readonly rarity: Map<string, string> } | null> {
+  const creds = credentials();
+  if (creds === null) return null;
+
+  const steamId = await resolveSteamId(creds.steamId, creds.apiKey);
+  if (steamId === null) return null;
+
+  const payload = await getJson(buildAchievementsUrl(creds.apiKey, steamId, appid));
+  if (payload === null) return null;
+
+  const achievements = toAchievements(payload);
+  const counts = toAchievementCounts(payload);
+  if (achievements === null || counts === null) return null;
+
+  const rarityPayload = await getJson(buildGlobalRarityUrl(appid));
+  return { achievements, counts, rarity: toGlobalRarity(rarityPayload) };
 }

@@ -368,7 +368,7 @@ describe('toTrophies', () => {
       iconUrl: 'https://image.api.playstation.com/trophy/1.png',
       earned: true,
       earnedAt: '2026-08-25T09:19:50Z',
-      rarity: '22.5',
+      rarityTenths: 225,
     });
   });
 
@@ -818,7 +818,7 @@ describe('fetchGameTrophies', () => {
     );
 
     const result = await fetchGameTrophies('NPWR12345_00', 'trophy2');
-    expect(result).toEqual([expect.objectContaining({ id: '1', tier: 'gold', earned: true, rarity: '22.5' })]);
+    expect(result).toEqual([expect.objectContaining({ id: '1', tier: 'gold', earned: true, rarityTenths: 225 })]);
 
     // `'all'` groups, and the requested npServiceName, reach both calls.
     expect(psnApi.getTitleTrophies).toHaveBeenCalledWith(

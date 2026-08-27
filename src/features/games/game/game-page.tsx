@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { ExternalLink, Loader2, Trash2 } from 'lucide-react';
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -14,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
 import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import type { Game } from '@/server/db/games/games';
+import type { Trophy } from '@/server/games/trophies';
 import type { GameSuggestion } from '@/server/games/metadata';
 import {
   applyMetadataSuggestionAction,
@@ -23,10 +24,9 @@ import {
   updateGamePlayYearsAction,
 } from '../game-actions';
 import { searchGameMetadataAction } from '../metadata-actions';
-import { fetchGameTrophiesAction } from './trophy-actions';
 import { GameDetailsContent } from './game-view-content';
 import { GameSummaryPanel } from './game-summary-panel';
-import { TrophiesSection, type TrophyFetchState } from './trophies-section';
+import { TrophiesSection } from './trophies-section';
 
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_MIN_LENGTH = 3;
@@ -48,7 +48,18 @@ const SEARCH_MIN_LENGTH = 3;
  * can change; only pure UI state (is this field mid-edit, is a delete
  * confirmation open) lives here.
  */
-export function GamePage({ game }: { readonly game: Game }): React.ReactElement {
+export function GamePage({
+  game,
+  trophies,
+}: {
+  readonly game: Game;
+  /**
+   * Read from `game_trophies` by the page's Server Component and handed down
+   * whole. This used to be fetched from PSN in a mount effect here, costing
+   * ~1.5s on every visit — see `trophies-section.tsx` for why that is gone.
+   */
+  readonly trophies: readonly Trophy[];
+}): React.ReactElement {
   const router = useRouter();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deletePending, startDeleteTransition] = useTransition();
@@ -75,28 +86,6 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
     });
   }
 
-  const trophyFetchStartedRef = useRef(false);
-  const [trophyState, setTrophyState] = useState<TrophyFetchState>({ status: 'idle' });
-  const hasTrophies = game.psnNpCommunicationId !== null;
-  const [, startTrophyTransition] = useTransition();
-
-  // Fires once, automatically, as soon as the page mounts — a PSN-linked
-  // game's trophies are meant to just be part of the page. A separate
-  // transition from the delete button's own, so an in-flight fetch never
-  // makes an unrelated button read "pending."
-  useEffect(() => {
-    if (!hasTrophies || trophyFetchStartedRef.current) return;
-    trophyFetchStartedRef.current = true;
-    setTrophyState({ status: 'loading' });
-    startTrophyTransition(async () => {
-      const result = await fetchGameTrophiesAction(game.id);
-      setTrophyState(
-        result.ok
-          ? { status: 'loaded', trophies: result.trophies }
-          : { status: 'failed', reason: result.reason },
-      );
-    });
-  }, [hasTrophies, game.id, startTrophyTransition]);
 
   return (
     <>
@@ -154,7 +143,11 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
         </div>
       </div>
 
-      {hasTrophies ? (
+      {/* Shown whenever the game is PSN/Steam-linked, even with zero stored
+          rows — `TrophiesSection`'s empty state is what tells the owner to run
+          a sync, and hiding the section entirely would leave nothing to say
+          that from. */}
+      {trophies.length > 0 || game.psnNpCommunicationId !== null || game.steamAppid !== null ? (
         <div className="mt-8">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-muted-foreground text-xs font-medium">Trophies</h2>
@@ -173,7 +166,7 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
               </a>
             </Button>
           </div>
-          <TrophiesSection state={trophyState} />
+          <TrophiesSection trophies={trophies} />
         </div>
       ) : null}
 

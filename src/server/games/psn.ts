@@ -36,6 +36,8 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { isTrophyTier, rarityToTenths, type Trophy, type TrophyTier } from './trophies';
+
 import type { GamePlatform } from './taxonomy';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -302,30 +304,6 @@ export function toTrophyTitles(payload: unknown): PsnTrophyTitle[] {
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-export type TrophyTier = 'bronze' | 'silver' | 'gold' | 'platinum';
-
-const TROPHY_TIERS: readonly TrophyTier[] = ['bronze', 'silver', 'gold', 'platinum'];
-
-function isTrophyTier(value: unknown): value is TrophyTier {
-  return typeof value === 'string' && (TROPHY_TIERS as readonly string[]).includes(value);
-}
-
-export interface Trophy {
-  /** The one field a hypothetical future Steam achievement source would also carry — nothing more is built for it yet. */
-  readonly source: 'psn';
-  readonly id: string;
-  /** `trophyGroupId` — `"default"` for the base game, `"001"`/`"002"`... for DLC. Captured for a future pass; not surfaced in the v1 trophy list. */
-  readonly groupId: string;
-  readonly tier: TrophyTier;
-  readonly hidden: boolean;
-  readonly name: string | null;
-  readonly description: string | null;
-  readonly iconUrl: string | null;
-  readonly earned: boolean;
-  readonly earnedAt: string | null;
-  /** `trophyEarnedRate` — Sony's own percentage-of-players-who-earned-this string, e.g. `"22.5"`. Never fabricated; `null` when PSN didn't report one. */
-  readonly rarity: string | null;
-}
 
 /**
  * `games.platform` (already resolved reliably via the CUSA/PPSA title-ID
@@ -380,7 +358,7 @@ function titleTrophyMap(payload: unknown): Map<number, TitleTrophyFields> {
 interface UserTrophyFields {
   readonly earned: boolean;
   readonly earnedAt: string | null;
-  readonly rarity: string | null;
+  readonly rarityTenths: number | null;
 }
 
 function userTrophyMap(payload: unknown): Map<number, UserTrophyFields> {
@@ -399,7 +377,10 @@ function userTrophyMap(payload: unknown): Map<number, UserTrophyFields> {
     map.set(trophyId, {
       earned,
       earnedAt: earned && typeof record.earnedDateTime === 'string' ? record.earnedDateTime : null,
-      rarity: typeof record.trophyEarnedRate === 'string' ? record.trophyEarnedRate : null,
+      // Converted to tenths right here at the API boundary rather than carried
+      // as Sony's raw `"22.5"` string — see `rarityToTenths`'s own comment on
+      // why rarity is never a float or a NUMERIC anywhere in this codebase.
+      rarityTenths: rarityToTenths(record.trophyEarnedRate),
     });
   }
   return map;
@@ -425,7 +406,7 @@ export function toTrophies(titlePayload: unknown, userPayload: unknown): Trophy[
   return Array.from(titleTrophies.entries()).map(([trophyId, title]) => {
     const user = userTrophies.get(trophyId);
     return {
-      source: 'psn',
+      source: 'psn' as const,
       id: String(trophyId),
       groupId: title.groupId,
       tier: title.tier,
@@ -435,7 +416,7 @@ export function toTrophies(titlePayload: unknown, userPayload: unknown): Trophy[
       iconUrl: title.iconUrl,
       earned: user?.earned ?? false,
       earnedAt: user?.earnedAt ?? null,
-      rarity: user?.rarity ?? null,
+      rarityTenths: user?.rarityTenths ?? null,
     };
   });
 }

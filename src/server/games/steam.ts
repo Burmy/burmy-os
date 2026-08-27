@@ -66,16 +66,23 @@ export function buildOwnedGamesUrl(apiKey: string, steamId: string): string {
 
 /**
  * `ISteamUserStats/GetPlayerAchievements/v1` — every achievement defined for
- * one `appid`, each carrying an `achieved` 0/1 flag. This single call is
- * both the unlocked count AND the total (`achievements.length`) — there is
- * deliberately no second call to `GetSchemaForGame` here, since this payload
- * already carries everything `toAchievementCounts` needs.
+ * one `appid`, each carrying an `achieved` 0/1 flag and an `unlocktime`. This
+ * single call is both the unlocked count AND the total
+ * (`achievements.length`) — there is deliberately no second call to
+ * `GetSchemaForGame`, since this payload already carries everything both
+ * `toAchievementCounts` and `toAchievements` need.
+ *
+ * `l=english` IS LOAD-BEARING and was verified against the live API: without
+ * it Steam returns only `apiname`/`achieved`/`unlocktime` and NO display name
+ * or description at all. It was absent while this endpoint was used purely for
+ * counting, which never read a name.
  */
 export function buildAchievementsUrl(apiKey: string, steamId: string, appid: number): string {
   const params = new URLSearchParams({
     appid: String(appid),
     key: apiKey,
     steamid: steamId,
+    l: 'english',
   });
   return `${BASE_URL}/ISteamUserStats/GetPlayerAchievements/v1/?${params.toString()}`;
 }
@@ -198,6 +205,29 @@ export function toOwnedGames(payload: unknown): OwnedSteamGame[] {
   });
 }
 
+/**
+ * `ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2` — what fraction of
+ * all players earned each achievement, keyed by `apiname`.
+ *
+ * A SEPARATE call from `GetPlayerAchievements`, which carries no rarity at all,
+ * and the only per-game cost this feature adds to a Steam sync. Takes no API
+ * key and no steamid: it is global data about the game, not about the owner.
+ */
+export function buildGlobalRarityUrl(appid: number): string {
+  return `${BASE_URL}/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=${appid}`;
+}
+
+/** One achievement as Steam describes it, before it becomes a unified `Trophy`. */
+export interface SteamAchievement {
+  /** Steam's stable per-app key. Joins to the rarity payload, and becomes the trophy row's `external_id`. */
+  readonly apiname: string;
+  readonly name: string | null;
+  readonly description: string | null;
+  readonly unlocked: boolean;
+  /** Unix SECONDS, or `0` when never unlocked — Steam's sentinel, NOT a 1970 timestamp. */
+  readonly unlockTime: number;
+}
+
 export interface AchievementCounts {
   readonly unlocked: number;
   readonly total: number;
@@ -239,6 +269,82 @@ export function toAchievementCounts(payload: unknown): AchievementCounts | null 
   }
 
   return { unlocked, total: achievements.length };
+}
+
+/**
+ * The same payload `toAchievementCounts` reads, kept whole instead of counted.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * BOTH MUST BE DERIVED FROM ONE FETCH.
+ *
+ * `games.achievements_unlocked`/`achievements_total` and the per-achievement
+ * rows in `game_trophies` now describe the same fact in two places. That is a
+ * real drift risk, and the mitigation is that the sync calls this and
+ * `toAchievementCounts` on ONE response — never two requests that could observe
+ * different moments. An integration test asserts the two agree after a sync.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * `null` (not `[]`) for a game with no achievements, matching
+ * `toAchievementCounts` exactly: "this game defines none" and "Steam did not
+ * tell us" are different facts, and only one of them should overwrite stored
+ * data.
+ */
+export function toAchievements(payload: unknown): SteamAchievement[] | null {
+  const playerstats = asRecord(asRecord(payload)?.playerstats);
+  if (playerstats === null || playerstats.success !== true) return null;
+
+  const achievements = playerstats.achievements;
+  if (!Array.isArray(achievements) || achievements.length === 0) return null;
+
+  const result: SteamAchievement[] = [];
+  for (const entry of achievements) {
+    const record = asRecord(entry);
+    if (record === null) continue;
+
+    const apiname = record.apiname;
+    if (typeof apiname !== 'string' || apiname === '') continue;
+
+    const unlockTime = record.unlocktime;
+    result.push({
+      apiname,
+      // Steam returns an EMPTY STRING for a locked achievement's description,
+      // not a missing key — normalized to null so "hidden until unlocked" and
+      // "genuinely described as nothing" don't read as the same thing.
+      name: typeof record.name === 'string' && record.name !== '' ? record.name : null,
+      description: typeof record.description === 'string' && record.description !== '' ? record.description : null,
+      unlocked: record.achieved === 1 || record.achieved === true,
+      unlockTime: typeof unlockTime === 'number' && Number.isFinite(unlockTime) && unlockTime > 0 ? unlockTime : 0,
+    });
+  }
+
+  return result;
+}
+
+/**
+ * `apiname` -> percent-of-players string, from `buildGlobalRarityUrl`.
+ *
+ * An empty map for any unusable payload, never a throw: rarity is enrichment,
+ * and a game whose global stats are unavailable should still get its
+ * achievements stored with `rarityTenths: null`.
+ */
+export function toGlobalRarity(payload: unknown): Map<string, string> {
+  const map = new Map<string, string>();
+  const achievements = asRecord(asRecord(payload)?.achievementpercentages)?.achievements;
+  if (!Array.isArray(achievements)) return map;
+
+  for (const entry of achievements) {
+    const record = asRecord(entry);
+    if (record === null) continue;
+    // Steam names this field `name`, but it holds the API KEY (`CHARMED`),
+    // not the display name — the join key, despite the misleading label.
+    const apiname = record.name;
+    const percent = record.percent;
+    if (typeof apiname !== 'string' || apiname === '') continue;
+    if (typeof percent === 'number') map.set(apiname, String(percent));
+    else if (typeof percent === 'string') map.set(apiname, percent);
+  }
+
+  return map;
 }
 
 /** The columns the sync script is allowed to touch, as currently stored. */

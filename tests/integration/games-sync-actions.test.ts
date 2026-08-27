@@ -38,9 +38,16 @@ vi.mock('next/cache', () => ({
 // No real network call ever happens in this suite — the Steam client is
 // mocked at its own module boundary.
 const fetchOwnedGames = vi.fn(async (): Promise<unknown[] | null> => []);
-const fetchAchievementCounts = vi.fn(async (_appid: number) => null);
+/**
+ * The sync now reads achievement DETAIL, not just counts, so that one response
+ * can feed both the stored count columns and the stored trophy rows — see
+ * `fetchAchievementDetail`'s own doc comment on why those must not come from
+ * two separate requests. `null` by default: most tests here are about matching
+ * and staging, not achievements.
+ */
+const fetchAchievementDetail = vi.fn(async (_appid: number): Promise<unknown> => null);
 
-vi.mock('@/server/db/games/steam-client', () => ({ fetchOwnedGames, fetchAchievementCounts }));
+vi.mock('@/server/db/games/steam-client', () => ({ fetchOwnedGames, fetchAchievementDetail }));
 
 // The enrichment phase's one HTTP boundary — mocked here for the same reason
 // the Steam client is: this suite exercises what `advanceSyncEnrichmentAction`
@@ -52,17 +59,20 @@ vi.mock('@/server/db/games/igdb', () => ({ searchGames }));
 type SyncActions = typeof import('@/features/games/sync/sync-actions');
 type Games = typeof import('@/server/db/games/games');
 type Sync = typeof import('@/server/db/games/sync');
+type TrophiesDb = typeof import('@/server/db/games/trophies');
 
 let actions: SyncActions;
 let games: Games;
 let sync: Sync;
+let trophiesDb: TrophiesDb;
 
 beforeAll(async () => {
   await harness();
-  [actions, games, sync] = await Promise.all([
+  [actions, games, sync, trophiesDb] = await Promise.all([
     import('@/features/games/sync/sync-actions'),
     import('@/server/db/games/games'),
     import('@/server/db/games/sync'),
+    import('@/server/db/games/trophies'),
   ]);
 });
 
@@ -78,8 +88,8 @@ beforeEach(async () => {
   vi.stubEnv('STEAM_ID', '76561198000000000');
   fetchOwnedGames.mockReset();
   fetchOwnedGames.mockImplementation(async () => []);
-  fetchAchievementCounts.mockReset();
-  fetchAchievementCounts.mockImplementation(async () => null);
+  fetchAchievementDetail.mockReset();
+  fetchAchievementDetail.mockImplementation(async () => null);
   searchGames.mockReset();
   searchGames.mockImplementation(async () => []);
 });
@@ -216,6 +226,57 @@ describe('advanceSteamSyncAction — matching and staging', () => {
 
     expect(link).toBeDefined();
     expect(link?.payload.steamAppid).toBe(367520);
+  });
+
+  /**
+   * ─────────────────────────────────────────────────────────────────────────
+   * TROPHIES ARE WRITTEN, NOT STAGED.
+   *
+   * Everything else this sync produces lands in `sync_changes` for the owner
+   * to approve, because every field it touches is one they can type
+   * themselves. An individual earned achievement has no owner-authored
+   * counterpart — it is a fact about the past — so it goes straight to
+   * `game_trophies` and never appears as a proposal.
+   *
+   * This asserts both halves: rows exist afterwards, and NOTHING about them
+   * was staged for review.
+   * ─────────────────────────────────────────────────────────────────────────
+   */
+  it('writes achievements straight to game_trophies without staging them', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Hollow Knight',
+      platform: 'steam',
+      steamAppid: 367520,
+    });
+
+    fetchOwnedGames.mockImplementationOnce(async () => [
+      { appid: 367520, name: 'Hollow Knight', playtimeMinutes: 2940, lastPlayedAt: null },
+    ]);
+    fetchAchievementDetail.mockImplementationOnce(async () => ({
+      achievements: [
+        { apiname: 'CHARMED', name: 'Charmed', description: 'Acquire your first Charm', unlocked: true, unlockTime: 1_735_010_079 },
+        { apiname: 'ZOTE', name: 'Rivalry', description: null, unlocked: false, unlockTime: 0 },
+      ],
+      counts: { unlocked: 1, total: 2 },
+      rarity: new Map([['CHARMED', '76.8']]),
+    }));
+
+    const runId = await startRun();
+    await actions.advanceSteamSyncAction(runId);
+
+    const stored = await trophiesDb.listGameTrophies(ownerId, created.id);
+    expect(stored).toHaveLength(2);
+
+    const charmed = stored.find((t) => t.id === 'CHARMED');
+    expect(charmed).toMatchObject({ source: 'steam', name: 'Charmed', earned: true, rarityTenths: 768, tier: null });
+    expect(charmed?.earnedAt).toBe('2024-12-24T03:14:39.000Z');
+
+    // Steam's never-unlocked sentinel must not become a 1970 timestamp.
+    expect(stored.find((t) => t.id === 'ZOTE')).toMatchObject({ earned: false, earnedAt: null, rarityTenths: null });
+
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    expect(changes.some((change) => JSON.stringify(change.payload).includes('CHARMED'))).toBe(false);
   });
 
   it('stages a field update only when Steam-reported hours actually differ', async () => {

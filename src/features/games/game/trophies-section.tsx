@@ -1,10 +1,8 @@
 'use client';
 
-import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { TrophyTierBadge } from '@/components/games/trophy-tier-badge';
-import type { PsnFailure } from '@/server/db/games/psn-client';
-import type { Trophy, TrophyTier } from '@/server/games/psn';
+import { formatRarity, type Trophy, type TrophyTier } from '@/server/games/trophies';
 
 /**
  * The four states a live PSN trophy fetch can be in, owned by `GamePage`
@@ -14,24 +12,22 @@ import type { Trophy, TrophyTier } from '@/server/games/psn';
  * inactive, `'idle'` is only ever visible for one render before the fetch
  * kicks off, never worth a separate treatment.
  */
-export type TrophyFetchState =
-  | { readonly status: 'idle' }
-  | { readonly status: 'loading' }
-  | { readonly status: 'loaded'; readonly trophies: readonly Trophy[] }
-  | { readonly status: 'failed'; readonly reason: PsnFailure | 'not_linked' };
-
-const FAILURE_MESSAGES: Record<PsnFailure | 'not_linked', string> = {
-  not_configured: "PlayStation isn't connected — set PSN_NPSSO to enable trophy tracking.",
-  token_expired: 'Your PlayStation connection needs refreshing — paste a new NPSSO in Settings.',
-  unavailable: "Couldn't reach PlayStation right now. Try again in a moment.",
-  not_linked: 'This game isn\'t linked to PlayStation Network.',
-};
 
 const TIER_ORDER: Record<TrophyTier, number> = { platinum: 3, gold: 2, silver: 1, bronze: 0 };
 
+/**
+ * Rarest tier first, then by name. `tier` is null for Steam achievements,
+ * which have no tier concept at all — those sort together below every PSN
+ * tier rather than being given a fabricated rank, which is also the only
+ * ordering that stays stable for a Steam-only game where EVERY row is null.
+ */
+function tierRank(tier: TrophyTier | null): number {
+  return tier === null ? -1 : TIER_ORDER[tier];
+}
+
 function sortTrophies(trophies: readonly Trophy[]): Trophy[] {
   return [...trophies].sort(
-    (a, b) => TIER_ORDER[b.tier] - TIER_ORDER[a.tier] || (a.name ?? '').localeCompare(b.name ?? ''),
+    (a, b) => tierRank(b.tier) - tierRank(a.tier) || (a.name ?? '').localeCompare(b.name ?? ''),
   );
 }
 
@@ -55,50 +51,28 @@ function formatEarnedDate(iso: string): string {
  * for a later pass, but a human-readable group name needs a third,
  * unrequested API call (`getTitleTrophyGroups`).
  */
-export function TrophiesSection({ state }: { readonly state: TrophyFetchState }): React.ReactElement {
-  if (state.status === 'idle' || state.status === 'loading') return <TrophyListSkeleton />;
-
-  if (state.status === 'failed') {
-    return <p className="text-muted-foreground py-8 text-center text-sm">{FAILURE_MESSAGES[state.reason]}</p>;
+export function TrophiesSection({ trophies }: { readonly trophies: readonly Trophy[] }): React.ReactElement {
+  if (trophies.length === 0) {
+    return (
+      <p className="text-muted-foreground py-8 text-center text-sm">
+        No trophies stored yet — run a sync from Settings to pull them in.
+      </p>
+    );
   }
 
-  if (state.trophies.length === 0) {
-    return <p className="text-muted-foreground py-8 text-center text-sm">No trophy data found for this game.</p>;
-  }
-
-  const earnedCount = state.trophies.filter((trophy) => trophy.earned).length;
+  const earnedCount = trophies.filter((trophy) => trophy.earned).length;
 
   return (
     <div className="space-y-2">
       <p className="text-sm">
         <span className="tabular font-medium">{earnedCount}</span>
-        <span className="text-muted-foreground"> of {state.trophies.length} trophies earned</span>
+        <span className="text-muted-foreground"> of {trophies.length} trophies earned</span>
       </p>
-      <TrophyList trophies={sortTrophies(state.trophies)} />
+      <TrophyList trophies={sortTrophies(trophies)} />
     </div>
   );
 }
 
-/** Content-shaped placeholder for the fetch, in place of a bare spinner. */
-function TrophyListSkeleton(): React.ReactElement {
-  return (
-    <div className="space-y-2">
-      <Skeleton className="h-5 w-40" />
-      <div className="space-y-1">
-        {Array.from({ length: 8 }, (_, index) => (
-          <div key={index} className="flex items-center gap-3 py-2">
-            <Skeleton className="size-6 shrink-0 rounded-md" />
-            <div className="flex-1 space-y-1.5">
-              <Skeleton className="h-3.5 w-1/3" />
-              <Skeleton className="h-3 w-2/3" />
-            </div>
-            <Skeleton className="h-3 w-16 shrink-0" />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function TrophyList({ trophies }: { readonly trophies: readonly Trophy[] }): React.ReactElement {
   return (
@@ -142,9 +116,7 @@ function TrophyList({ trophies }: { readonly trophies: readonly Trophy[] }): Rea
               <TableCell className="text-muted-foreground tabular text-right text-xs">
                 {trophy.earned && trophy.earnedAt !== null
                   ? formatEarnedDate(trophy.earnedAt)
-                  : trophy.rarity !== null
-                    ? `${trophy.rarity}%`
-                    : '—'}
+                  : (formatRarity(trophy.rarityTenths) ?? '—')}
               </TableCell>
             </TableRow>
           );

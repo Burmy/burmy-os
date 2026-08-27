@@ -28,6 +28,8 @@
 import { revalidatePath } from 'next/cache';
 
 import { requireOwner } from '@/server/auth/owner';
+import { replaceGameTrophies } from '@/server/db/games/trophies';
+import { rarityToTenths, unlockTimeToIso } from '@/server/games/trophies';
 import { SyncRunAlreadyCommittedError, SyncRunNotFoundError, SyncRunNotReadyError } from '@/server/db/games/errors';
 import { countSteamGames, listSteamGamesChunk, listSteamGamesForMatching } from '@/server/db/games/games';
 import { searchGames } from '@/server/db/games/igdb';
@@ -45,7 +47,7 @@ import {
   markNewGameChangeEnriched,
   setSyncChangeSelected,
 } from '@/server/db/games/sync';
-import { fetchAchievementCounts, fetchOwnedGames } from '@/server/db/games/steam-client';
+import { fetchAchievementDetail, fetchOwnedGames } from '@/server/db/games/steam-client';
 import { minutesToHoursTenths } from '@/server/games/hours';
 import { bestTitleMatchAmong, resolveNewGameMetadataFill } from '@/server/games/metadata';
 import type { OwnedSteamGame } from '@/server/games/steam';
@@ -270,7 +272,46 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
 
       const owned = library.find((entry) => entry.appid === appid);
       const steamHoursTenths = owned ? minutesToHoursTenths(owned.playtimeMinutes) : null;
-      const achievements = await fetchAchievementCounts(appid);
+
+      // ─────────────────────────────────────────────────────────────────────
+      // ONE FETCH FEEDS BOTH THE COUNTS AND THE ROWS.
+      //
+      // `games.achievements_unlocked`/`achievements_total` and the per-
+      // achievement rows in `game_trophies` now state the same fact twice.
+      // `fetchAchievementDetail` derives both from a SINGLE
+      // `GetPlayerAchievements` response precisely so they cannot disagree —
+      // two separate requests could observe different moments and drift apart
+      // silently. An integration test asserts they match after a sync.
+      //
+      // The counts still travel through `changes` as proposals the owner
+      // approves; the rows are written directly below. Same split, same
+      // reason, as the PSN engine — see its own comment.
+      // ─────────────────────────────────────────────────────────────────────
+      const detail = await fetchAchievementDetail(appid);
+      const achievements = detail?.counts ?? null;
+
+      if (detail !== null) {
+        await replaceGameTrophies(
+          owner.userId,
+          game.id,
+          'steam',
+          detail.achievements.map((achievement) => ({
+            source: 'steam' as const,
+            id: achievement.apiname,
+            // Steam has neither trophy groups nor tiers. Null, not a
+            // fabricated `default`/`bronze` — see `trophies.ts`.
+            groupId: null,
+            tier: null,
+            hidden: false,
+            name: achievement.name,
+            description: achievement.description,
+            iconUrl: null,
+            earned: achievement.unlocked,
+            earnedAt: unlockTimeToIso(achievement.unlockTime),
+            rarityTenths: rarityToTenths(detail.rarity.get(achievement.apiname)),
+          })),
+        );
+      }
 
       const stored: StoredGameForSync = {
         id: game.id,

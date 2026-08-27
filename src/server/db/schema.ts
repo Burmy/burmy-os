@@ -1018,6 +1018,92 @@ export const gamePlayYears = pgTable(
   ],
 );
 
+/**
+ * Every individual trophy/achievement defined for a game the owner owns, both
+ * PlayStation and Steam, earned or not.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS TABLE EXISTS AT ALL.
+ *
+ * Trophies used to be fetched from PSN live on every game-page visit and thrown
+ * away — measured at ~1.0s on first view and ~1.5s on reload, every time, with
+ * no caching. Worse than the wait: nothing about trophies was queryable across
+ * games, so "what am I close to platinuming", "what did I earn this month" and
+ * "what is the rarest thing I own" were all unanswerable, in an app whose owner
+ * uses it primarily to track trophies. PSN was already returning the earned
+ * timestamp and the rarity percentage; both were parsed and then discarded.
+ *
+ * ONE TABLE FOR BOTH SOURCES. Steam has no notion of a tier or a trophy group,
+ * so `tier` and `group_id` are nullable and PSN-only — the alternative, two
+ * near-identical tables, would fork every query that wants a combined answer
+ * ("earned recently" across everything the owner plays) for the sake of two
+ * columns.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const gameTrophySourceEnum = pgEnum('game_trophy_source', ['psn', 'steam']);
+export const gameTrophyTierEnum = pgEnum('game_trophy_tier', ['bronze', 'silver', 'gold', 'platinum']);
+
+export const gameTrophies = pgTable(
+  'game_trophies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    source: gameTrophySourceEnum('source').notNull(),
+    /** PSN `trophyId` (unique within a title only) or Steam `apiname`. Never globally unique — see the index below. */
+    externalId: text('external_id').notNull(),
+    name: text('name'),
+    description: text('description'),
+    iconUrl: text('icon_url'),
+    /** PSN only. Steam has no tiers, and inventing one would misrepresent its data. */
+    tier: gameTrophyTierEnum('tier'),
+    /** PSN `trophyGroupId` — `default` for the base game, `001`/`002`… for DLC. PSN only. */
+    groupId: text('group_id'),
+    hidden: boolean('hidden').notNull().default(false),
+    earned: boolean('earned').notNull().default(false),
+    /** Null whenever `earned` is false. PSN reports this directly; Steam's `unlocktime` is converted. */
+    earnedAt: timestamp('earned_at', { withTimezone: true }),
+    /**
+     * Percentage of players who earned this, in TENTHS of a percent — `225`
+     * means 22.5%.
+     *
+     * An integer, deliberately, not `NUMERIC`. Both APIs report exactly one
+     * decimal place (PSN `trophyEarnedRate: "22.5"`, Steam `percent: "76.8"`),
+     * and CLAUDE.md forbids `NUMERIC` outright because the `pg` driver hands it
+     * back as a STRING — the resulting `parseFloat` is the precise bug this
+     * project is built to avoid. Games already stores `hours_tenths` this way;
+     * rarity follows the same rule, with conversion contained in
+     * `src/server/games/trophies.ts` and nowhere else.
+     *
+     * Null when the API did not report a rate, which is a real state — never
+     * coerced to 0, which would claim "nobody has this."
+     */
+    rarityTenths: integer('rarity_tenths'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // What makes a re-sync an UPSERT rather than a duplicate. `external_id` is
+    // only unique within a title (PSN restarts `trophyId` at 0 for every game),
+    // so the game and the source both have to be part of the key.
+    uniqueIndex('game_trophies_owner_game_source_external_idx').on(t.ownerId, t.gameId, t.source, t.externalId),
+    index('game_trophies_owner_game_idx').on(t.ownerId, t.gameId),
+    // Partial, because both ordered views only ever look at earned rows — an
+    // index covering the ~40% that are unearned would be that much dead weight
+    // in a scan that can never return them.
+    index('game_trophies_owner_earned_at_idx')
+      .on(t.ownerId, t.earnedAt.desc())
+      .where(sql`${t.earned}`),
+    index('game_trophies_owner_rarity_idx')
+      .on(t.ownerId, t.rarityTenths)
+      .where(sql`${t.earned}`),
+  ],
+);
+
 export const gameSyncSourceEnum = pgEnum('game_sync_source', ['steam', 'psn']);
 export const gameSyncRunStatusEnum = pgEnum('game_sync_run_status', [
   'running',

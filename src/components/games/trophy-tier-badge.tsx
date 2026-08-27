@@ -1,7 +1,7 @@
 import { Trophy } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import type { TrophyTier } from '@/server/games/psn';
+import type { TrophyTier } from '@/server/games/trophies';
 import { PlatinumBadge } from './platinum-badge';
 
 /**
@@ -22,7 +22,12 @@ export function TrophyTierBadge({
   tier,
   className,
 }: {
-  readonly tier: TrophyTier;
+  /**
+   * Null for a Steam achievement, which has no tier. Renders a neutral mark
+   * rather than defaulting to bronze — Steam does not grade its achievements,
+   * and picking a tier for one would invent a distinction its data never makes.
+   */
+  readonly tier: TrophyTier | null;
   readonly className?: string;
 }): React.ReactElement {
   if (tier === 'platinum') return <PlatinumBadge className={cn('size-6 rounded-md', className)} />;
@@ -30,13 +35,20 @@ export function TrophyTierBadge({
   return (
     <span
       aria-hidden
-      title={TIER_LABELS[tier]}
-      className={cn('inline-flex size-6 items-center justify-center rounded-md ring-1', TIER_STYLES[tier], className)}
+      title={tier === null ? 'Achievement' : TIER_LABELS[tier]}
+      className={cn(
+        'inline-flex size-6 items-center justify-center rounded-md ring-1',
+        tier === null ? UNTIERED_STYLE : TIER_STYLES[tier],
+        className,
+      )}
     >
       <Trophy className="size-3.5" strokeWidth={2.25} />
     </span>
   );
 }
+
+/** Steam: no tier, so no metal. A neutral mark, not a fabricated bronze. */
+const UNTIERED_STYLE = 'bg-muted text-muted-foreground ring-border';
 
 const TIER_LABELS: Record<Exclude<TrophyTier, 'platinum'>, string> = {
   bronze: 'Bronze',
