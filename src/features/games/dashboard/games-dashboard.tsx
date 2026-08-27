@@ -26,17 +26,16 @@ import { TopGames } from './top-games';
 import { YearlyBreakdownTable } from './yearly-breakdown-table';
 
 /**
- * Sections inside a dashboard sit 24px apart — the same distance as the gap
- * BETWEEN cards in a `StatCardGrid`, and the same one the library's cover grid
- * uses. The whole page runs on one spacing value instead of switching at every
- * section boundary.
+ * Sections inside a dashboard sit 20px apart — the same distance as the gap
+ * BETWEEN cards in a `StatCardGrid`, so the whole page runs on one spacing
+ * value instead of switching at every section boundary.
  *
  * The page-level rhythm ABOVE this (title -> filter row -> content) stays 32px.
  * That belongs to the shared page contract (`PageHeader`/`FilterBar`), not to
  * either dashboard, and separating a page's chrome from its content is a
  * different job from separating two blocks of that content.
  */
-const SECTION_STACK = 'space-y-6';
+const SECTION_STACK = 'space-y-5';
 
 /**
  * Regrouped from an earlier 14-card, 7-chart, one-column layout that read as
@@ -179,7 +178,7 @@ export function GamesDashboard({
       </Section>
 
       <Section title="Trends">
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-5 lg:grid-cols-3">
           <ChartBlock label="Games per year">
             <GamesPerYearChart rows={yearly.rows} />
           </ChartBlock>
@@ -193,7 +192,7 @@ export function GamesDashboard({
       </Section>
 
       <Section title="Breakdown">
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-5 lg:grid-cols-2">
           <ChartBlock label="Platforms">
             <DistributionChart slices={platforms} emptyMessage="No platforms recorded yet." />
           </ChartBlock>
@@ -214,7 +213,7 @@ export function GamesDashboard({
           border p-4`), so wrapping four of them in a second outer Section
           box was the same "double box" problem the top row already fixed,
           just with a richer card instead of a plain StatCard. */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         <TopGames title="Most played" hint="By total hours" metric="hours" entries={buildLeaderboard(rows, 'hours', 3)} />
         <TopGames title="Highest rated" hint="Your own rating" metric="rating" entries={buildLeaderboard(rows, 'rating', 3)} />
         <TopGames
