@@ -157,7 +157,10 @@ describe('UpcomingView — already-wishlisted state', () => {
 
     const added = screen.getByRole('button', { name: /added/i });
     expect(added).not.toBeDisabled();
-    expect(added.className).toMatch(/bg-muted/);
+    // The solid `default` fill, same as Add game and Export — `bg-muted` was
+    // dark-on-dark and vanished against the card, leaving the un-added button
+    // beside it looking like the more prominent of the two.
+    expect(added.className).toMatch(/bg-primary/);
     // Negative lookbehind on purpose: the shared button base class always
     // carries `disabled:opacity-50`, which is inert here precisely because
     // the control is not disabled. What must never appear is an

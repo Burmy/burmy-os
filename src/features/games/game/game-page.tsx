@@ -118,10 +118,12 @@ export function GamePage({
           onSaveField={saveField}
         />
 
-        {/* Capped so the label column and its value cannot drift apart again
-            on a wide window — the whole reason these rows were unreadable
-            before (see `inline-edit-row.tsx`'s ROW_CLASS comment). */}
-        <div className="max-w-2xl space-y-4">
+        {/* No width cap any more. It was here to stop a label and its value
+            drifting to opposite ends of a wide row, but `GameDetailsContent`
+            now splits the fields into two ~490px columns, which keeps them
+            adjacent by construction — and the cap had become the reason a
+            quarter of the page sat empty. */}
+        <div className="space-y-4">
           <TitleField game={game} onSaveField={saveField} />
 
           <GameDetailsContent

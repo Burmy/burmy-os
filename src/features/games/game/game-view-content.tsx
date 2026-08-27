@@ -31,8 +31,33 @@ import { InlineEditField, InlineEditSelect } from './inline-edit-row';
  * `inline-edit-row.tsx` puts the value directly beside its label, alignment
  * does that job and the rules were only noise. The group separators stay.
  */
+/**
+ * TWO COLUMNS from `lg`, one below it.
+ *
+ * These rows used to stack one per line inside a column capped at 672px, which
+ * left ~360px of the page — a quarter of its width — permanently empty while
+ * the fields ran nine rows deep. Splitting them across two columns spends that
+ * width and halves the vertical run, WITHOUT reopening the problem the cap was
+ * there to solve: each label still sits directly beside its own value, because
+ * each column is only ~490px wide rather than the full 1000px.
+ *
+ * `gap-x-8` rather than the usual 16px: two columns of label/value pairs need a
+ * visibly wider gutter than the gap between a label and its own value, or the
+ * eye reads across the boundary and pairs the wrong two.
+ */
 function Section({ children }: { readonly children: React.ReactNode }): React.ReactElement {
-  return <section className="border-t pt-4 first:border-t-0 first:pt-0">{children}</section>;
+  return (
+    <section className="grid gap-x-8 border-t pt-4 first:border-t-0 first:pt-0 lg:grid-cols-2">{children}</section>
+  );
+}
+
+/**
+ * A row that must span the full width rather than sit in one column — the notes
+ * textarea, and the play-year split panel. Both are genuinely wide controls, not
+ * label/value pairs, and squeezing either into half the row makes it unusable.
+ */
+function FullWidthRow({ children }: { readonly children: React.ReactNode }): React.ReactElement {
+  return <div className="lg:col-span-2">{children}</div>;
 }
 
 /**
@@ -131,17 +156,21 @@ export function GameDetailsContent({
           disabledHint="From Steam"
           onSave={(value) => onSaveField('achievementsTotal', value)}
         />
-        <PlayYearsRow hoursTenths={hoursTenths} playYears={playYears} onSave={onSavePlayYears} />
+        <FullWidthRow>
+          <PlayYearsRow hoursTenths={hoursTenths} playYears={playYears} onSave={onSavePlayYears} />
+        </FullWidthRow>
       </Section>
 
       <Section>
-        <InlineEditField
-          label="Notes"
-          value={notes ?? ''}
-          placeholder="No notes yet — click to add some."
-          multiline
-          onSave={(value) => onSaveField('notes', value)}
-        />
+        <FullWidthRow>
+          <InlineEditField
+            label="Notes"
+            value={notes ?? ''}
+            placeholder="No notes yet — click to add some."
+            multiline
+            onSave={(value) => onSaveField('notes', value)}
+          />
+        </FullWidthRow>
       </Section>
     </div>
   );

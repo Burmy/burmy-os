@@ -375,17 +375,14 @@ function AddToWishlistButton({
     // automatically — there's nothing here for a keyboard user to activate.
     //
     // Monochrome, not the former emerald: this grid's whole card language
-    // went black-and-white, and a green pill was the last colored chrome
-    // left in it. Full-contrast foreground-on-muted reads as "done" without
-    // needing a second semantic color.
+    // went black-and-white, and a green pill was the last colored chrome left
+    // in it. The solid white `default` fill — the same one Add game, Export and
+    // Find on PowerPyx carry — reads as "done" without a second semantic
+    // colour, and reads it at a glance: `bg-muted` was dark-on-dark and
+    // disappeared against the card while the un-added `outline` button beside
+    // it stood out, which is backwards for the state you have already acted on.
     return (
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        tabIndex={-1}
-        className="bg-muted text-foreground pointer-events-none w-full"
-      >
+      <Button type="button" size="sm" tabIndex={-1} className="pointer-events-none w-full">
         <Check className="size-4" aria-hidden />
         Added
       </Button>
