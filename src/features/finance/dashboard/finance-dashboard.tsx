@@ -8,7 +8,6 @@ import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import { Section } from '@/components/ui/section';
 import { StatCard } from '@/components/ui/stat-card';
-import { StatCardGrid } from '@/components/ui/stat-card-grid';
 import type { TopExpenseRow } from '@/server/db/finance/grid';
 import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
 import type {
@@ -129,7 +128,7 @@ export function FinanceDashboard({
 
       {view === 'month' ? (
         <div className="space-y-8">
-          <StatCardGrid>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard
               label="Income"
               // `summary.incomeCents` is already sign-flipped to a positive display
@@ -188,7 +187,7 @@ export function FinanceDashboard({
               hint={isCurrentMonth ? 'So far this month' : 'Daily average'}
             />
             <StatCard label="Transactions" value={String(summary.transactionCount)} />
-          </StatCardGrid>
+          </div>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             <Section title="Income vs Expenses" description="Most recent months of activity">
@@ -226,7 +225,7 @@ export function FinanceDashboard({
         </div>
       ) : (
         <div className="space-y-8">
-          <StatCardGrid>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
             <StatCard
               label={isCompletedYear ? 'Income' : 'YTD Income'}
               value={format(cents(ytd.summary.incomeCents), { signed: true })}
@@ -246,7 +245,7 @@ export function FinanceDashboard({
               value={ytd.summary.savingsRatePercent === null ? '—' : formatPercent(ytd.summary.savingsRatePercent)}
               {...(ytd.summary.savingsRatePercent === null ? { hint: 'No income yet' } : {})}
             />
-          </StatCardGrid>
+          </div>
 
           {ytd.summary.highestSpendingMonth ? (
             <p className="text-muted-foreground text-sm">
