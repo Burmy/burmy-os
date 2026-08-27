@@ -125,6 +125,60 @@ export function compareToPreviousMonth(current: MonthSummary, previous: MonthSum
   };
 }
 
+/** How many prior months a baseline averages over. A year, so seasonality averages out rather than skewing it. */
+export const BASELINE_MONTHS = 12;
+
+/**
+ * The same three comparisons, but against the owner's own trailing average
+ * instead of one specific month.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY BOTH COMPARISONS EXIST NOW, RATHER THAN THIS REPLACING THE OTHER.
+ *
+ * "Up 34% on July" is a true statement that mostly tells you about July. When
+ * the question is "is this month normal?" — which is what someone checking
+ * their finances twice a month is actually asking — one arbitrary prior month
+ * is noise. With 32 months of history sitting in the database, a 12-month
+ * baseline answers it directly.
+ *
+ * Last month is still worth showing: it is the comparison you want when you
+ * remember what last month WAS. So the dashboard shows both, and this exists
+ * alongside `compareToPreviousMonth` rather than replacing it.
+ *
+ * Months with no data at all are EXCLUDED from the average rather than counted
+ * as zero. A gap in imports is not a month of zero spending, and averaging it
+ * in would drag the baseline down and make every real month look extravagant.
+ * `null` when there is nothing to average — never a baseline of zero.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function compareToBaseline(
+  current: MonthSummary,
+  history: readonly MonthSummary[],
+  year: number,
+  month: number,
+): MonthComparison | null {
+  const key = year * 12 + (month - 1);
+  const priors = history
+    .filter((entry) => {
+      const entryKey = entry.year * 12 + (entry.month - 1);
+      return entryKey < key && entryKey >= key - BASELINE_MONTHS;
+    })
+    // A month whose income, expenses AND transaction count are all zero was
+    // never imported — see the doc comment above.
+    .filter((entry) => entry.incomeCents !== 0 || entry.expenseCents !== 0 || entry.transactionCount !== 0);
+
+  if (priors.length === 0) return null;
+
+  const mean = (pick: (entry: MonthSummary) => number): number =>
+    Math.round(priors.reduce((total, entry) => total + pick(entry), 0) / priors.length);
+
+  return {
+    income: compareMetric(current.incomeCents, mean((e) => e.incomeCents), true),
+    expense: compareMetric(current.expenseCents, mean((e) => e.expenseCents), false),
+    net: compareMetric(current.netCents, mean((e) => e.netCents), true),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Trend charts (income vs expense, net cash flow)
 // ─────────────────────────────────────────────────────────────────────────────

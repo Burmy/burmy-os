@@ -6,7 +6,9 @@ import {
   buildCategoryTrend,
   buildTrend,
   buildYearlyBreakdown,
+  compareToBaseline,
   compareToPreviousMonth,
+  type MonthSummary,
   computeAverageDailySpending,
   computeSavingsRate,
   computeYtdSummary,
@@ -386,5 +388,73 @@ describe('buildYearlyBreakdown', () => {
     expect(breakdown.months).toHaveLength(12);
     expect(breakdown.months.every((m) => m.totalCents === 0)).toBe(true);
     expect(breakdown.series).toEqual([]);
+  });
+});
+
+/**
+ * The comparison someone actually wants when they open Finance twice a month
+ * and ask "is this normal?" — one arbitrary prior month cannot answer that,
+ * and with 32 months of history sitting in the database it does not have to.
+ */
+describe('compareToBaseline', () => {
+  function month(year: number, m: number, income: number, expense: number, count = 10): MonthSummary {
+    return { year, month: m, incomeCents: income, expenseCents: expense, netCents: income - expense, transactionCount: count };
+  }
+
+  it('compares against the mean of the trailing 12 months', () => {
+    // Three prior months averaging 3000 in expenses; this month is 4000.
+    const history = [month(2026, 1, 5000, 2000), month(2026, 2, 5000, 3000), month(2026, 3, 5000, 4000)];
+    const current = month(2026, 4, 5000, 4000);
+
+    const result = compareToBaseline(current, [...history, current], 2026, 4);
+
+    expect(result?.expense.deltaCents).toBe(1000);
+    // More expense than usual is unfavorable, whichever direction the number moved.
+    expect(result?.expense.direction).toBe('unfavorable');
+    expect(result?.income.direction).toBe('neutral');
+  });
+
+  it('never counts the current month in its own baseline', () => {
+    const current = month(2026, 4, 5000, 9999);
+    const result = compareToBaseline(current, [month(2026, 3, 5000, 1000), current], 2026, 4);
+
+    // Baseline is March alone (1000), so the delta is the full difference.
+    expect(result?.expense.deltaCents).toBe(8999);
+  });
+
+  it('ignores months after the selected one, so an old month is judged against its own past', () => {
+    const history = [month(2026, 1, 5000, 1000), month(2026, 2, 5000, 2000), month(2026, 3, 5000, 9000)];
+    const result = compareToBaseline(month(2026, 2, 5000, 2000), history, 2026, 2);
+
+    // Only January counts; March is in the future relative to the selection.
+    expect(result?.expense.deltaCents).toBe(1000);
+  });
+
+  /**
+   * A month with no imports is a GAP, not a month of zero spending. Averaging
+   * it in would drag the baseline down and make every real month look
+   * extravagant by comparison.
+   */
+  it('excludes months with no data at all rather than averaging in zeros', () => {
+    const history = [month(2026, 1, 4000, 4000), month(2026, 2, 0, 0, 0), month(2026, 3, 4000, 4000)];
+    const result = compareToBaseline(month(2026, 4, 4000, 4000), history, 2026, 4);
+
+    // Baseline is 4000 from the two real months, not 2667 from three.
+    expect(result?.expense.deltaCents).toBe(0);
+  });
+
+  /** `null`, never a baseline of zero — "nothing to compare against" is a real state. */
+  it('returns null when there is no prior history at all', () => {
+    const current = month(2026, 1, 5000, 2000);
+    expect(compareToBaseline(current, [current], 2026, 1)).toBeNull();
+  });
+
+  it('drops months older than the 12-month window', () => {
+    const old = month(2024, 1, 5000, 100_000);
+    const recent = month(2026, 3, 5000, 3000);
+    const result = compareToBaseline(month(2026, 4, 5000, 3000), [old, recent], 2026, 4);
+
+    // The 2024 outlier is outside the window; only March counts.
+    expect(result?.expense.deltaCents).toBe(0);
   });
 });

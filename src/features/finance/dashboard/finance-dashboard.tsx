@@ -41,6 +41,8 @@ export interface FinanceDashboardProps {
   readonly actions: React.ReactNode;
   readonly summary: MonthSummary;
   readonly comparison: MonthComparison | null;
+  /** The same three metrics against a trailing 12-month average — see `compareToBaseline`. */
+  readonly baseline: MonthComparison | null;
   readonly savingsRatePercent: number | null;
   readonly avgDailySpendingCents: number;
   readonly avgTransactionCents: number | null;
@@ -79,6 +81,7 @@ export function FinanceDashboard({
   actions,
   summary,
   comparison,
+  baseline,
   savingsRatePercent,
   avgDailySpendingCents,
   avgTransactionCents,
@@ -133,17 +136,44 @@ export function FinanceDashboard({
               // would flip it AGAIN and print it negative. `formatInflow` is for raw,
               // still-negative stored values (a single transaction row); this isn't one.
               value={format(cents(summary.incomeCents), { signed: true })}
-              comparison={comparison ? <ComparisonIndicator comparison={comparison.income} previousLabel={previousMonthLabel} /> : null}
+              comparison={
+                // Stacked, not inline: two indicators side by side wrap
+                // mid-phrase in a narrow stat card. Last month first, because
+                // it is the one you can hold in your head; the baseline sits
+                // under it as the answer to "but is that normal?"
+                <div className="flex flex-col gap-1">
+                  {comparison ? <ComparisonIndicator comparison={comparison.income} previousLabel={previousMonthLabel} /> : null}
+                  {baseline ? <ComparisonIndicator comparison={baseline.income} previousLabel="12-mo avg" /> : null}
+                </div>
+              }
             />
             <StatCard
               label="Expenses"
               value={format(cents(summary.expenseCents))}
-              comparison={comparison ? <ComparisonIndicator comparison={comparison.expense} previousLabel={previousMonthLabel} /> : null}
+              comparison={
+                // Stacked, not inline: two indicators side by side wrap
+                // mid-phrase in a narrow stat card. Last month first, because
+                // it is the one you can hold in your head; the baseline sits
+                // under it as the answer to "but is that normal?"
+                <div className="flex flex-col gap-1">
+                  {comparison ? <ComparisonIndicator comparison={comparison.expense} previousLabel={previousMonthLabel} /> : null}
+                  {baseline ? <ComparisonIndicator comparison={baseline.expense} previousLabel="12-mo avg" /> : null}
+                </div>
+              }
             />
             <StatCard
               label="Net"
               value={format(cents(summary.netCents), { signed: true })}
-              comparison={comparison ? <ComparisonIndicator comparison={comparison.net} previousLabel={previousMonthLabel} /> : null}
+              comparison={
+                // Stacked, not inline: two indicators side by side wrap
+                // mid-phrase in a narrow stat card. Last month first, because
+                // it is the one you can hold in your head; the baseline sits
+                // under it as the answer to "but is that normal?"
+                <div className="flex flex-col gap-1">
+                  {comparison ? <ComparisonIndicator comparison={comparison.net} previousLabel={previousMonthLabel} /> : null}
+                  {baseline ? <ComparisonIndicator comparison={baseline.net} previousLabel="12-mo avg" /> : null}
+                </div>
+              }
               {...(summary.netCents < 0 ? { valueClassName: 'text-destructive' } : {})}
             />
             <StatCard

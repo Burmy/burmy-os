@@ -23,6 +23,7 @@ import {
   buildCategoryTrend,
   buildTrend,
   buildYearlyBreakdown,
+  compareToBaseline,
   compareToPreviousMonth,
   computeAverageDailySpending,
   computeSavingsRate,
@@ -161,6 +162,11 @@ export default async function MonthlyPage({
   const comparison = compareToPreviousMonth(summary, previousSummary);
   const previousMonthLabel = MONTH_ABBREVIATIONS[previous.month - 1] ?? '';
 
+  // The second, more useful comparison: this month against the owner's own
+  // trailing average rather than one arbitrary prior month. `monthlyTotals` is
+  // already the full history — no extra query.
+  const baseline = compareToBaseline(summary, monthlyTotals.map(toMonthSummary), year, month);
+
   const savingsRatePercent = computeSavingsRate(summary.incomeCents, summary.expenseCents);
   const dailyDivisor = isCurrentMonth ? now.getUTCDate() : daysInMonth(year, month);
   const avgDailySpendingCents = computeAverageDailySpending(summary.expenseCents, dailyDivisor);
@@ -274,6 +280,7 @@ export default async function MonthlyPage({
             actions={actions}
             summary={summary}
             comparison={comparison}
+        baseline={baseline}
             savingsRatePercent={savingsRatePercent}
             avgDailySpendingCents={avgDailySpendingCents}
             avgTransactionCents={avgTransactionCents}

@@ -7,7 +7,7 @@
  */
 
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { cache } from 'react';
 
 import { getDb } from '@/server/db';
@@ -285,6 +285,122 @@ export async function updateTransactionNote(
     .returning({ id: financeTransactions.id });
 
   if (!rows[0]) throw new NotFoundError('Transaction');
+}
+
+export interface MerchantRuleMatch {
+  readonly id: string;
+  readonly transactionDate: string;
+  readonly amountCents: number;
+  readonly originalDescription: string;
+  readonly categoryId: string | null;
+  readonly categoryName: string | null;
+}
+
+export interface MerchantRulePreview {
+  readonly merchantKey: string;
+  readonly normalizedMerchant: string;
+  /**
+   * Rows this rule moves without argument: uncategorized, or sitting in the
+   * very category the owner just moved the subject OUT of. Pre-selected.
+   */
+  readonly willMove: readonly MerchantRuleMatch[];
+  /**
+   * Rows filed under some THIRD category — neither the source nor the
+   * destination of the correction being made. NOT pre-selected; see this
+   * function's own doc comment for why that distinction is the safety story.
+   */
+  readonly conflicting: readonly MerchantRuleMatch[];
+}
+
+/**
+ * Every OTHER transaction sharing a merchant with `transactionId`, split by
+ * whether re-filing it would overwrite a real decision.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE SPLIT EXISTS, IN THE OWNER'S OWN DATA.
+ *
+ * "Apply this category to every transaction from this merchant" sounds
+ * unambiguous and is not. BUC-EE'S appears 9 times across Food AND Gas, both
+ * correct — it is a petrol station with a food hall. SHELL OIL and CIRCLE K
+ * split the same way; Planet Fitness spans Gym and Shopping. And 829 of 961
+ * categorized rows were filed by hand, so a blunt "apply to all" is aimed
+ * squarely at the owner's own deliberate work.
+ *
+ * So the preview never presents one undifferentiated count.
+ *
+ * `fromCategoryId` is what makes the split useful rather than merely safe. The
+ * real case is five Steam charges sitting in "Other" — Other IS a category, so
+ * a naive "uncategorized vs everything else" split would put all five in the
+ * unticked column and make the owner tick each one, defeating the entire point
+ * of a bulk rule. A row in the category the subject just LEFT is following the
+ * same correction the owner already made, so it is pre-ticked. A row in some
+ * unrelated third category is a different decision, and is not.
+ *
+ * MATCHING HAPPENS IN TYPESCRIPT, NOT SQL, on purpose. The key comes from
+ * `merchantKeyFrom`, and re-expressing that normalization as a Postgres
+ * `regexp_replace` would create a second definition of merchant identity that
+ * could drift from the first — exactly the split-brain `dedupe_key` vs
+ * `merchant_key` already warns about in CLAUDE.md. The candidate set is one
+ * owner's transactions with a merchant name (~1k rows here); if that ever grows
+ * enough to matter, persist `merchant_key` as a column rather than duplicating
+ * the rule.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function previewMerchantRule(
+  ownerId: string,
+  transactionId: string,
+  categoryId: string,
+  /** The category the subject was in immediately before this correction. `null` when it had none. */
+  fromCategoryId: string | null,
+): Promise<MerchantRulePreview | null> {
+  const [subject] = await getDb()
+    .select({ id: financeTransactions.id, normalizedMerchant: financeTransactions.normalizedMerchant })
+    .from(financeTransactions)
+    .where(and(eq(financeTransactions.id, transactionId), eq(financeTransactions.ownerId, ownerId)))
+    .limit(1);
+
+  if (!subject || subject.normalizedMerchant === null) return null;
+  const merchantKey = merchantKeyFrom(subject.normalizedMerchant);
+  if (merchantKey === '') return null;
+
+  const rows = await getDb()
+    .select({
+      id: financeTransactions.id,
+      transactionDate: financeTransactions.transactionDate,
+      amountCents: financeTransactions.amountCents,
+      originalDescription: financeTransactions.originalDescription,
+      normalizedMerchant: financeTransactions.normalizedMerchant,
+      categoryId: financeTransactions.categoryId,
+      categoryName: financeCategories.name,
+    })
+    .from(financeTransactions)
+    .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
+    .where(and(eq(financeTransactions.ownerId, ownerId), isNotNull(financeTransactions.normalizedMerchant)))
+    .orderBy(desc(financeTransactions.transactionDate));
+
+  const willMove: MerchantRuleMatch[] = [];
+  const conflicting: MerchantRuleMatch[] = [];
+
+  for (const row of rows) {
+    if (row.id === transactionId) continue;
+    if (row.normalizedMerchant === null || merchantKeyFrom(row.normalizedMerchant) !== merchantKey) continue;
+    // Already where it is being sent — nothing to change, and listing it as a
+    // pending change would overstate what the rule does.
+    if (row.categoryId === categoryId) continue;
+
+    const match: MerchantRuleMatch = {
+      id: row.id,
+      transactionDate: row.transactionDate,
+      amountCents: row.amountCents,
+      originalDescription: row.originalDescription,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+    };
+    if (row.categoryId === null || row.categoryId === fromCategoryId) willMove.push(match);
+    else conflicting.push(match);
+  }
+
+  return { merchantKey, normalizedMerchant: subject.normalizedMerchant, willMove, conflicting };
 }
 
 /**

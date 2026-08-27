@@ -6,6 +6,9 @@ import { z } from 'zod';
 import { requireOwner } from '@/server/auth/owner';
 import { NotFoundError } from '@/server/db/finance/errors';
 import {
+  bulkUpdateCategory,
+  previewMerchantRule,
+  type MerchantRulePreview,
   updateTransactionCategory,
   updateTransactionMerchant,
   updateTransactionNote,
@@ -122,4 +125,75 @@ export async function updateTransactionNoteAction(transactionId: string, note: s
 
   revalidateBothSurfaces();
   return ok();
+}
+
+/**
+ * What a "…and every other transaction from this merchant" rule would change,
+ * before it changes anything.
+ *
+ * Read-only. The apply step is a SEPARATE action taking explicit ids, so the
+ * owner can only ever commit to a set they were shown — nothing is inferred
+ * between preview and write, and a merchant whose transactions changed in
+ * between simply is not in the id list.
+ */
+export async function previewMerchantRuleAction(
+  transactionId: string,
+  categoryId: string,
+  /** What the subject was categorized as a moment ago — see `previewMerchantRule` on why this decides what is pre-ticked. */
+  fromCategoryId: string | null,
+): Promise<
+  | { readonly ok: true; readonly preview: MerchantRulePreview | null }
+  | { readonly ok: false; readonly error: string }
+> {
+  const owner = await requireOwner();
+
+  try {
+    const preview = await previewMerchantRule(
+      owner.userId,
+      transactionIdSchema.parse(transactionId),
+      categoryIdSchema.parse(categoryId),
+      fromCategoryId === null ? null : categoryIdSchema.parse(fromCategoryId),
+    );
+    return { ok: true, preview };
+  } catch (error) {
+    const result = toResult(error);
+    return { ok: false, error: result.ok ? 'Could not read this merchant.' : result.error };
+  }
+}
+
+/**
+ * Applies the rule to an EXPLICIT list of transaction ids, then remembers the
+ * merchant so future imports land in the same place.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS REWRITES HISTORY, WHICH IS THE POINT AND ALSO THE RISK.
+ *
+ * Re-filing past transactions changes every monthly total those rows appear in.
+ * That is exactly what the owner asked for — a fifth of their spending sat in
+ * "Other" because a categorization decision could only ever apply forward — but
+ * it means the write must never be broader than what was previewed. Hence ids,
+ * not a merchant key: the server re-derives nothing.
+ *
+ * `bulkUpdateCategory` is reused rather than reimplemented; it already sets
+ * `categorization_source = 'manual'` and `review_status = 'confirmed'` together,
+ * which is the pairing CLAUDE.md records as easy to get wrong (a write that
+ * "only touches its own fields" stranding a row whose review status was
+ * computed under an assumption it just falsified).
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function applyMerchantRuleAction(
+  transactionIds: readonly string[],
+  categoryId: string,
+): Promise<{ readonly ok: true; readonly updatedCount: number } | { readonly ok: false; readonly error: string }> {
+  const owner = await requireOwner();
+
+  try {
+    const ids = z.array(transactionIdSchema).max(1000).parse(transactionIds);
+    const updatedCount = await bulkUpdateCategory(owner.userId, ids, categoryIdSchema.parse(categoryId), true);
+    revalidateBothSurfaces();
+    return { ok: true, updatedCount };
+  } catch (error) {
+    const result = toResult(error);
+    return { ok: false, error: result.ok ? 'Could not apply that rule.' : result.error };
+  }
 }

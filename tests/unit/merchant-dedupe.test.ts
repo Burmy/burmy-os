@@ -399,6 +399,45 @@ describe('merchantKeyFrom — rederiving the key M7 needs but finance_transactio
     expect(merchantKeyFrom(normalizedMerchant)).toBe(merchantKey);
   });
 
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * REGRESSION: a hand-typed merchant must not collapse to its capital letters.
+   *
+   * This function is documented as taking an ALREADY-normalized name, which is
+   * upper-case for anything that came from a bank CSV. But the ledger's inline
+   * merchant editor lets the owner RETYPE a merchant in any case, and that
+   * value lands in the very column this reads.
+   *
+   * Without an internal `.toUpperCase()`, a bare `[^A-Z0-9]` strip turned
+   * "Petco" into "P" — and so did "Paycheck", "Payment" and "Pizza". Since this
+   * key is what `finance_merchant_memory` stores, remembering "Petco is Pets"
+   * would have taught the app that the PAYCHECK was Pets too.
+   *
+   * Found in real data: 199 merchants produced a degenerate key, 86
+   * transactions across 8 distinct merchants sharing "P" alone.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('keys a hand-typed merchant by its whole name, not just its capitals', () => {
+    expect(merchantKeyFrom('Petco')).toBe('PETCO');
+    expect(merchantKeyFrom('Car Wash')).toBe('CARWASH');
+    expect(merchantKeyFrom('Chatgpt')).toBe('CHATGPT');
+  });
+
+  it('keeps merchants that used to collide on one capital letter apart', () => {
+    const keys = ['Petco', 'Paycheck', 'Payment', 'Parking', 'Pizza', 'Pie'].map(merchantKeyFrom);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  /**
+   * Upper-casing must be a no-op for every key already stored — all 184 of them
+   * came from ALL-CAPS bank descriptions. This is what made the fix safe to
+   * ship with no migration.
+   */
+  it('leaves an already-upper-case key untouched', () => {
+    expect(merchantKeyFrom('BUC-EES #36')).toBe('BUCEES36');
+    expect(merchantKeyFrom('HEB')).toBe('HEB');
+  });
+
   it('strips everything but letters and digits', () => {
     expect(merchantKeyFrom("LARSEN'S CAFE")).toBe('LARSENSCAFE');
   });

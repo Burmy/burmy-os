@@ -32,13 +32,16 @@ import { formatHumanDate } from '@/lib/format-date';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type {
   LedgerFilters,
+  MerchantRulePreview,
   LedgerPage,
   LedgerSummary,
   LedgerTransaction,
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type ManualTransactionType } from '@/server/finance/classify/manual';
 import { LEDGER_TRANSACTION_TYPES } from './filters';
+import { MerchantRuleDialog } from './merchant-rule-dialog';
 import {
+  previewMerchantRuleAction,
   updateTransactionCategoryAction,
   updateTransactionMerchantAction,
   updateTransactionNoteAction,
@@ -86,6 +89,8 @@ export function TransactionsTable({
   const [rows, setRows] = useState(page.rows);
   const [syncedFrom, setSyncedFrom] = useState(page.rows);
   const [searchDraft, setSearchDraft] = useState(filters.search ?? '');
+  /** The pending "apply to this merchant's other transactions?" offer, or null. */
+  const [rulePreview, setRulePreview] = useState<{ readonly preview: MerchantRulePreview; readonly categoryId: string } | null>(null);
   const [, startTransition] = useTransition();
 
   // A filter change or `router.refresh()` after an edit delivers a NEW
@@ -121,6 +126,20 @@ export function TransactionsTable({
 
     startTransition(async () => {
       const result = await updateTransactionCategoryAction(row.id, categoryId, false);
+
+      // Offered only on a real assignment, never on un-categorizing: "clear
+      // this category everywhere" is a destructive bulk action nobody asked
+      // for, and the whole point of the rule is to FILL Other, not empty a
+      // category.
+      if (result.ok && categoryId !== null) {
+        const preview = await previewMerchantRuleAction(row.id, categoryId, previous);
+        // Silent when there is nothing else from this merchant — a dialog
+        // saying "0 other transactions" is an interruption, not information.
+        if (preview.ok && preview.preview !== null && preview.preview.willMove.length + preview.preview.conflicting.length > 0) {
+          setRulePreview({ preview: preview.preview, categoryId });
+        }
+      }
+
       if (!result.ok) {
         toast.error(result.error);
         setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, categoryId: previous } : r)));
@@ -373,6 +392,18 @@ export function TransactionsTable({
           </div>
         </>
       )}
+
+      {/* Rendered from the ledger rather than from the row, so it survives
+          `router.refresh()` re-rendering the table underneath it. */}
+      <MerchantRuleDialog
+        preview={rulePreview?.preview ?? null}
+        categoryId={rulePreview?.categoryId ?? ''}
+        categoryName={categories.find((c) => c.id === rulePreview?.categoryId)?.name ?? ''}
+        onClose={() => {
+          setRulePreview(null);
+          router.refresh();
+        }}
+      />
     </div>
   );
 }
