@@ -94,7 +94,12 @@ describe('GamesSyncSection — configured', () => {
     expect(screen.getAllByText(/connected/i)).toHaveLength(2);
     expect(screen.getByText(/synced 1 hour ago/i)).toBeInTheDocument();
     expect(screen.getByText(/synced 3 days ago/i)).toBeInTheDocument();
-    expect(screen.getByText(/token 12d old\./i)).toBeInTheDocument();
+    expect(screen.getByText(/token 12d old/i)).toBeInTheDocument();
+    // The refresh link is present even in the healthy state, not only once the
+    // token is old enough to warn. A healthy token still expires eventually,
+    // and the owner should never have to hunt for where the page last
+    // mentioned Sony.
+    expect(screen.getByRole('link', { name: /ca\.account\.sony\.com/i })).toBeInTheDocument();
     expect(screen.queryByText(/may expire soon/i)).not.toBeInTheDocument();
   });
 

@@ -505,7 +505,13 @@ button:not(:disabled) {
      gradient does, and `soft-light` lays a cold sheen over the art rather than
      blowing highlights out the way `color-dodge` does.
 
-     No resting opacity — unlike platinum, there is nothing to be proud of yet. */
+     Like platinum, it IS faintly visible at rest. It was hover-only at first
+     and that was a regression the owner caught immediately: on Upcoming, an
+     already-added card became indistinguishable from a plain one while
+     scanning, since the only other difference was a small glyph and the text
+     on a button at the card's foot. A treatment that only exists under the
+     cursor cannot mark state in a grid you are scanning. Resting opacity is
+     lower than platinum's — this is "already handled," not "achieved." */
   .foil-card[data-foil='wishlist'] .foil-card__shine {
     background-image: linear-gradient(
       110deg,
@@ -519,7 +525,7 @@ button:not(:disabled) {
     background-position: calc(((50% - var(--background-x)) * 1.8) + 50%) calc(((50% - var(--background-y)) * 1.8) + 50%);
     mix-blend-mode: soft-light;
     filter: saturate(0) brightness(1.15);
-    opacity: var(--card-opacity);
+    opacity: calc(0.22 + (var(--card-opacity) * 0.78));
   }
 
   /**

@@ -25,7 +25,9 @@ describe('buildOwnedGamesUrl', () => {
 describe('buildAchievementsUrl', () => {
   it('targets ISteamUserStats/GetPlayerAchievements/v1 with appid, key, and steamid', () => {
     const url = buildAchievementsUrl('KEY123', '76561198000000000', 1_091_500);
-    expect(url).toContain('https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?');
+    expect(url).toContain(
+      'https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?',
+    );
     expect(url).toContain('appid=1091500');
     expect(url).toContain('key=KEY123');
     expect(url).toContain('steamid=76561198000000000');
@@ -98,9 +100,50 @@ describe('toOwnedGames', () => {
     };
 
     expect(toOwnedGames(payload)).toEqual([
-      { appid: 1_091_500, name: 'Cyberpunk 2077', playtimeMinutes: 720 },
-      { appid: 620, name: 'Portal 2', playtimeMinutes: 0 },
+      { appid: 1_091_500, name: 'Cyberpunk 2077', playtimeMinutes: 720, lastPlayedAt: null },
+      { appid: 620, name: 'Portal 2', playtimeMinutes: 0, lastPlayedAt: null },
     ]);
+  });
+
+  /**
+   * `rtime_last_played` is Unix SECONDS and was in this response all along —
+   * `buildOwnedGamesUrl` already sets `include_appinfo=1`. The parser just
+   * never read it until the library needed to sort PSN and Steam games
+   * together by recency.
+   */
+  it('maps rtime_last_played into an ISO lastPlayedAt', () => {
+    const payload = {
+      response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 720, rtime_last_played: 1_756_252_800 }] },
+    };
+
+    expect(toOwnedGames(payload)[0]?.lastPlayedAt).toBe('2025-08-27T00:00:00.000Z');
+  });
+
+  /**
+   * Steam sends `0` for a game you own but have never launched. Reading that
+   * as a real timestamp would date it to 1970 and rank it BELOW every game
+   * with no date at all, which is the opposite of what `nulls last` in
+   * `listGames`'s ordering is there to achieve.
+   */
+  it('treats rtime_last_played 0 as never-played, not as 1970', () => {
+    const payload = {
+      response: { games: [{ appid: 620, name: 'Portal 2', playtime_forever: 0, rtime_last_played: 0 }] },
+    };
+
+    expect(toOwnedGames(payload)[0]?.lastPlayedAt).toBeNull();
+  });
+
+  it('leaves lastPlayedAt null when rtime_last_played is absent or malformed', () => {
+    const payload = {
+      response: {
+        games: [
+          { appid: 620, name: 'Portal 2', playtime_forever: 10 },
+          { appid: 730, name: 'CS2', playtime_forever: 10, rtime_last_played: 'yesterday' },
+        ],
+      },
+    };
+
+    expect(toOwnedGames(payload).map((g) => g.lastPlayedAt)).toEqual([null, null]);
   });
 
   it('returns [] for a private-profile response with no games key at all', () => {
@@ -125,7 +168,9 @@ describe('toOwnedGames', () => {
       },
     };
 
-    expect(toOwnedGames(payload)).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 50 }]);
+    expect(toOwnedGames(payload)).toEqual([
+      { appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 50, lastPlayedAt: null },
+    ]);
   });
 
   it('defaults a missing or malformed playtime_forever to 0 rather than dropping the game', () => {
@@ -140,15 +185,17 @@ describe('toOwnedGames', () => {
     };
 
     expect(toOwnedGames(payload)).toEqual([
-      { appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 0 },
-      { appid: 620, name: 'Portal 2', playtimeMinutes: 0 },
-      { appid: 400, name: 'Portal', playtimeMinutes: 0 },
+      { appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 0, lastPlayedAt: null },
+      { appid: 620, name: 'Portal 2', playtimeMinutes: 0, lastPlayedAt: null },
+      { appid: 400, name: 'Portal', playtimeMinutes: 0, lastPlayedAt: null },
     ]);
   });
 
   it('skips a non-object entry inside the games array', () => {
-    const payload = { response: { games: [null, 42, 'garbage', { appid: 620, name: 'Portal 2' }] } };
-    expect(toOwnedGames(payload)).toEqual([{ appid: 620, name: 'Portal 2', playtimeMinutes: 0 }]);
+    const payload = {
+      response: { games: [null, 42, 'garbage', { appid: 620, name: 'Portal 2' }] },
+    };
+    expect(toOwnedGames(payload)).toEqual([{ appid: 620, name: 'Portal 2', playtimeMinutes: 0, lastPlayedAt: null }]);
   });
 });
 
@@ -209,11 +256,14 @@ const FULLY_EMPTY = {
   achievementsUnlocked: null,
   achievementsTotal: null,
   hoursTenths: null,
+  lastPlayedAt: null,
 };
 
 describe('steamSyncFieldsToFill', () => {
   it('fills every column when all are currently null and Steam data is available', () => {
-    expect(steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual({
+    expect(
+      steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, { unlocked: 20, total: 45 }, 1_360),
+    ).toEqual({
       steamAppid: 1_091_500,
       achievementsUnlocked: 20,
       achievementsTotal: 45,
@@ -222,12 +272,26 @@ describe('steamSyncFieldsToFill', () => {
   });
 
   it('never fills a column that already holds a value, even when Steam disagrees', () => {
-    const current = { steamAppid: 999, achievementsUnlocked: 10, achievementsTotal: 40, hoursTenths: 500 };
-    expect(steamSyncFieldsToFill(current, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual({});
+    const current = {
+      steamAppid: 999,
+      achievementsUnlocked: 10,
+      achievementsTotal: 40,
+      hoursTenths: 500,
+      lastPlayedAt: null,
+    };
+    expect(steamSyncFieldsToFill(current, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual(
+      {},
+    );
   });
 
   it('fills only the columns that are null, leaving already-set columns untouched', () => {
-    const current = { steamAppid: 1_091_500, achievementsUnlocked: null, achievementsTotal: null, hoursTenths: 500 };
+    const current = {
+      steamAppid: 1_091_500,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
+      hoursTenths: 500,
+      lastPlayedAt: null,
+    };
     expect(steamSyncFieldsToFill(current, 1_091_500, { unlocked: 20, total: 45 }, 1_360)).toEqual({
       achievementsUnlocked: 20,
       achievementsTotal: 45,
@@ -239,6 +303,8 @@ describe('steamSyncFieldsToFill', () => {
   });
 
   it('fills steamAppid alone when only a match was found, no achievements or playtime yet', () => {
-    expect(steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, null, null)).toEqual({ steamAppid: 1_091_500 });
+    expect(steamSyncFieldsToFill(FULLY_EMPTY, 1_091_500, null, null)).toEqual({
+      steamAppid: 1_091_500,
+    });
   });
 });

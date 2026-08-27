@@ -5,7 +5,12 @@ import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
 import { DuplicateWishlistGameError } from '@/server/db/games/errors';
-import { createWishlistGame, promoteReleasedWantedGames } from '@/server/db/games/games';
+import {
+  createWishlistGame,
+  listWantedReleaseDates,
+  promoteReleasedWantedGames,
+  updateWantedReleaseDate,
+} from '@/server/db/games/games';
 import type { UpcomingPlatform } from '@/server/games/upcoming';
 import type { GamePlatform } from '@/server/games/taxonomy';
 import { type ActionResult, fail, ok } from '../action-result';
@@ -26,6 +31,7 @@ const wishlistInputSchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'releaseDate must be YYYY-MM-DD')
     .nullable(),
+  releasePrecision: z.enum(['day', 'month']).nullable(),
   platforms: z.array(z.enum(['ps5', 'pc'])),
 });
 
@@ -34,6 +40,7 @@ export interface WishlistAddInput {
   readonly title: string;
   readonly coverUrl: string | null;
   readonly releaseDate: string | null;
+  readonly releasePrecision: 'day' | 'month' | null;
   readonly platforms: readonly UpcomingPlatform[];
 }
 
@@ -65,6 +72,7 @@ export async function addToWishlistAction(input: WishlistAddInput): Promise<Acti
       title: parsed.data.title,
       coverUrl: parsed.data.coverUrl,
       releaseDate: parsed.data.releaseDate,
+      releasePrecision: parsed.data.releasePrecision,
       platform,
     });
   } catch (error) {
@@ -99,5 +107,76 @@ export async function promoteReleasedWantedGamesAction(): Promise<ActionResult> 
   const owner = await requireOwner();
   await promoteReleasedWantedGames(owner.userId);
   revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/** One game's fresh reading, as `UpcomingView` already has it from the feed on screen. */
+export interface ReleaseDateReading {
+  readonly igdbId: number;
+  readonly releaseDate: string | null;
+  readonly releasePrecision: 'day' | 'month' | null;
+}
+
+/**
+ * Corrects stored wishlist release dates against the feed the Upcoming page
+ * has already fetched and rendered.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS, AND WHY IT COSTS NOTHING.
+ *
+ * Wishlist rows are stamped with IGDB's date at the moment they are added, and
+ * then never revisited. Two things go wrong with that. Every row added before
+ * the query started requesting `release_dates.d` holds a `-01` PLACEHOLDER day
+ * (see `RawReleaseDate.day`), so those games can never count down; and a game
+ * that slips from November to March keeps advertising November forever.
+ *
+ * The Upcoming page already fetches twelve months of IGDB data containing
+ * exactly these games, purely to render the grid. Reconciling against readings
+ * the client already holds therefore adds no network call, no API quota, and no
+ * new failure mode — it is bookkeeping on data that was on screen anyway.
+ *
+ * SAFETY. Only `wanted` rows with an `igdb_id` are eligible, enforced in the
+ * UPDATE's own WHERE clause and not merely at the call site
+ * (`updateWantedReleaseDate`), so a game promoted to `backlog` in the meantime
+ * is untouchable. A reading with no date is SKIPPED rather than written as
+ * null: `fetchUpcomingGames()` returns `[]` for a missing credential and for a
+ * failed request alike (see `igdbConfigured()`), so "no date" can mean "IGDB
+ * did not answer," and treating that as truth would erase every stored date.
+ * The caller passes only games it actually rendered, which is the same
+ * protection from the other side.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function reconcileWishlistReleaseDatesAction(
+  readings: readonly ReleaseDateReading[],
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+  if (readings.length === 0) return ok();
+
+  const byIgdbId = new Map(readings.map((reading) => [reading.igdbId, reading]));
+  const stored = await listWantedReleaseDates(owner.userId);
+
+  let changed = 0;
+  for (const row of stored) {
+    const reading = byIgdbId.get(row.igdbId);
+    if (reading === undefined) continue;
+    if (reading.releaseDate === null || reading.releasePrecision === null) continue;
+    if (
+      reading.releaseDate === row.releaseDate &&
+      reading.releasePrecision === row.releasePrecision
+    )
+      continue;
+
+    await updateWantedReleaseDate(
+      owner.userId,
+      row.igdbId,
+      reading.releaseDate,
+      reading.releasePrecision,
+    );
+    changed += 1;
+  }
+
+  // Only when something actually moved — an unconditional revalidate would
+  // re-render the whole Games layout on every visit to Upcoming for nothing.
+  if (changed > 0) revalidatePath('/games', 'layout');
   return ok();
 }

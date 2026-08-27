@@ -927,6 +927,22 @@ export const games = pgTable(
      */
     releaseDate: date('release_date', { mode: 'string' }),
     /**
+     * Whether `release_date` names a REAL DAY or only a month.
+     *
+     * IGDB tags every release date with a `date_format`: `0` means it knows
+     * the exact day, `1` means it genuinely only knows the month (GTA VI is
+     * "November 2026", full stop). A month-precision row is stored as
+     * `YYYY-MM-01`, so the day component is a placeholder — and without this
+     * column there is no way to tell that `2026-11-01` from a game that
+     * really does launch on 1 November.
+     *
+     * Deliberately NOT inferred from `day === 1`: roughly one real release
+     * date in thirty lands on the 1st, and those would silently render as
+     * "November 2026" instead of counting down. Nullable because most rows
+     * have no release date at all to be precise about.
+     */
+    releasePrecision: text('release_precision', { enum: ['day', 'month'] }),
+    /**
      * IGDB's numeric game id, stamped only on rows created from the
      * "Upcoming games" wishlist flow. Exact-dedup key: is this IGDB game
      * already wishlisted? Nullable — every pre-existing row and every

@@ -6,6 +6,7 @@ import { Gamepad2, Heart, Trophy } from 'lucide-react';
 import { FoilCard } from '@/components/games/foil-card';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
+import { formatReleaseCountdown } from '@/server/games/release-date';
 import { STATUS_LABELS } from '@/server/games/taxonomy';
 
 /**
@@ -33,6 +34,12 @@ import { STATUS_LABELS } from '@/server/games/taxonomy';
  *   - A game with no cover art falls back to a letter tile. It is genuinely
  *     weak — a single initial — but adding a title only there would make the
  *     grid inconsistent in exactly the way this change set out to fix.
+ *
+ * The ONE exception is the countdown on a wishlisted card, and it earns its
+ * place: a wishlist entry is not a game you can recognise from its art and go
+ * play, it is a date you are waiting on, and that date is the only reason the
+ * row is in the library at all. It sits ON the art as a pill rather than under
+ * the card, so the grid's rhythm is untouched and owned games stay wordless.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -60,6 +67,14 @@ export function GameCard({
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   const wishlisted = game.status === 'wanted';
+  // Only a wishlisted game counts down, and only when IGDB actually gave a
+  // date. `releasePrecision` is passed rather than assumed: a month-precision
+  // row is stored as `YYYY-MM-01`, and reading that day as real would print
+  // "in 3 days" for a game IGDB never claimed a launch day for.
+  const countdown =
+    wishlisted && game.releaseDate !== null && game.releasePrecision !== null
+      ? formatReleaseCountdown(game.releaseDate, game.releasePrecision, new Date())
+      : null;
 
   return (
     <button
@@ -96,24 +111,38 @@ export function GameCard({
           )}
         </span>
 
-        {/* One small monochrome glyph, bottom-right, over an opaque scrim so it
-            stays legible against arbitrary box art without a gradient. Bottom
-            rather than top: portrait box art almost always carries the game's
-            own logo across the top third. z-20 keeps it above the foil layers
-            (z-11/z-12), which would otherwise blend over it. */}
+        {/* The countdown, top-left — opposite corner from the glyph so the two
+            can never collide, and top because portrait box art carries its
+            logo across the top third, which a small pill sits over more
+            gracefully than it sits over artwork. */}
+        {countdown === null ? null : (
+          <span className="absolute top-2 left-2 z-20 rounded-md bg-black/75 px-1.5 py-0.5 text-[0.6875rem] font-medium tracking-wide text-white uppercase">
+            {countdown}
+          </span>
+        )}
+
+        {/* A SOLID mark, not an outline in a black puck. The puck was there to
+            keep a thin 14px outline legible against arbitrary box art, but it
+            read as generic app chrome stuck onto someone else's artwork. A
+            filled shape with a drop-shadow carries at this size on its own —
+            the silhouette does the work the container was doing, and there is
+            less of the app sitting on top of the cover.
+
+            Bottom-right: see the countdown's comment above. z-20 keeps it over
+            the foil layers (z-11/z-12), which would otherwise blend into it. */}
         {game.platinum ? (
           <span
             aria-hidden
-            className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-slate-200 ring-1 ring-white/25"
+            className="absolute right-2 bottom-2 z-20 text-slate-100 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
           >
-            <Trophy className="size-3.5" />
+            <Trophy className="size-5" fill="currentColor" strokeWidth={1.5} />
           </span>
         ) : wishlisted ? (
           <span
             aria-hidden
-            className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
+            className="absolute right-2 bottom-2 z-20 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
           >
-            <Heart className="size-3.5" />
+            <Heart className="size-5" fill="currentColor" strokeWidth={1.5} />
           </span>
         ) : null}
       </FoilCard>

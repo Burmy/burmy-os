@@ -31,6 +31,8 @@ function game(overrides: Partial<Game> = {}): Game {
     psnTitleId: null,
     psnNpCommunicationId: null,
     lastPlayedAt: null,
+    releaseDate: null,
+    releasePrecision: null,
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
     playYears: [],

@@ -145,6 +145,16 @@ export function buildUpcomingQuery(nowSeconds: number, horizonSeconds: number, h
     'platforms',
     'release_dates.y',
     'release_dates.m',
+    // The exact launch DAY, for `date_format` 0 rows.
+    //
+    // IGDB HAS NO `d` FIELD, and asking for one fails silently — a query for
+    // `release_dates.d` returns HTTP 200 with the key simply absent from every
+    // row, so the app quietly produced month precision for all 46 upcoming
+    // games and nothing anywhere reported a problem. Verified against the live
+    // API. The day is only reachable through `date` (Unix seconds) or the
+    // pre-formatted `human` string; `date` is the machine-readable one.
+    // See `releaseDatesFrom` for the UTC handling.
+    'release_dates.date',
     'release_dates.date_format',
     'release_dates.platform',
   ].join(',');

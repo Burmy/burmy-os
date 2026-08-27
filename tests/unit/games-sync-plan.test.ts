@@ -15,6 +15,7 @@ function stored(overrides: Partial<StoredGameForSync> = {}): StoredGameForSync {
     achievementsUnlocked: 30,
     achievementsTotal: 63,
     playYearTenths: null,
+    lastPlayedAt: null,
     ...overrides,
   };
 }
@@ -82,7 +83,11 @@ describe('planLinkedGameChanges', () => {
       510,
     );
     const reconcile = changes.find((c) => c.kind === 'reconcile');
-    expect(reconcile?.payload).toMatchObject({ splitTenths: 490, newTotalTenths: 510, differenceTenths: 20 });
+    expect(reconcile?.payload).toMatchObject({
+      splitTenths: 490,
+      newTotalTenths: 510,
+      differenceTenths: 20,
+    });
   });
 
   it('raises no reconcile item when the game has no split', () => {
@@ -122,7 +127,12 @@ describe('planLinkedGameChanges', () => {
 
 describe('planNewGameChange', () => {
   it('describes a Steam-owned game that has no library row', () => {
-    const change = planNewGameChange({ appid: 50, name: 'Half-Life: Opposing Force', playtimeMinutes: 438 });
+    const change = planNewGameChange({
+      appid: 50,
+      name: 'Half-Life: Opposing Force',
+      playtimeMinutes: 438,
+      lastPlayedAt: null,
+    });
 
     expect(change.kind).toBe('new_game');
     expect(change.gameId).toBeNull();
@@ -131,7 +141,12 @@ describe('planNewGameChange', () => {
   });
 
   it('records zero hours for a never-played owned game rather than omitting them', () => {
-    const change = planNewGameChange({ appid: 1449560, name: 'Metro Exodus Enhanced Edition', playtimeMinutes: 0 });
+    const change = planNewGameChange({
+      appid: 1449560,
+      name: 'Metro Exodus Enhanced Edition',
+      playtimeMinutes: 0,
+      lastPlayedAt: null,
+    });
     expect(change.payload).toMatchObject({ hoursTenths: 0 });
   });
 });

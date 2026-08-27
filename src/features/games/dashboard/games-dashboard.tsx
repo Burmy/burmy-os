@@ -89,7 +89,7 @@ export function GamesDashboard({
           and Money used to be two separate boxed/headed groups; merged into
           one 6-card row for the same reason Finance's row is one row, not
           two. */}
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Games" value={String(summary.totalGames)} {...(qualityHint === undefined ? {} : { hint: qualityHint })} />
         <StatCard
           label="Hours played"
@@ -115,7 +115,7 @@ export function GamesDashboard({
       </Section>
 
       <Section title="Trends">
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-3">
           <ChartBlock label="Games per year">
             <GamesPerYearChart rows={yearly.rows} />
           </ChartBlock>
@@ -129,7 +129,7 @@ export function GamesDashboard({
       </Section>
 
       <Section title="Breakdown">
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           <ChartBlock label="Platforms">
             <DistributionChart slices={platforms} emptyMessage="No platforms recorded yet." />
           </ChartBlock>
@@ -150,7 +150,7 @@ export function GamesDashboard({
           border p-4`), so wrapping four of them in a second outer Section
           box was the same "double box" problem the top row already fixed,
           just with a richer card instead of a plain StatCard. */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2">
         <TopGames title="Most played" hint="By total hours" metric="hours" entries={buildLeaderboard(rows, 'hours', 3)} />
         <TopGames title="Highest rated" hint="Your own rating" metric="rating" entries={buildLeaderboard(rows, 'rating', 3)} />
         <TopGames
@@ -167,7 +167,7 @@ export function GamesDashboard({
         />
       </div>
 
-      <div className="grid gap-6 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <StatCard
           label="Most-played developer"
           value={callouts.topDeveloper?.name ?? '—'}

@@ -17,7 +17,12 @@ import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
 import type { GameStatRow } from '@/server/games/stats';
 import type { GameOwnership, GamePlatform, GameStatus } from '@/server/games/taxonomy';
-import { DuplicateGameError, DuplicateWishlistGameError, GameNotFoundError, isUniqueViolation } from './errors';
+import {
+  DuplicateGameError,
+  DuplicateWishlistGameError,
+  GameNotFoundError,
+  isUniqueViolation,
+} from './errors';
 import { listPlayYears, listPlayYearsForGame } from './play-years';
 
 export interface Game {
@@ -45,6 +50,10 @@ export interface Game {
   readonly psnTitleId: string | null;
   readonly psnNpCommunicationId: string | null;
   readonly lastPlayedAt: Date | null;
+  /** `YYYY-MM-DD` for a wishlisted game, else `null`. Read WITH `releasePrecision`, never alone. */
+  readonly releaseDate: string | null;
+  /** Whether `releaseDate`'s day is real or a `-01` placeholder — see `schema.ts`. */
+  readonly releasePrecision: 'day' | 'month' | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
@@ -106,6 +115,8 @@ function rowToGame(
     psnTitleId: row.psnTitleId,
     psnNpCommunicationId: row.psnNpCommunicationId,
     lastPlayedAt: row.lastPlayedAt,
+    releaseDate: row.releaseDate,
+    releasePrecision: row.releasePrecision,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     playYears,
@@ -127,33 +138,35 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
     .from(gamesTable)
     .where(and(...filters))
     .orderBy(
-      // Newest-played first. Postgres's DESC defaults to NULLS FIRST, which
-      // would put every game with no recorded year — an unplayed backlog
-      // entry — ABOVE everything the owner has actually played. `nulls last`
-      // is load-bearing here, not decorative.
-      sql`${gamesTable.firstPlayedYear} desc nulls last`,
       // ─────────────────────────────────────────────────────────────────────
-      // DELIBERATE, OWNER-CHOSEN PLATFORM ORDER — NOT ALPHABETICAL.
+      // RECENCY, PLATFORM-BLIND.
       //
-      // Only breaks ties among games with NO recorded year (the `when
-      // first_played_year is null` guard): for every game that DOES have a
-      // year, this branch collapses to the constant `0` and falls straight
-      // through to the title tiebreak below, exactly as before. Within the
-      // no-year group, rank is PS5, PS4, Steam/PC (steam and pc share a rank
-      // — they render as one merged label, see PLATFORM_LABELS), PSP, then
-      // anything else. Do not "tidy" this into alphabetical order or enum
-      // order — it encodes a real product decision the owner asked for.
+      // This used to sort on `first_played_year` and then a deliberate
+      // PS5 > PS4 > Steam/PC > PSP rank. Real usage rejected the platform
+      // rank outright: the library should read as "what I have been playing,"
+      // not as a console shelf.
+      //
+      // `last_played_at` alone could not do it. When this changed, only 74 of
+      // 185 rows had one and every single one came from PSN, so sorting on it
+      // would have produced PSN-then-everything-else — the exact grouping the
+      // change set out to remove. Steam's `rtime_last_played` is now captured
+      // too (`toOwnedGames` in `steam.ts`; it was always in the response, just
+      // never parsed), and `first_played_year` covers the rest.
+      //
+      // TWO HONEST APPROXIMATIONS, neither fixable with the data available:
+      //   1. A year-only game is ranked at 31 December of that year, so it
+      //      sorts ABOVE exact-dated games from the same year. Ranking it at
+      //      1 January would bury it under them instead; there is no correct
+      //      answer, only a choice, and surfacing is the kinder one.
+      //   2. `first_played_year` is FIRST played. A game first played in 2019
+      //      and still being played today ranks as 2019 until a sync gives it
+      //      a real `last_played_at`.
+      //
+      // `nulls last` is load-bearing: Postgres DESC defaults to NULLS FIRST,
+      // which would float every never-played backlog entry above everything
+      // actually played.
       // ─────────────────────────────────────────────────────────────────────
-      sql`case when ${gamesTable.firstPlayedYear} is null then
-        case ${gamesTable.platform}::text
-          when 'ps5' then 0
-          when 'ps4' then 1
-          when 'steam' then 2
-          when 'pc' then 2
-          when 'psp' then 3
-          else 4
-        end
-      else 0 end`,
+      sql`coalesce(${gamesTable.lastPlayedAt}, make_date(${gamesTable.firstPlayedYear}, 12, 31)) desc nulls last`,
       asc(gamesTable.title),
     );
 
@@ -164,7 +177,8 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
   const byGame = new Map<string, { year: number; hoursTenths: number }[]>();
   for (const row of splits) {
     const existing = byGame.get(row.gameId);
-    if (existing === undefined) byGame.set(row.gameId, [{ year: row.year, hoursTenths: row.hoursTenths }]);
+    if (existing === undefined)
+      byGame.set(row.gameId, [{ year: row.year, hoursTenths: row.hoursTenths }]);
     else existing.push({ year: row.year, hoursTenths: row.hoursTenths });
   }
 
@@ -308,6 +322,8 @@ export interface WishlistGameInput {
   readonly coverUrl: string | null;
   /** `YYYY-MM-DD`, or `null` for a Later/TBD candidate — see `UpcomingMonthGame.releaseDate`. */
   readonly releaseDate: string | null;
+  /** `null` exactly when `releaseDate` is. Persisting this is what lets the card count down honestly. */
+  readonly releasePrecision: 'day' | 'month' | null;
   readonly platform: GamePlatform;
 }
 
@@ -332,6 +348,7 @@ export async function createWishlistGame(ownerId: string, input: WishlistGameInp
         status: 'wanted',
         coverUrl: input.coverUrl,
         releaseDate: input.releaseDate,
+        releasePrecision: input.releasePrecision,
         igdbId: input.igdbId,
       })
       .returning();
@@ -374,7 +391,11 @@ export async function countOverdueWantedGames(ownerId: string): Promise<number> 
     .select({ n: sql<number>`count(*)::int` })
     .from(gamesTable)
     .where(
-      and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.status, 'wanted'), sql`${gamesTable.releaseDate} < current_date`),
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        eq(gamesTable.status, 'wanted'),
+        sql`${gamesTable.releaseDate} < current_date`,
+      ),
     );
 
   return rows[0]?.n ?? 0;
@@ -392,11 +413,69 @@ export async function promoteReleasedWantedGames(ownerId: string): Promise<numbe
     .update(gamesTable)
     .set({ status: 'backlog', updatedAt: new Date() })
     .where(
-      and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.status, 'wanted'), sql`${gamesTable.releaseDate} < current_date`),
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        eq(gamesTable.status, 'wanted'),
+        sql`${gamesTable.releaseDate} < current_date`,
+      ),
     )
     .returning({ id: gamesTable.id });
 
   return rows.length;
+}
+
+/** One wishlist row's stored release date, keyed by IGDB id — the input to a reconcile. */
+export interface WantedReleaseDate {
+  readonly igdbId: number;
+  readonly releaseDate: string | null;
+  readonly releasePrecision: 'day' | 'month' | null;
+}
+
+/** Every `wanted` row that came from the Upcoming flow, i.e. has an IGDB id to match on. */
+export async function listWantedReleaseDates(ownerId: string): Promise<WantedReleaseDate[]> {
+  const rows = await getDb()
+    .select({
+      igdbId: gamesTable.igdbId,
+      releaseDate: gamesTable.releaseDate,
+      releasePrecision: gamesTable.releasePrecision,
+    })
+    .from(gamesTable)
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        eq(gamesTable.status, 'wanted'),
+        isNotNull(gamesTable.igdbId),
+      ),
+    );
+
+  return rows.flatMap((row) => (row.igdbId === null ? [] : [{ ...row, igdbId: row.igdbId }]));
+}
+
+/**
+ * Corrects one wishlist row's release date from a fresh IGDB reading.
+ *
+ * Scoped to `status = 'wanted'` in the WHERE clause, not just at the caller: a
+ * game the owner has since marked owned is no longer a wishlist row and its
+ * date must not be rewritten by a background reconcile it never asked for. The
+ * `igdb_id` match is exact — `games_owner_igdb_id_idx` makes it unique per
+ * owner — so this can never touch more than one row.
+ */
+export async function updateWantedReleaseDate(
+  ownerId: string,
+  igdbId: number,
+  releaseDate: string,
+  releasePrecision: 'day' | 'month',
+): Promise<void> {
+  await getDb()
+    .update(gamesTable)
+    .set({ releaseDate, releasePrecision, updatedAt: new Date() })
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        eq(gamesTable.igdbId, igdbId),
+        eq(gamesTable.status, 'wanted'),
+      ),
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -411,6 +490,7 @@ export interface SteamSyncGame {
   readonly hoursTenths: number | null;
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
+  readonly lastPlayedAt: Date | null;
 }
 
 /** How many Steam-platform games the owner has — a sync run's `total`. */
@@ -440,7 +520,11 @@ export async function countSteamGames(ownerId: string): Promise<number> {
  * Ordered STABLY BY `id` — not title, which can change mid-run and would
  * make a bookmark meaningless.
  */
-export async function listSteamGamesChunk(ownerId: string, afterId: string | null, limit: number): Promise<SteamSyncGame[]> {
+export async function listSteamGamesChunk(
+  ownerId: string,
+  afterId: string | null,
+  limit: number,
+): Promise<SteamSyncGame[]> {
   const filters = [eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')];
   if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
 
@@ -452,6 +536,7 @@ export async function listSteamGamesChunk(ownerId: string, afterId: string | nul
       hoursTenths: gamesTable.hoursTenths,
       achievementsUnlocked: gamesTable.achievementsUnlocked,
       achievementsTotal: gamesTable.achievementsTotal,
+      lastPlayedAt: gamesTable.lastPlayedAt,
     })
     .from(gamesTable)
     .where(and(...filters))
@@ -553,7 +638,11 @@ export async function countPsnGames(ownerId: string): Promise<number> {
  * delete can neither strand nor duplicate a keyset walk the way OFFSET/LIMIT
  * would).
  */
-export async function listPsnGamesChunk(ownerId: string, afterId: string | null, limit: number): Promise<PsnSyncGame[]> {
+export async function listPsnGamesChunk(
+  ownerId: string,
+  afterId: string | null,
+  limit: number,
+): Promise<PsnSyncGame[]> {
   const filters = [eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)];
   if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
 
@@ -594,10 +683,20 @@ export async function listPsnGamesChunk(ownerId: string, afterId: string | null,
 export async function listPsnGamesForMatching(
   ownerId: string,
 ): Promise<
-  { readonly id: string; readonly title: string; readonly platform: GamePlatform; readonly psnTitleId: string | null }[]
+  {
+    readonly id: string;
+    readonly title: string;
+    readonly platform: GamePlatform;
+    readonly psnTitleId: string | null;
+  }[]
 > {
   const rows = await getDb()
-    .select({ id: gamesTable.id, title: gamesTable.title, platform: gamesTable.platform, psnTitleId: gamesTable.psnTitleId })
+    .select({
+      id: gamesTable.id,
+      title: gamesTable.title,
+      platform: gamesTable.platform,
+      psnTitleId: gamesTable.psnTitleId,
+    })
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)));
 

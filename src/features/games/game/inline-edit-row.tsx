@@ -4,7 +4,13 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
@@ -27,7 +33,28 @@ import type { ActionResult } from '@/features/games/action-result';
  * prop one level up.
  */
 
-async function commit(onSave: (value: string) => Promise<ActionResult>, value: string): Promise<boolean> {
+/**
+ * One label/value row.
+ *
+ * A FIXED LABEL COLUMN, not `justify-between`. These rows used to push the
+ * label hard left and the value hard right across the whole column — which is
+ * fine at 400px and unreadable at 1170px, where "Ownership" and "Physical"
+ * ended up most of a screen apart with nothing connecting them. Real usage
+ * reported exactly that: "the info heading and info too far apart so i can't
+ * really tell."
+ *
+ * A 9rem label column with the value immediately beside it means the eye
+ * makes one short hop instead of scanning a full-width run. It also removes
+ * the reason the old layout needed a rule under every row to bind the pair
+ * together — see `game-view-content.tsx`, which dropped `divide-y` in the
+ * same change.
+ */
+export const ROW_CLASS = 'grid grid-cols-[9rem_1fr] items-start gap-3 py-1.5 text-sm';
+
+async function commit(
+  onSave: (value: string) => Promise<ActionResult>,
+  value: string,
+): Promise<boolean> {
   const result = await onSave(value);
   if (!result.ok) {
     toast.error(result.error);
@@ -71,10 +98,10 @@ export function InlineEditField({
   const Field = multiline ? Textarea : Input;
 
   return (
-    <div className="flex items-start justify-between gap-4 py-1.5 text-sm">
-      <span className="text-muted-foreground shrink-0">{label}</span>
+    <div className={ROW_CLASS}>
+      <span className="text-muted-foreground">{label}</span>
       {disabled ? (
-        <span className="text-right">
+        <span>
           {displayValue ?? (value || placeholder)}
           {disabledHint === undefined ? null : (
             <span className="text-muted-foreground block text-xs">{disabledHint}</span>
@@ -86,7 +113,7 @@ export function InlineEditField({
           aria-label={label}
           autoFocus
           rows={multiline ? 3 : undefined}
-          className={cn('h-8 max-w-56 text-right', multiline && 'h-auto max-w-full text-left')}
+          className={cn('h-8 max-w-56', multiline && 'h-auto max-w-full')}
           onFocus={(event) => event.target.select()}
           onBlur={(event) => void handleCommit(event.target.value)}
           onKeyDown={(event) => {
@@ -101,12 +128,12 @@ export function InlineEditField({
           onClick={() => setEditing(true)}
           disabled={pending}
           className={cn(
-            'hover:text-foreground -my-1 max-w-full truncate rounded-md px-1 py-1 text-right transition-colors',
+            'hover:text-foreground -mx-1 -my-1 max-w-full truncate rounded-md px-1 py-1 text-left transition-colors',
             value ? '' : 'text-muted-foreground italic',
           )}
         >
           {pending ? (
-            <Loader2 className="ml-auto size-3.5 animate-spin" aria-hidden />
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
           ) : (
             (displayValue ?? (value || placeholder))
           )}
@@ -145,8 +172,8 @@ export function InlineEditSelect({
   }
 
   return (
-    <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
-      <span className="text-muted-foreground shrink-0">{label}</span>
+    <div className={cn(ROW_CLASS, 'items-center')}>
+      <span className="text-muted-foreground">{label}</span>
       {editing ? (
         <Select
           defaultOpen
@@ -156,7 +183,7 @@ export function InlineEditSelect({
             if (!open) setEditing(false);
           }}
         >
-          <SelectTrigger size="sm" aria-label={label} className="h-8">
+          <SelectTrigger size="sm" aria-label={label} className="h-8 w-full max-w-56">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -174,11 +201,15 @@ export function InlineEditSelect({
           onClick={() => setEditing(true)}
           disabled={pending}
           className={cn(
-            'hover:text-foreground -my-1 rounded-md px-1 py-1 text-right transition-colors',
+            'hover:text-foreground -mx-1 -my-1 w-fit max-w-full truncate rounded-md px-1 py-1 text-left transition-colors',
             displayValue ? '' : 'text-muted-foreground italic',
           )}
         >
-          {pending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : displayValue || placeholder}
+          {pending ? (
+            <Loader2 className="size-3.5 animate-spin" aria-hidden />
+          ) : (
+            displayValue || placeholder
+          )}
         </button>
       )}
     </div>

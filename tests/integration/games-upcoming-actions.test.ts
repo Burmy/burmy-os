@@ -54,6 +54,7 @@ function wishlistInput(overrides: Partial<Parameters<typeof actions.addToWishlis
     title: 'Fable',
     coverUrl: 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/cobc6d.jpg',
     releaseDate: '2027-02-01',
+    releasePrecision: null,
     platforms: ['ps5'],
     ...overrides,
   };
@@ -112,6 +113,7 @@ describe('promoteReleasedWantedGamesAction', () => {
       title: 'Overdue',
       coverUrl: null,
       releaseDate: '2020-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
     const future = await games.createWishlistGame(ownerId, {
@@ -119,6 +121,7 @@ describe('promoteReleasedWantedGamesAction', () => {
       title: 'Future',
       coverUrl: null,
       releaseDate: '2099-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -137,6 +140,7 @@ describe('promoteReleasedWantedGamesAction', () => {
       title: 'Their overdue game',
       coverUrl: null,
       releaseDate: '2020-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -155,6 +159,7 @@ describe('promoteReleasedWantedGamesAction', () => {
       title: 'Overdue',
       coverUrl: null,
       releaseDate: '2020-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -164,5 +169,149 @@ describe('promoteReleasedWantedGamesAction', () => {
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
     expect((await games.getGame(ownerId, overdue.id)).status).toBe('backlog');
+  });
+});
+
+/**
+ * The reconcile exists because a wishlist row is stamped with IGDB's date at
+ * the moment it is added and then never revisited. Two things go wrong with
+ * that: every row added before the query started requesting `release_dates.d`
+ * holds a `-01` PLACEHOLDER day and so can never count down, and a game that
+ * slips from November to March advertises November forever.
+ */
+describe('reconcileWishlistReleaseDatesAction', () => {
+  it('upgrades a stored month-precision placeholder to a real day', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createWishlistGame(ownerId, {
+      igdbId: 42,
+      title: "Marvel's Wolverine",
+      coverUrl: null,
+      releaseDate: '2026-09-01',
+      releasePrecision: 'month',
+      platform: 'ps5',
+    });
+
+    const result = await actions.reconcileWishlistReleaseDatesAction([
+      { igdbId: 42, releaseDate: '2026-09-18', releasePrecision: 'day' },
+    ]);
+
+    expect(result.ok).toBe(true);
+    const fetched = await games.getGame(ownerId, game.id);
+    expect(fetched.releaseDate).toBe('2026-09-18');
+    expect(fetched.releasePrecision).toBe('day');
+  });
+
+  it('follows a genuine delay, not just a precision upgrade', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createWishlistGame(ownerId, {
+      igdbId: 7,
+      title: 'Slipped Game',
+      coverUrl: null,
+      releaseDate: '2026-11-20',
+      releasePrecision: 'day',
+      platform: 'ps5',
+    });
+
+    await actions.reconcileWishlistReleaseDatesAction([
+      { igdbId: 7, releaseDate: '2027-03-12', releasePrecision: 'day' },
+    ]);
+
+    expect((await games.getGame(ownerId, game.id)).releaseDate).toBe('2027-03-12');
+  });
+
+  /**
+   * A game IGDB genuinely only knows the month of (GTA VI is "November 2026",
+   * full stop) must keep saying so. Writing a day here would invent a launch
+   * date, which is the entire reason precision is stored rather than inferred.
+   */
+  it('leaves a still-month-precision reading exactly as it was', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createWishlistGame(ownerId, {
+      igdbId: 99,
+      title: 'Grand Theft Auto VI',
+      coverUrl: null,
+      releaseDate: '2026-11-01',
+      releasePrecision: 'month',
+      platform: 'ps5',
+    });
+
+    await actions.reconcileWishlistReleaseDatesAction([
+      { igdbId: 99, releaseDate: '2026-11-01', releasePrecision: 'month' },
+    ]);
+
+    const fetched = await games.getGame(ownerId, game.id);
+    expect(fetched.releaseDate).toBe('2026-11-01');
+    expect(fetched.releasePrecision).toBe('month');
+  });
+
+  /**
+   * `fetchUpcomingGames()` returns `[]` for a MISSING CREDENTIAL and for a
+   * FAILED REQUEST alike (see `igdbConfigured()`'s own doc comment), so a
+   * reading with no date can mean "IGDB did not answer." Treating that as
+   * truth would erase every stored date the owner is waiting on.
+   */
+  it('never nulls a stored date from a reading that carries none', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createWishlistGame(ownerId, {
+      igdbId: 5,
+      title: 'Still Dated',
+      coverUrl: null,
+      releaseDate: '2026-12-04',
+      releasePrecision: 'day',
+      platform: 'ps5',
+    });
+
+    await actions.reconcileWishlistReleaseDatesAction([
+      { igdbId: 5, releaseDate: null, releasePrecision: null },
+    ]);
+
+    expect((await games.getGame(ownerId, game.id)).releaseDate).toBe('2026-12-04');
+  });
+
+  /**
+   * A game the owner has since marked owned is no longer a wishlist row, and a
+   * background reconcile they never asked to run must not rewrite its data.
+   * Enforced in `updateWantedReleaseDate`'s own WHERE clause, not merely at
+   * the call site — this proves the DAL guard, not the caller's filter.
+   */
+  it('does not touch a game that has been promoted out of the wishlist', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createWishlistGame(ownerId, {
+      igdbId: 11,
+      title: 'Since Released',
+      coverUrl: null,
+      releaseDate: '2026-01-01',
+      releasePrecision: 'month',
+      platform: 'ps5',
+    });
+    await games.updateGame(ownerId, game.id, { title: game.title, platform: 'ps5', status: 'backlog' });
+
+    await actions.reconcileWishlistReleaseDatesAction([
+      { igdbId: 11, releaseDate: '2026-01-22', releasePrecision: 'day' },
+    ]);
+
+    expect((await games.getGame(ownerId, game.id)).releaseDate).toBe('2026-01-01');
+  });
+
+  it('never reaches across owners', async () => {
+    // Provisioned first so it is the owner `requireOwner()` resolves to; its
+    // own wishlist stays empty, which is the point.
+    await provisionOwner();
+    const otherOwnerId = await provisionOwner('someone-else@burmy.test');
+    const theirs = await games.createWishlistGame(otherOwnerId, {
+      igdbId: 77,
+      title: 'Theirs',
+      coverUrl: null,
+      releaseDate: '2026-10-01',
+      releasePrecision: 'month',
+      platform: 'ps5',
+    });
+
+    // Acting as `ownerId`, whose own wishlist is empty.
+    await actions.reconcileWishlistReleaseDatesAction([
+      { igdbId: 77, releaseDate: '2026-10-15', releasePrecision: 'day' },
+    ]);
+
+    expect((await games.getGame(otherOwnerId, theirs.id)).releaseDate).toBe('2026-10-01');
   });
 });

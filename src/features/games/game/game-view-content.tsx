@@ -7,7 +7,11 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
 import type { GameFieldKey } from '@/features/games/game-actions';
-import { isRealPlayYearDraft, PlayYearsPanel, type PlayYearDraft } from '@/features/games/play-years-panel';
+import {
+  isRealPlayYearDraft,
+  PlayYearsPanel,
+  type PlayYearDraft,
+} from '@/features/games/play-years-panel';
 import { GAME_OWNERSHIPS, OWNERSHIP_LABELS } from '@/server/games/taxonomy';
 import type { GameOwnership } from '@/server/games/taxonomy';
 import { InlineEditField, InlineEditSelect } from './inline-edit-row';
@@ -20,13 +24,15 @@ import { InlineEditField, InlineEditSelect } from './inline-edit-row';
  * self-labelled, and "Notes" in particular was a heading sitting directly on
  * top of a row whose own label was also "Notes". A one-word category name
  * above a list of labelled fields is a table of contents for four lines.
+ *
+ * It also used to carry `divide-y`, putting a rule under EVERY row — ten of
+ * them stacked up on a page with nine fields. Those rules existed to bind a
+ * label to a value that sat a full column-width away; now that
+ * `inline-edit-row.tsx` puts the value directly beside its label, alignment
+ * does that job and the rules were only noise. The group separators stay.
  */
 function Section({ children }: { readonly children: React.ReactNode }): React.ReactElement {
-  return (
-    <section className="border-t pt-4 first:border-t-0 first:pt-0">
-      <div className="divide-y">{children}</div>
-    </section>
-  );
+  return <section className="border-t pt-4 first:border-t-0 first:pt-0">{children}</section>;
 }
 
 /**
@@ -85,7 +91,11 @@ export function GameDetailsContent({
           displayValue={priceCents === null ? undefined : `$${(priceCents / 100).toFixed(2)}`}
           onSave={(value) => onSaveField('priceDollars', value)}
         />
-        <InlineEditField label="Genre" value={genre ?? ''} onSave={(value) => onSaveField('genre', value)} />
+        <InlineEditField
+          label="Genre"
+          value={genre ?? ''}
+          onSave={(value) => onSaveField('genre', value)}
+        />
         <InlineEditField
           label="Developer"
           value={developer ?? ''}
@@ -187,7 +197,13 @@ function PlayYearsRow({
   return (
     <div className="py-2">
       <PlayYearsPanel value={drafts} onChange={setDrafts} totalTenths={hoursTenths ?? 0} />
-      <Button type="button" size="sm" className="mt-2" disabled={saving} onClick={() => void save()}>
+      <Button
+        type="button"
+        size="sm"
+        className="mt-2"
+        disabled={saving}
+        onClick={() => void save()}
+      >
         {saving ? 'Saving…' : 'Save split'}
       </Button>
     </div>

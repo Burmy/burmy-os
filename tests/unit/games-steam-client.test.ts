@@ -126,7 +126,7 @@ describe('fetchOwnedGames — success path', () => {
       ),
     );
 
-    expect(await fetchOwnedGames()).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 120 }]);
+    expect(await fetchOwnedGames()).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 120, lastPlayedAt: null }]);
   });
 
   it('returns [] for a private-profile shaped response — a successful request, unlike an actual failure', async () => {
@@ -176,7 +176,7 @@ describe('vanity STEAM_ID resolution', () => {
     });
     vi.stubGlobal('fetch', fetchSpy);
 
-    expect(await fetchOwnedGames()).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 60 }]);
+    expect(await fetchOwnedGames()).toEqual([{ appid: 730, name: 'Counter-Strike 2', playtimeMinutes: 60, lastPlayedAt: null }]);
 
     const urls = fetchCallUrls(fetchSpy);
     expect(urls[0]).toContain('ResolveVanityURL');

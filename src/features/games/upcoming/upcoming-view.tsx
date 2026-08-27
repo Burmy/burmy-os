@@ -10,24 +10,32 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
-import { MONTH_NAMES } from '@/server/games/upcoming';
+import { formatReleaseCountdown } from '@/server/games/release-date';
 import type { UpcomingMonth, UpcomingMonthGame } from '@/server/games/upcoming';
-import { addToWishlistAction, promoteReleasedWantedGamesAction } from './wishlist-actions';
+import {
+  addToWishlistAction,
+  promoteReleasedWantedGamesAction,
+  reconcileWishlistReleaseDatesAction,
+} from './wishlist-actions';
 
 /**
- * `releaseDate` is always `YYYY-MM-01` (month precision only — IGDB's
- * month-precision rows carry no real day, see the type's own doc comment in
- * `upcoming.ts`) or `null` for the trailing Later/TBD bucket. Parsed from the
- * string parts directly, never via `new Date(...)`: a `Date` constructed
- * from a bare `YYYY-MM-DD` string is UTC-midnight, which can display as the
- * PREVIOUS day in a negative-UTC-offset timezone — the exact class of hazard
- * `upcoming.ts`'s own header comment already flags for raw IGDB dates.
+ * The card's release line. `null` for the trailing Later/TBD bucket, where
+ * there is no date to show at all.
+ *
+ * This used to print the month unconditionally, because every stored date was
+ * `YYYY-MM-01` — IGDB's day was available and simply never requested. Now that
+ * `release_dates.d` is in the query, a `date_format` 0 game has a real day and
+ * gets a real countdown; a month-precision game still says "November 2026",
+ * because IGDB genuinely does not know more than that.
+ *
+ * `formatReleaseCountdown` parses the string parts directly rather than via
+ * `new Date(...)`: a `Date` built from a bare `YYYY-MM-DD` is UTC-midnight and
+ * can display as the PREVIOUS day in a negative-UTC-offset timezone — the exact
+ * hazard `upcoming.ts`'s header comment already flags for raw IGDB dates.
  */
-function formatReleaseMonth(releaseDate: string | null): string | null {
-  if (releaseDate === null) return null;
-  const [year, month] = releaseDate.split('-');
-  const monthIndex = Number(month) - 1;
-  return `${MONTH_NAMES[monthIndex]} ${year}`;
+function formatReleaseLine(game: UpcomingMonthGame, now: Date): string | null {
+  if (game.releaseDate === null || game.releasePrecision === null) return null;
+  return formatReleaseCountdown(game.releaseDate, game.releasePrecision, now);
 }
 
 /**
@@ -88,6 +96,33 @@ export function UpcomingView({
     // the owner as an error for a background bookkeeping action they never
     // asked to run in the first place (see the action's own doc comment).
     promoteReleasedWantedGamesAction().catch(() => {});
+  }, []);
+
+  // Captured at mount in a ref, exactly like `overdueWantedCountRef` above and
+  // for the same reason: this is "reconcile against what the SERVER sent for
+  // this page load," not "re-reconcile whenever `months` arrives as a new
+  // array reference." A ref also keeps the flattening out of render entirely.
+  const monthsRef = useRef(months);
+
+  useEffect(() => {
+    // Only games actually rendered, and only ones IGDB gave a real date for.
+    // This is half the safety story for the reconcile: a missing credential
+    // and a failed request both produce an empty feed (see `igdbConfigured()`),
+    // which lands here as an empty list the action treats as "nothing to say"
+    // rather than "every stored date is now null."
+    const readings = monthsRef.current.flatMap((month) =>
+      month.games.flatMap((game) =>
+        game.releaseDate === null || game.releasePrecision === null
+          ? []
+          : [{ igdbId: game.igdbId, releaseDate: game.releaseDate, releasePrecision: game.releasePrecision }],
+      ),
+    );
+    if (readings.length === 0) return;
+
+    // Same fire-and-forget shape as the auto-flip above, and for the same
+    // reason: stale wishlist dates until the next visit are not worth an
+    // error toast for work the owner never asked to run.
+    reconcileWishlistReleaseDatesAction(readings).catch(() => {});
   }, []);
 
   return (
@@ -202,7 +237,10 @@ function UpcomingGameCard({
   readonly game: UpcomingMonthGame;
   readonly wishlisted: boolean;
 }): React.ReactElement {
-  const releaseMonth = formatReleaseMonth(game.releaseDate);
+  // Read once per render rather than per card: every card in the grid must
+  // count down from the same instant, and a `new Date()` inside each one is
+  // both wasteful and capable of straddling midnight mid-render.
+  const releaseLine = formatReleaseLine(game, new Date());
 
   return (
     <div
@@ -275,8 +313,8 @@ function UpcomingGameCard({
             — absent for the trailing Later/TBD bucket, where the section
             header already conveys "no known date" and repeating that per
             card would be redundant. */}
-        {releaseMonth === null ? null : (
-          <span className="text-muted-foreground text-xs">{releaseMonth}</span>
+        {releaseLine === null ? null : (
+          <span className="text-muted-foreground text-xs">{releaseLine}</span>
         )}
         <div className="mt-auto pt-2">
           <AddToWishlistButton game={game} wishlisted={wishlisted} />
@@ -313,6 +351,7 @@ function AddToWishlistButton({
         title: game.title,
         coverUrl: game.coverUrl,
         releaseDate: game.releaseDate,
+        releasePrecision: game.releasePrecision,
         platforms: game.platforms,
       });
 

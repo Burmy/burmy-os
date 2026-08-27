@@ -15,9 +15,15 @@ import { formatHours, hours } from '@/server/games/hours';
 import { PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { PLATFORM_PICKER_OPTIONS } from '@/server/games/taxonomy';
-import { InlineEditField, InlineEditSelect } from './inline-edit-row';
+import { cn } from '@/lib/utils';
+import { InlineEditField, InlineEditSelect, ROW_CLASS } from './inline-edit-row';
 
-const STATUS_OPTIONS = ['backlog', 'wanted', 'playing', 'played'] as const satisfies readonly GameStatus[];
+const STATUS_OPTIONS = [
+  'backlog',
+  'wanted',
+  'playing',
+  'played',
+] as const satisfies readonly GameStatus[];
 
 /**
  * The page's persistent left column — cover art plus the same "at a
@@ -63,14 +69,19 @@ export function GameSummaryPanel({
         {platinum ? <PlatinumBadge className="absolute top-2 right-2" /> : null}
       </div>
 
-      <div className="divide-y">
+      {/* No `divide-y`. This panel sits directly beside the detail column,
+          which dropped its per-row rules when the label moved next to its
+          value — leaving them here would make one page use two row languages
+          three inches apart. */}
+      <div>
         <InlineEditSelect
           label="Platform"
           value={platform}
           displayValue={PLATFORM_LABELS[platform]}
-          options={(platform === 'pc' ? [...PLATFORM_PICKER_OPTIONS, 'pc' as const] : PLATFORM_PICKER_OPTIONS).map(
-            (value) => ({ value, label: PLATFORM_LABELS[value] }),
-          )}
+          options={(platform === 'pc'
+            ? [...PLATFORM_PICKER_OPTIONS, 'pc' as const]
+            : PLATFORM_PICKER_OPTIONS
+          ).map((value) => ({ value, label: PLATFORM_LABELS[value] }))}
           onSave={(value) => onSaveField('platform', value)}
         />
         <InlineEditSelect
@@ -90,8 +101,11 @@ export function GameSummaryPanel({
           disabledHint="From Steam"
           onSave={(value) => onSaveField('hours', value)}
         />
-        <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
-          <Label htmlFor="platinum-toggle" className="text-muted-foreground cursor-pointer font-normal">
+        <div className={cn(ROW_CLASS, 'items-center')}>
+          <Label
+            htmlFor="platinum-toggle"
+            className="text-muted-foreground cursor-pointer font-normal"
+          >
             Platinum
           </Label>
           <Checkbox
@@ -136,8 +150,8 @@ function RatingRow({
   }
 
   return (
-    <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
-      <span className="text-muted-foreground shrink-0">Rating</span>
+    <div className={cn(ROW_CLASS, 'items-center')}>
+      <span className="text-muted-foreground">Rating</span>
       <RatingInput value={rating} disabled={pending} onChange={(next) => void save(next)} />
     </div>
   );

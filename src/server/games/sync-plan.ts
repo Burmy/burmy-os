@@ -40,6 +40,8 @@ export interface StoredGameForSync {
    * this module never edits a split, it only reports that one needs attention.
    */
   readonly playYearTenths: number | null;
+  /** Current `games.last_played_at`, for the recency-sort field update below. */
+  readonly lastPlayedAt: Date | null;
 }
 
 export interface PlannedChange {
@@ -63,6 +65,7 @@ export function planLinkedGameChanges(
   appid: number,
   achievements: AchievementCounts | null,
   steamHoursTenths: number | null,
+  steamLastPlayedAt: string | null = null,
 ): PlannedChange[] {
   const changes: PlannedChange[] = [];
   const describe = (kind: SyncChangeKind, payload: Record<string, unknown>): PlannedChange => ({
@@ -114,6 +117,21 @@ export function planLinkedGameChanges(
         }),
       );
     }
+  }
+
+  // Compared as instants, not as strings: `stored.lastPlayedAt` is a `Date`
+  // read back from Postgres and Steam's is an ISO string this module built,
+  // so `String(date) !== isoString` would be true on every single run and
+  // propose a no-op update forever. This mirrors `psn-plan.ts`, which avoids
+  // the same trap by converting the stored `Date` to ISO once at its caller.
+  if (steamLastPlayedAt !== null && stored.lastPlayedAt?.toISOString() !== steamLastPlayedAt) {
+    changes.push(
+      describe('field_update', {
+        field: 'lastPlayedAt',
+        from: stored.lastPlayedAt?.toISOString() ?? null,
+        to: steamLastPlayedAt,
+      }),
+    );
   }
 
   return changes;

@@ -528,6 +528,7 @@ async function applyFill(sql, ownerId, gameId, fill) {
       achievements_total = coalesce(achievements_total, ${fill.achievementsTotal ?? null}),
       achievements_unlocked = coalesce(achievements_unlocked, ${fill.achievementsUnlocked ?? null}),
       hours_tenths = coalesce(hours_tenths, ${fill.hoursTenths ?? null}),
+      last_played_at = coalesce(last_played_at, ${fill.lastPlayedAt ?? null}),
       updated_at = now()
     where id = ${gameId} and owner_id = ${ownerId}
   `;
@@ -603,7 +604,7 @@ async function main() {
     // against a Steam appid would be a category error, and the owner's PSP
     // library in particular has no Steam-side equivalent at all.
     const rows = await sql`
-      select id, title, steam_appid, achievements_unlocked, achievements_total, hours_tenths
+      select id, title, steam_appid, achievements_unlocked, achievements_total, hours_tenths, last_played_at
       from games
       where owner_id = ${owner.id} and platform = 'steam'
       order by title
@@ -656,6 +657,7 @@ async function main() {
         achievementsUnlocked: row.achievements_unlocked,
         achievementsTotal: row.achievements_total,
         hoursTenths: row.hours_tenths,
+        lastPlayedAt: row.last_played_at,
       };
 
       let matchKind;
@@ -698,7 +700,13 @@ async function main() {
       const ownedEntry = resolvedAppid !== null ? ownedByAppid.get(resolvedAppid) : undefined;
       const hoursTenthsFromSteam = ownedEntry !== undefined ? minutesToHoursTenths(ownedEntry.playtimeMinutes) : null;
 
-      const fill = steamSyncFieldsToFill(current, resolvedAppid, achievements, hoursTenthsFromSteam);
+      const fill = steamSyncFieldsToFill(
+        current,
+        resolvedAppid,
+        achievements,
+        hoursTenthsFromSteam,
+        ownedEntry?.lastPlayedAt ?? null,
+      );
       const diffs = computeSteamDiffs(current, achievements, hoursTenthsFromSteam);
 
       results.push({

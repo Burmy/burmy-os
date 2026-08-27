@@ -83,9 +83,13 @@ function parseSteamLibrary(value: unknown): OwnedSteamGame[] {
   return value.flatMap((entry): OwnedSteamGame[] => {
     if (typeof entry !== 'object' || entry === null) return [];
     const record = entry as Record<string, unknown>;
-    const { appid, name, playtimeMinutes } = record;
+    const { appid, name, playtimeMinutes, lastPlayedAt } = record;
     if (typeof appid !== 'number' || typeof name !== 'string' || typeof playtimeMinutes !== 'number') return [];
-    return [{ appid, name, playtimeMinutes }];
+    // Tolerated as absent, not required: a run STARTED before Steam's
+    // last-played was captured still has a stored snapshot without the field,
+    // and that run must keep working rather than dropping every game as
+    // malformed. Missing simply means "no update to propose."
+    return [{ appid, name, playtimeMinutes, lastPlayedAt: typeof lastPlayedAt === 'string' ? lastPlayedAt : null }];
   });
 }
 
@@ -276,9 +280,12 @@ export async function advanceSteamSyncAction(runId: string): Promise<SyncProgres
         achievementsUnlocked: game.achievementsUnlocked,
         achievementsTotal: game.achievementsTotal,
         playYearTenths: playYearSums.get(game.id) ?? null,
+        lastPlayedAt: game.lastPlayedAt,
       };
 
-      changes.push(...planLinkedGameChanges(stored, appid, achievements, steamHoursTenths));
+      changes.push(
+        ...planLinkedGameChanges(stored, appid, achievements, steamHoursTenths, owned?.lastPlayedAt ?? null),
+      );
     }
 
     const done = chunk.length === 0;

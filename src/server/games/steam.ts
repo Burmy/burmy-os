@@ -138,6 +138,17 @@ export interface OwnedSteamGame {
   readonly name: string;
   /** Total minutes played, all-time. Convert with `minutesToHoursTenths` (hours.ts) — never inline `/ 6`. */
   readonly playtimeMinutes: number;
+  /**
+   * ISO 8601, from Steam's `rtime_last_played` — or `null` when Steam reports
+   * `0`, which is its "never played" sentinel and NOT a 1970 timestamp. That
+   * distinction is load-bearing for the library's recency sort: a real 1970
+   * date would rank BELOW every genuine null instead of alongside it.
+   *
+   * Already present in the response `buildOwnedGamesUrl` fetches (it sets
+   * `include_appinfo=1`); this parser simply never read it until the library
+   * needed to sort by recency across PSN and Steam together.
+   */
+  readonly lastPlayedAt: string | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -175,7 +186,15 @@ export function toOwnedGames(payload: unknown): OwnedSteamGame[] {
     const playtimeMinutes =
       typeof rawPlaytime === 'number' && Number.isFinite(rawPlaytime) && rawPlaytime >= 0 ? rawPlaytime : 0;
 
-    return [{ appid, name, playtimeMinutes }];
+    // Unix SECONDS, not milliseconds. `> 0` rather than `>= 0` on purpose —
+    // see `lastPlayedAt`'s doc comment on Steam's zero sentinel.
+    const rawLastPlayed = record.rtime_last_played;
+    const lastPlayedAt =
+      typeof rawLastPlayed === 'number' && Number.isFinite(rawLastPlayed) && rawLastPlayed > 0
+        ? new Date(rawLastPlayed * 1000).toISOString()
+        : null;
+
+    return [{ appid, name, playtimeMinutes, lastPlayedAt }];
   });
 }
 
@@ -222,12 +241,13 @@ export function toAchievementCounts(payload: unknown): AchievementCounts | null 
   return { unlocked, total: achievements.length };
 }
 
-/** The four columns the sync script is allowed to touch, as currently stored. */
+/** The columns the sync script is allowed to touch, as currently stored. */
 export interface StoredSteamSyncFields {
   readonly steamAppid: number | null;
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
   readonly hoursTenths: number | null;
+  readonly lastPlayedAt: Date | null;
 }
 
 /** Only the columns that should actually be written by default — see `steamSyncFieldsToFill`. */
@@ -236,6 +256,7 @@ export interface SteamSyncFill {
   readonly achievementsUnlocked?: number;
   readonly achievementsTotal?: number;
   readonly hoursTenths?: number;
+  readonly lastPlayedAt?: Date;
 }
 
 /**
@@ -272,6 +293,7 @@ export function steamSyncFieldsToFill(
   matchedAppid: number | null,
   achievements: AchievementCounts | null,
   hoursTenths: number | null,
+  lastPlayedAt: string | null = null,
 ): SteamSyncFill {
   const fill: { -readonly [K in keyof SteamSyncFill]: SteamSyncFill[K] } = {};
   if (current.steamAppid === null && matchedAppid !== null) fill.steamAppid = matchedAppid;
@@ -280,5 +302,13 @@ export function steamSyncFieldsToFill(
     fill.achievementsUnlocked = achievements.unlocked;
   }
   if (current.hoursTenths === null && hoursTenths !== null) fill.hoursTenths = hoursTenths;
+  // Follows the same null-only rule as every other column here, even though
+  // `last_played_at` is not a field the owner can type: the SCRIPT's contract
+  // is "fill gaps, never overwrite," full stop. The IN-APP sync takes the
+  // opposite line and proposes an update whenever Steam disagrees, because
+  // Steam is authoritative for objective play data — see `sync-plan.ts`.
+  // CLAUDE.md is explicit that these two rules are both correct for their own
+  // caller and that unifying them is a bug.
+  if (current.lastPlayedAt === null && lastPlayedAt !== null) fill.lastPlayedAt = new Date(lastPlayedAt);
   return fill;
 }

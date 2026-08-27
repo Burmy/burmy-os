@@ -59,6 +59,17 @@ interface RawReleaseDate {
   readonly year: number;
   /** 1-12. Only meaningful when `dateFormat` is 0 or 1 — see `EXACT_MONTH_DATE_FORMATS`. */
   readonly month: number | null;
+  /**
+   * 1-31, and meaningful ONLY when `dateFormat` is 0 (`YYYYMMDD`). A
+   * `date_format` 1 row is month-precision by definition and carries no real
+   * day, exactly as it carries no real day-of-week — do not read this field
+   * for one, and do not fall back to 1.
+   *
+   * Derived from IGDB's `date` (Unix seconds), NOT from a `d` field — there
+   * is no such field, and querying for one returns 200 with the key absent
+   * rather than an error. See `metadata.ts`'s field list.
+   */
+  readonly day: number | null;
   readonly dateFormat: number;
 }
 
@@ -112,9 +123,34 @@ function releaseDatesFrom(value: unknown): RawReleaseDate[] {
     const year = readNumber(record.y);
     const dateFormat = readNumber(record.date_format);
     if (year === null || dateFormat === null) continue;
-    result.push({ year, month: readNumber(record.m), dateFormat });
+    const month = readNumber(record.m);
+    result.push({ year, month, day: dayFrom(record.date, year, month), dateFormat });
   }
   return result;
+}
+
+/**
+ * The day-of-month IGDB's `date` (Unix SECONDS) falls on, or `null`.
+ *
+ * Read in UTC throughout. A `Date` built from a Unix timestamp reports its
+ * day in the RUNTIME's timezone, so `getDate()` on a server west of UTC would
+ * return the previous day for every midnight-UTC release — the same hazard
+ * this module's header comment already flags for raw IGDB dates.
+ *
+ * The derived year/month are checked against the row's own `y`/`m` before the
+ * day is trusted. They should always agree; when they don't, the row is
+ * internally inconsistent and the honest answer is "no day," not a day pulled
+ * from a different month than the one this game is being bucketed into.
+ */
+function dayFrom(value: unknown, year: number, month: number | null): number | null {
+  const seconds = readNumber(value);
+  if (seconds === null || month === null) return null;
+
+  const at = new Date(seconds * 1000);
+  if (Number.isNaN(at.getTime())) return null;
+  if (at.getUTCFullYear() !== year || at.getUTCMonth() + 1 !== month) return null;
+
+  return at.getUTCDate();
 }
 
 /**
@@ -159,12 +195,16 @@ export interface UpcomingMonthGame {
   readonly hypes: number;
   readonly platforms: readonly UpcomingPlatform[];
   /**
-   * `YYYY-MM-DD`, day always `01` (IGDB's month-precision rows carry no
-   * day). Present only when the game landed in a real month — `null` for
-   * every game in the trailing Later/TBD group. Ready to persist straight
-   * into `games.release_date` from the wishlist flow.
+   * `YYYY-MM-DD`. The day is REAL when `releasePrecision` is `'day'` (IGDB
+   * `date_format` 0) and a `01` placeholder when it is `'month'` — always
+   * read the two together, never the date alone. Present only when the game
+   * landed in a real month; `null` for every game in the trailing Later/TBD
+   * group. Ready to persist straight into `games.release_date` from the
+   * wishlist flow.
    */
   readonly releaseDate: string | null;
+  /** `null` exactly when `releaseDate` is. See `games.release_precision` in `schema.ts`. */
+  readonly releasePrecision: 'day' | 'month' | null;
 }
 
 export interface UpcomingMonth {
@@ -222,13 +262,25 @@ function isPastMonth(year: number, month: number, now: Date): boolean {
 function earliestQualifyingMonth(
   releaseDates: readonly RawReleaseDate[],
   now: Date,
-): { readonly year: number; readonly month: number } | null {
-  let best: { year: number; month: number } | null = null;
+): { readonly year: number; readonly month: number; readonly day: number | null } | null {
+  let best: { year: number; month: number; day: number | null } | null = null;
   for (const entry of releaseDates) {
     if (!EXACT_MONTH_DATE_FORMATS.has(entry.dateFormat) || entry.month === null) continue;
     if (isPastMonth(entry.year, entry.month, now)) continue;
-    if (best === null || entry.year < best.year || (entry.year === best.year && entry.month < best.month)) {
-      best = { year: entry.year, month: entry.month };
+    if (
+      best === null ||
+      entry.year < best.year ||
+      (entry.year === best.year && entry.month < best.month)
+    ) {
+      // The day rides along only for `date_format` 0. Comparison stays at
+      // MONTH granularity on purpose: two rows in the same month are already
+      // equivalent for bucketing, and preferring the earlier day between them
+      // would change which platform's date wins for no stated reason.
+      best = {
+        year: entry.year,
+        month: entry.month,
+        day: entry.dateFormat === 0 ? entry.day : null,
+      };
     }
   }
   return best;
@@ -262,13 +314,25 @@ export function groupByMonth(games: readonly UpcomingGame[], now: Date): Upcomin
       coverUrl: game.coverUrl,
       hypes: game.hypes,
       platforms: game.platforms,
-      releaseDate: earliest === null ? null : `${monthKey(earliest.year, earliest.month)}-01`,
+      releaseDate:
+        earliest === null
+          ? null
+          : `${monthKey(earliest.year, earliest.month)}-${String(earliest.day ?? 1).padStart(2, '0')}`,
+      // `-01` on a month-precision row is a PLACEHOLDER, not a claim. This is
+      // the field that says which — see `games.release_precision`'s own
+      // comment in `schema.ts` for why it is stored rather than inferred from
+      // the day number.
+      releasePrecision: earliest === null ? null : earliest.day === null ? 'month' : 'day',
     };
 
     const key = earliest === null ? LATER_KEY : monthKey(earliest.year, earliest.month);
     const bucket = buckets.get(key);
     if (bucket === undefined) {
-      buckets.set(key, { year: earliest?.year ?? 0, month: earliest?.month ?? null, games: [displayGame] });
+      buckets.set(key, {
+        year: earliest?.year ?? 0,
+        month: earliest?.month ?? null,
+        games: [displayGame],
+      });
     } else {
       bucket.games.push(displayGame);
     }
@@ -279,19 +343,21 @@ export function groupByMonth(games: readonly UpcomingGame[], now: Date): Upcomin
   const monthGroups = [...buckets.entries()]
     .filter(([key]) => key !== LATER_KEY)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(
-      ([key, bucket]): UpcomingMonth => ({
-        key,
-        // Non-null by construction: only the Later/TBD bucket (filtered out
-        // above) ever has `month: null`.
-        label: monthLabel(bucket.year, bucket.month as number),
-        games: [...bucket.games].sort(sortByHypeDesc),
-      }),
-    );
+    .map(([key, bucket]): UpcomingMonth => ({
+      key,
+      // Non-null by construction: only the Later/TBD bucket (filtered out
+      // above) ever has `month: null`.
+      label: monthLabel(bucket.year, bucket.month as number),
+      games: [...bucket.games].sort(sortByHypeDesc),
+    }));
 
   const laterBucket = buckets.get(LATER_KEY);
   if (laterBucket !== undefined) {
-    monthGroups.push({ key: LATER_KEY, label: LATER_LABEL, games: [...laterBucket.games].sort(sortByHypeDesc) });
+    monthGroups.push({
+      key: LATER_KEY,
+      label: LATER_LABEL,
+      games: [...laterBucket.games].sort(sortByHypeDesc),
+    });
   }
 
   return monthGroups;

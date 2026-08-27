@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const addToWishlistAction = vi.fn(async () => ({ ok: true as const }));
 const promoteReleasedWantedGamesAction = vi.fn(async () => ({ ok: true as const }));
+const reconcileWishlistReleaseDatesAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/games/upcoming/wishlist-actions', () => ({
   addToWishlistAction,
   promoteReleasedWantedGamesAction,
+  reconcileWishlistReleaseDatesAction,
 }));
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -26,6 +28,7 @@ vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.f
 beforeEach(() => {
   addToWishlistAction.mockClear();
   promoteReleasedWantedGamesAction.mockClear();
+  reconcileWishlistReleaseDatesAction.mockClear();
 });
 
 const { UpcomingView } = await import('@/features/games/upcoming/upcoming-view');
@@ -41,6 +44,7 @@ function upcomingGame(overrides: Partial<UpcomingMonthGame> = {}): UpcomingMonth
     hypes: 402,
     platforms: ['ps5'],
     releaseDate: '2026-11-01',
+    releasePrecision: 'month',
     ...overrides,
   };
 }

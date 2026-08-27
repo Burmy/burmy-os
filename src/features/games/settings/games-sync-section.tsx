@@ -97,5 +97,13 @@ function PsnTokenAgeLine({ tokenAge }: { readonly tokenAge: PsnTokenAge }): Reac
     );
   }
 
-  return <p className="text-muted-foreground text-xs">Token {tokenAge.ageDays}d old.</p>;
+  // The link is here too, not only in the `warning` and not-connected states.
+  // A healthy token still expires eventually, and when it does the owner is
+  // mid-task and wants one click, not a hunt for where the page mentioned
+  // Sony last. Same `SonyTokenLink` every other branch uses — one URL.
+  return (
+    <p className="text-muted-foreground text-xs">
+      Token {tokenAge.ageDays}d old — refresh it at <SonyTokenLink /> any time.
+    </p>
+  );
 }

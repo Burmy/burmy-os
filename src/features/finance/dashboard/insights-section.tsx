@@ -150,9 +150,9 @@ export function InsightsSection({
           brand-new owner), a 4-column grid leaves large empty cells that read
           as unfinished. Flexible, bounded-width cards just sit compactly
           instead, and still wrap into a full grid-like row once there are
-          enough of them. `gap-6` is the app's one card gap; nothing in either
+          enough of them. `gap-4` is the app's one card gap; nothing in either
           module lays cards out at any other distance any more. */}
-      <div className="mt-3 flex flex-wrap gap-6">{items}</div>
+      <div className="mt-3 flex flex-wrap gap-4">{items}</div>
     </div>
   );
 }

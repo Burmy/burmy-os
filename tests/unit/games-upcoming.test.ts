@@ -48,7 +48,73 @@ describe('toUpcomingGames', () => {
 
     const games = toUpcomingGames(payload);
 
-    expect(games[0]?.releaseDates).toEqual([{ year: 2026, month: 11, dateFormat: 0 }]);
+    expect(games[0]?.releaseDates).toEqual([{ year: 2026, month: 11, day: null, dateFormat: 0 }]);
+  });
+
+  /**
+   * IGDB HAS NO `d` FIELD. Querying for `release_dates.d` returns HTTP 200
+   * with the key simply absent from every row — no error, no warning — which
+   * is exactly how the first version of this shipped producing month
+   * precision for all 46 upcoming games while looking completely fine. The
+   * day comes from `date`, a Unix SECONDS timestamp.
+   */
+  it('derives the day from the date timestamp, since IGDB has no day field', () => {
+    const payload = [
+      {
+        id: 1,
+        name: 'Grand Theft Auto VI',
+        // 2026-11-19T00:00:00Z, exactly what IGDB returns alongside human "Nov 19, 2026".
+        release_dates: [{ y: 2026, m: 11, date: 1_795_046_400, date_format: 0, platform: 167 }],
+      },
+    ];
+
+    expect(toUpcomingGames(payload)[0]?.releaseDates[0]?.day).toBe(19);
+  });
+
+  /**
+   * Read in UTC, never in the runtime's timezone. `new Date(seconds * 1000)`
+   * reports its day locally, so `getDate()` on a server west of UTC returns
+   * the PREVIOUS day for every midnight-UTC release — the same hazard this
+   * module's header comment already flags for raw IGDB dates.
+   */
+  it('reads the timestamp in UTC, not the runtime timezone', () => {
+    const payload = [
+      {
+        id: 2,
+        name: 'Midnight Release',
+        // 2026-12-01T00:00:00Z — "Nov 30" in any negative-offset timezone.
+        release_dates: [{ y: 2026, m: 12, date: 1_796_083_200, date_format: 0, platform: 167 }],
+      },
+    ];
+
+    expect(toUpcomingGames(payload)[0]?.releaseDates[0]?.day).toBe(1);
+  });
+
+  /**
+   * A row whose timestamp lands in a different month than its own `y`/`m` is
+   * internally inconsistent. The honest answer is "no day" — taking the day
+   * anyway would pin a launch date from a month the game isn't even bucketed
+   * into.
+   */
+  it('refuses a day whose timestamp disagrees with the row own year/month', () => {
+    const payload = [
+      {
+        id: 3,
+        name: 'Inconsistent',
+        release_dates: [{ y: 2026, m: 11, date: 1_796_083_200, date_format: 0, platform: 167 }],
+      },
+    ];
+
+    expect(toUpcomingGames(payload)[0]?.releaseDates[0]?.day).toBeNull();
+  });
+
+  it('leaves the day null when the timestamp is absent or malformed', () => {
+    const payload = [
+      { id: 4, name: 'No Timestamp', release_dates: [{ y: 2026, m: 11, date_format: 0, platform: 167 }] },
+      { id: 5, name: 'Bad Timestamp', release_dates: [{ y: 2026, m: 11, date: 'soon', date_format: 0, platform: 167 }] },
+    ];
+
+    expect(toUpcomingGames(payload).map((g) => g.releaseDates[0]?.day)).toEqual([null, null]);
   });
 
   it('is null-safe on a missing cover, missing hypes, and a missing/empty platforms or release_dates array', () => {
@@ -93,7 +159,7 @@ describe('toUpcomingGames', () => {
     const games = toUpcomingGames(payload);
 
     expect(games).toHaveLength(1);
-    expect(games[0]?.releaseDates).toEqual([{ year: 2026, month: 11, dateFormat: 1 }]);
+    expect(games[0]?.releaseDates).toEqual([{ year: 2026, month: 11, day: null, dateFormat: 1 }]);
   });
 
   it('returns [] for a non-array payload, e.g. an IGDB error object', () => {
@@ -122,7 +188,7 @@ describe('groupByMonth', () => {
     const g = game({
       igdbId: 1,
       title: 'Exact Month Game',
-      releaseDates: [{ year: 2026, month: 11, dateFormat: 0 }],
+      releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }],
     });
 
     const months = groupByMonth([g], NOW);
@@ -136,7 +202,7 @@ describe('groupByMonth', () => {
   it('routes date_format 2 (year-only) to Later/TBD, ignoring the placeholder month IGDB fills in', () => {
     // Live-observed: a year-only row still carries a non-null `m` (e.g. 12)
     // — that value must never be read as a real month.
-    const g = game({ igdbId: 2, title: 'Year Only', releaseDates: [{ year: 2026, month: 12, dateFormat: 2 }] });
+    const g = game({ igdbId: 2, title: 'Year Only', releaseDates: [{ year: 2026, month: 12, day: null, dateFormat: 2 }] });
 
     const months = groupByMonth([g], NOW);
 
@@ -146,7 +212,7 @@ describe('groupByMonth', () => {
   });
 
   it.each([3, 4, 5, 6])('routes date_format %i (quarter) to Later/TBD', (dateFormat) => {
-    const g = game({ igdbId: 10 + dateFormat, title: `Quarter ${dateFormat}`, releaseDates: [{ year: 2027, month: 3, dateFormat }] });
+    const g = game({ igdbId: 10 + dateFormat, title: `Quarter ${dateFormat}`, releaseDates: [{ year: 2027, month: 3, day: null, dateFormat }] });
 
     const months = groupByMonth([g], NOW);
 
@@ -154,7 +220,7 @@ describe('groupByMonth', () => {
   });
 
   it('routes date_format 7 (TBD, no month at all) to Later/TBD', () => {
-    const g = game({ igdbId: 3, title: 'TBD', releaseDates: [{ year: 2027, month: null, dateFormat: 7 }] });
+    const g = game({ igdbId: 3, title: 'TBD', releaseDates: [{ year: 2027, month: null, day: null, dateFormat: 7 }] });
 
     const months = groupByMonth([g], NOW);
 
@@ -165,7 +231,7 @@ describe('groupByMonth', () => {
     // Live-observed hazard: IGDB returns release_dates rows in the past
     // (here: April 2026) even when the query is scoped to future-only
     // first_release_date. "now" is August 2026 in this test.
-    const g = game({ igdbId: 4, title: 'Stale Row', releaseDates: [{ year: 2026, month: 4, dateFormat: 0 }] });
+    const g = game({ igdbId: 4, title: 'Stale Row', releaseDates: [{ year: 2026, month: 4, day: null, dateFormat: 0 }] });
 
     const months = groupByMonth([g], NOW);
 
@@ -176,7 +242,7 @@ describe('groupByMonth', () => {
   });
 
   it('accepts a release_dates row in the current calendar month (not "earlier than")', () => {
-    const g = game({ igdbId: 5, title: 'This Month', releaseDates: [{ year: 2026, month: 8, dateFormat: 0 }] });
+    const g = game({ igdbId: 5, title: 'This Month', releaseDates: [{ year: 2026, month: 8, day: null, dateFormat: 0 }] });
 
     const months = groupByMonth([g], NOW);
 
@@ -189,8 +255,8 @@ describe('groupByMonth', () => {
       title: 'Multi Platform',
       platforms: ['ps5', 'pc'],
       releaseDates: [
-        { year: 2027, month: 2, dateFormat: 0 }, // PC, later
-        { year: 2026, month: 11, dateFormat: 0 }, // PS5, earlier
+        { year: 2027, month: 2, day: null, dateFormat: 0 }, // PC, later
+        { year: 2026, month: 11, day: null, dateFormat: 0 }, // PS5, earlier
       ],
     });
 
@@ -204,9 +270,9 @@ describe('groupByMonth', () => {
   });
 
   it('orders real months chronologically ascending, with Later/TBD always trailing regardless of hype', () => {
-    const nov = game({ igdbId: 1, title: 'November', hypes: 10, releaseDates: [{ year: 2026, month: 11, dateFormat: 0 }] });
-    const sep = game({ igdbId: 2, title: 'September', hypes: 999, releaseDates: [{ year: 2026, month: 9, dateFormat: 0 }] });
-    const later = game({ igdbId: 3, title: 'Someday', hypes: 500, releaseDates: [{ year: 2026, month: 12, dateFormat: 2 }] });
+    const nov = game({ igdbId: 1, title: 'November', hypes: 10, releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }] });
+    const sep = game({ igdbId: 2, title: 'September', hypes: 999, releaseDates: [{ year: 2026, month: 9, day: null, dateFormat: 0 }] });
+    const later = game({ igdbId: 3, title: 'Someday', hypes: 500, releaseDates: [{ year: 2026, month: 12, day: null, dateFormat: 2 }] });
 
     const months = groupByMonth([nov, sep, later], NOW);
 
@@ -214,8 +280,8 @@ describe('groupByMonth', () => {
   });
 
   it('sorts games within a month by hypes descending', () => {
-    const low = game({ igdbId: 1, title: 'Low', hypes: 30, releaseDates: [{ year: 2026, month: 11, dateFormat: 0 }] });
-    const high = game({ igdbId: 2, title: 'High', hypes: 900, releaseDates: [{ year: 2026, month: 11, dateFormat: 0 }] });
+    const low = game({ igdbId: 1, title: 'Low', hypes: 30, releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }] });
+    const high = game({ igdbId: 2, title: 'High', hypes: 900, releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }] });
 
     const months = groupByMonth([low, high], NOW);
 

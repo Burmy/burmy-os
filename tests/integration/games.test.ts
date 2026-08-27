@@ -174,54 +174,83 @@ describe('listGames', () => {
    * This is the whole protection against that regressing — see the ordering
    * comment on `listGames` in `src/server/db/games/games.ts`.
    */
-  it('orders newest-played first with unplayed (no-year) games LAST, ranked by the deliberate platform order among themselves', async () => {
+  it('orders by recency across platforms, with never-played games LAST', async () => {
     const owner = await makeOwner('owner@burmy.test');
 
-    // Two played games on different years — must sort by year, descending.
-    const playedOlder = await games.createGame(owner, {
-      title: 'Old Game',
-      platform: 'ps4',
-      firstPlayedYear: 2020,
+    // Deliberately interleaved across platforms. The library used to sort by
+    // a fixed PS5 > PS4 > Steam/PC > PSP rank, which real usage rejected —
+    // it read as a console shelf rather than as "what I have been playing."
+    // If that rank ever comes back, this ordering breaks.
+    const steamNewest = await games.createGame(owner, {
+      title: 'Steam Newest',
+      platform: 'steam',
+      lastPlayedAt: new Date('2026-08-20T00:00:00.000Z'),
     });
-    const playedNewer = await games.createGame(owner, {
-      title: 'New Game',
+    const ps4Middle = await games.createGame(owner, {
+      title: 'Ps4 Middle',
+      platform: 'ps4',
+      lastPlayedAt: new Date('2026-08-10T00:00:00.000Z'),
+    });
+    const ps5Oldest = await games.createGame(owner, {
+      title: 'Ps5 Oldest',
       platform: 'ps5',
-      firstPlayedYear: 2023,
+      lastPlayedAt: new Date('2026-07-01T00:00:00.000Z'),
     });
 
-    // Six no-year (unplayed/backlog) games, one per platform value, created
-    // in an order that is neither the expected output order nor alphabetical
-    // — so passing this test actually proves the ORDER BY did the work, not
-    // insertion order or a lucky title sort.
-    const noYearOther = await games.createGame(owner, { title: 'Zed', platform: 'other' });
-    const noYearPsp = await games.createGame(owner, { title: 'Psp Game', platform: 'psp' });
-    const noYearPc = await games.createGame(owner, { title: 'Pc Game', platform: 'pc' });
-    const noYearSteam = await games.createGame(owner, { title: 'Steam Game', platform: 'steam' });
-    const noYearPs4 = await games.createGame(owner, { title: 'Ps4 Game', platform: 'ps4' });
-    const noYearPs5 = await games.createGame(owner, { title: 'Ps5 Game', platform: 'ps5' });
+    // No exact date, only a year — ranked at 31 December of that year, so it
+    // sorts ABOVE exact-dated games from earlier years and BELOW 2026's.
+    const yearOnly2025 = await games.createGame(owner, {
+      title: 'Year Only',
+      platform: 'psp',
+      firstPlayedYear: 2025,
+    });
+
+    // Never played at all. Postgres DESC defaults to NULLS FIRST, which would
+    // float this to the very top — `nulls last` in the ordering is the whole
+    // protection, and this is the regression guard for it.
+    const neverPlayed = await games.createGame(owner, { title: 'Aaa Never Played', platform: 'ps5' });
 
     const result = await games.listGames(owner);
 
     expect(result.map((g) => g.id)).toEqual([
-      playedNewer.id, // 2023 — most recently played
-      playedOlder.id, // 2020
-      // Everything below has no recorded year at all — NULLS LAST, not first.
-      noYearPs5.id,
-      noYearPs4.id,
-      // steam and pc share rank 2 (both render as "Steam / PC" — see
-      // PLATFORM_LABELS), so they tiebreak by title: "Pc Game" < "Steam Game".
-      noYearPc.id,
-      noYearSteam.id,
-      noYearPsp.id,
-      noYearOther.id,
+      steamNewest.id,
+      ps4Middle.id,
+      ps5Oldest.id,
+      yearOnly2025.id,
+      neverPlayed.id,
     ]);
   });
 
-  it('breaks a tie between two PLAYED games on the same year by title alone, not by the no-year platform rule', async () => {
+  /**
+   * The year-only fallback is `make_date(year, 12, 31)`, not January 1st. Two
+   * games "played in 2026" — one with a real August date, one with only the
+   * year — therefore put the year-only game FIRST. There is no correct answer
+   * here (the data does not say when in 2026 it was played); surfacing it is
+   * the deliberate choice, and this pins which one was made.
+   */
+  it('ranks a year-only game at the END of its year, above exact dates from the same year', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const exactAugust = await games.createGame(owner, {
+      title: 'Exact August',
+      platform: 'ps5',
+      lastPlayedAt: new Date('2026-08-01T00:00:00.000Z'),
+    });
+    const yearOnly = await games.createGame(owner, {
+      title: 'Year Only 2026',
+      platform: 'ps5',
+      firstPlayedYear: 2026,
+    });
+
+    const result = await games.listGames(owner);
+
+    expect(result.map((g) => g.id)).toEqual([yearOnly.id, exactAugust.id]);
+  });
+
+  it('breaks a tie between two games with the same recency key by title alone', async () => {
     const owner = await makeOwner('owner@burmy.test');
     const laterAlphabetically = await games.createGame(owner, {
       title: 'Bravo',
-      platform: 'ps4', // would rank AFTER 'Alpha's ps5 under the no-year rule too, but that rule must not even apply here
+      platform: 'ps4', // platform must not influence this at all any more
       firstPlayedYear: 2021,
     });
     const earlierAlphabetically = await games.createGame(owner, {
@@ -467,6 +496,7 @@ describe('createWishlistGame', () => {
       title: 'Fable',
       coverUrl: 'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/cobc6d.jpg',
       releaseDate: '2027-02-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -481,7 +511,7 @@ describe('createWishlistGame', () => {
 
   it('rejects a second wishlist add for the same igdbId, for the same owner', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, { igdbId: 92550, title: 'Fable', coverUrl: null, releaseDate: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 92550, title: 'Fable', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
 
     await expect(
       games.createWishlistGame(owner, {
@@ -489,6 +519,7 @@ describe('createWishlistGame', () => {
         title: 'Fable (again)',
         coverUrl: null,
         releaseDate: null,
+        releasePrecision: null,
         platform: 'ps5',
       }),
     ).rejects.toBeInstanceOf(errors.DuplicateWishlistGameError);
@@ -503,6 +534,7 @@ describe('createWishlistGame', () => {
       title: 'Fable',
       coverUrl: null,
       releaseDate: null,
+      releasePrecision: null,
       platform: 'ps5',
     });
     const theirGame = await games.createWishlistGame(theirs, {
@@ -510,6 +542,7 @@ describe('createWishlistGame', () => {
       title: 'Fable',
       coverUrl: null,
       releaseDate: null,
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -521,7 +554,7 @@ describe('listWishlistIgdbIds', () => {
   it('returns only this owner’s igdb ids, ignoring games with no igdbId at all', async () => {
     const owner = await makeOwner('owner@burmy.test');
     await games.createGame(owner, { title: 'Manually Added', platform: 'ps5' });
-    await games.createWishlistGame(owner, { igdbId: 111, title: 'Wishlisted', coverUrl: null, releaseDate: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 111, title: 'Wishlisted', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
 
     expect(await games.listWishlistIgdbIds(owner)).toEqual([111]);
   });
@@ -533,6 +566,7 @@ describe('listWishlistIgdbIds', () => {
       title: 'Released Now',
       coverUrl: null,
       releaseDate: '2020-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -544,7 +578,7 @@ describe('listWishlistIgdbIds', () => {
   it('never returns another owner’s igdb ids', async () => {
     const mine = await makeOwner('mine@burmy.test');
     const theirs = await makeOwner('theirs@burmy.test');
-    await games.createWishlistGame(theirs, { igdbId: 333, title: 'Theirs', coverUrl: null, releaseDate: null, platform: 'ps5' });
+    await games.createWishlistGame(theirs, { igdbId: 333, title: 'Theirs', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
 
     expect(await games.listWishlistIgdbIds(mine)).toEqual([]);
   });
@@ -553,9 +587,9 @@ describe('listWishlistIgdbIds', () => {
 describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
   it('counts only wanted rows whose release date has passed — not future dates, not TBD (null) dates', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', platform: 'ps5' });
-    await games.createWishlistGame(owner, { igdbId: 2, title: 'Future', coverUrl: null, releaseDate: '2099-01-01', platform: 'ps5' });
-    await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 2, title: 'Future', coverUrl: null, releaseDate: '2099-01-01', releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
 
     expect(await games.countOverdueWantedGames(owner)).toBe(1);
   });
@@ -567,6 +601,7 @@ describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
       title: 'Overdue',
       coverUrl: null,
       releaseDate: '2020-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
     const future = await games.createWishlistGame(owner, {
@@ -574,9 +609,10 @@ describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
       title: 'Future',
       coverUrl: null,
       releaseDate: '2099-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
-    const tbd = await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, platform: 'ps5' });
+    const tbd = await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
 
     const flipped = await games.promoteReleasedWantedGames(owner);
 
@@ -594,6 +630,7 @@ describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
       title: 'Their overdue game',
       coverUrl: null,
       releaseDate: '2020-01-01',
+      releasePrecision: null,
       platform: 'ps5',
     });
 
@@ -605,7 +642,7 @@ describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
 
   it('is idempotent — a second call touches zero rows once the first has already flipped everything', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', platform: 'ps5' });
+    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', releasePrecision: null, platform: 'ps5' });
 
     expect(await games.promoteReleasedWantedGames(owner)).toBe(1);
     expect(await games.promoteReleasedWantedGames(owner)).toBe(0);

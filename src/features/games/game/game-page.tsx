@@ -91,7 +91,9 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
     startTrophyTransition(async () => {
       const result = await fetchGameTrophiesAction(game.id);
       setTrophyState(
-        result.ok ? { status: 'loaded', trophies: result.trophies } : { status: 'failed', reason: result.reason },
+        result.ok
+          ? { status: 'loaded', trophies: result.trophies }
+          : { status: 'failed', reason: result.reason },
       );
     });
   }, [hasTrophies, game.id, startTrophyTransition]);
@@ -102,7 +104,12 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
         title={game.title}
         className="mt-2"
         actions={
-          <Button type="button" variant="ghost" onClick={() => setConfirmingDelete(true)} disabled={deletePending}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setConfirmingDelete(true)}
+            disabled={deletePending}
+          >
             <Trash2 className="size-4" />
             Remove
           </Button>
@@ -122,7 +129,10 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
           onSaveField={saveField}
         />
 
-        <div className="space-y-4">
+        {/* Capped so the label column and its value cannot drift apart again
+            on a wide window — the whole reason these rows were unreadable
+            before (see `inline-edit-row.tsx`'s ROW_CLASS comment). */}
+        <div className="max-w-2xl space-y-4">
           <TitleField game={game} onSaveField={saveField} />
 
           <GameDetailsContent
@@ -207,7 +217,8 @@ function TitleField({
   // render time (below), not by clearing `suggestions` here — setting
   // state synchronously inside an effect body triggers a second render for
   // no reason a plain derived value doesn't already cover.
-  const belowSearchThreshold = draft.trim() === game.title.trim() || draft.trim().length < SEARCH_MIN_LENGTH;
+  const belowSearchThreshold =
+    draft.trim() === game.title.trim() || draft.trim().length < SEARCH_MIN_LENGTH;
   const visibleSuggestions = belowSearchThreshold ? [] : suggestions;
 
   useEffect(() => {
@@ -251,8 +262,12 @@ function TitleField({
       title: suggestion.title,
       coverUrl: suggestion.coverUrl,
       ...(game.genre === null && suggestion.genre !== null ? { genre: suggestion.genre } : {}),
-      ...(game.developer === null && suggestion.developer !== null ? { developer: suggestion.developer } : {}),
-      ...(game.publisher === null && suggestion.publisher !== null ? { publisher: suggestion.publisher } : {}),
+      ...(game.developer === null && suggestion.developer !== null
+        ? { developer: suggestion.developer }
+        : {}),
+      ...(game.publisher === null && suggestion.publisher !== null
+        ? { publisher: suggestion.publisher }
+        : {}),
       metacritic: suggestion.metacritic,
       averagePlaytimeHours: suggestion.averagePlaytimeHours,
       esrbRating: suggestion.esrbRating,
@@ -271,10 +286,10 @@ function TitleField({
           setDraft(game.title);
           setEditing(true);
         }}
-        className="hover:text-foreground -mx-1 -my-1 block rounded-md px-1 py-1 text-left text-sm transition-colors"
+        className="hover:text-foreground -mx-1 -my-1 grid w-full grid-cols-[9rem_1fr] items-start gap-3 rounded-md px-1 py-1 text-left text-sm transition-colors"
       >
-        <span className="text-muted-foreground mr-2">Title</span>
-        {game.title}
+        <span className="text-muted-foreground">Title</span>
+        <span className="truncate">{game.title}</span>
       </button>
     );
   }
@@ -317,7 +332,13 @@ function TitleField({
               >
                 <span className="bg-muted relative block aspect-[3/4] w-full">
                   {suggestion.coverUrl === null ? null : (
-                    <Image src={suggestion.coverUrl} alt="" fill sizes="120px" className="object-cover" />
+                    <Image
+                      src={suggestion.coverUrl}
+                      alt=""
+                      fill
+                      sizes="120px"
+                      className="object-cover"
+                    />
                   )}
                 </span>
                 <span className="line-clamp-2 p-1 text-xs">
