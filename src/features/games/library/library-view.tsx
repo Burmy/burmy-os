@@ -117,12 +117,13 @@ export function LibraryView({
           have a handful of known options and a count worth seeing without
           opening anything — that's the app's rule for which filters are
           chips and which are dropdowns (see `filter-bar.tsx`). */}
-      <FilterBar className="flex-col items-stretch gap-3 sm:items-stretch">
-        {/* Search left, display-mode toggle right — the same row shape
-            Finance's Period + Month/This Year row uses. The toggle used to
-            sit up in the header beside Add game; it belongs with the other
-            controls, and words beat the two bare glyphs it used to be. */}
-        <div className="flex flex-wrap items-end justify-between gap-3">
+      {/* Filters left, display-mode toggle right — the same row shape
+          Finance's Period + Month/This Year row uses. Search and the chips
+          share that left group rather than stacking: the chips are filters
+          too, so they belong on the filter side of the row, not on a line
+          of their own. */}
+      <FilterBar className="justify-between">
+        <div className="flex flex-wrap items-end gap-3">
           <FilterField label="Search">
             <Input
               type="search"
@@ -130,21 +131,11 @@ export function LibraryView({
               placeholder="Search title, developer, publisher…"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              className="w-full sm:w-72"
+              className="w-full sm:w-64"
             />
           </FilterField>
 
-          <SegmentedToggle
-            value={view}
-            onChange={setView}
-            options={[
-              { value: 'gallery', label: 'Gallery' },
-              { value: 'table', label: 'Table' },
-            ]}
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="flex flex-wrap gap-1">
             {/* No "All" chip: an active chip toggles itself off, and the
                 "Clear" control below appears whenever anything is filtered.
@@ -201,7 +192,17 @@ export function LibraryView({
               Clear
             </Button>
           ) : null}
+          </div>
         </div>
+
+        <SegmentedToggle
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'gallery', label: 'Gallery' },
+            { value: 'table', label: 'Table' },
+          ]}
+        />
       </FilterBar>
 
       {/* Baseline is the NON-wanted count, not `games.length` — wanted games

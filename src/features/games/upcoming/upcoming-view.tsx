@@ -149,7 +149,7 @@ function MonthSection({
       ) : (
         // Same column counts and gap as the library grid (`game-grid.tsx`) —
         // the two used to diverge for no reason.
-        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
           {month.games.map((game) => (
             <UpcomingGameCard key={game.igdbId} game={game} wishlisted={wishlisted.has(game.igdbId)} />
           ))}
@@ -203,7 +203,7 @@ function UpcomingGameCard({
         // borderless, a padded box whose FILL carries the state, cover art
         // rounded on its own frame rather than the card's top corners.
         // The two grids used to diverge visually for no reason.
-        'flex flex-col gap-3 rounded-xl p-3',
+        'flex flex-col gap-2.5 rounded-xl p-2',
         wishlisted ? 'bg-card' : null,
       )}
     >
@@ -220,7 +220,7 @@ function UpcomingGameCard({
             src={game.coverUrl}
             alt=""
             fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 200px"
+            sizes="(max-width: 640px) 50vw, (max-width: 1536px) 25vw, 300px"
             className="object-cover"
           />
         )}

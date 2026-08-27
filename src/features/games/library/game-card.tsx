@@ -66,7 +66,7 @@ export function GameCard({
       aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}`}
       onClick={() => onOpen(game)}
       className={cn(
-        'group flex flex-col gap-3 rounded-xl p-3 text-left transition-colors',
+        'group flex flex-col gap-2.5 rounded-xl p-2 text-left transition-colors',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
         game.platinum
           ? 'bg-card ring-1 ring-slate-300 dark:ring-slate-400/35'
@@ -92,7 +92,7 @@ export function GameCard({
             src={game.coverUrl}
             alt=""
             fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1280px) 25vw, 280px"
+            sizes="(max-width: 640px) 50vw, (max-width: 1536px) 25vw, 300px"
             className={cn('object-cover', wishlisted && 'opacity-75')}
           />
         )}
