@@ -1,8 +1,8 @@
 import { cn } from '@/lib/utils';
 
 /**
- * The row of `StatCard`s at the top of a dashboard — one column rule, shared by
- * Finance and Games.
+ * Every row of `StatCard`s in the app — one column rule, shared by Finance and
+ * Games and by both the headline stats and the smaller insight cards.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHY THIS IS A COMPONENT AND NOT A COPIED className.
@@ -27,11 +27,11 @@ import { cn } from '@/lib/utils';
  * permits Finance and Games to have in common.
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * Caps at FOUR, not more. Finance's month view has 6 cards and Games' has 7, so
- * a wider row would fit either one on a single line — but no column count
- * divides 5, 6 and 7 without stranding a card alone on a row, and 4 is the
- * widest that keeps every card readable at 1280px. Two tidy rows beat one row
- * of cramped cards.
+ * FOUR across from `lg`, FIVE from `2xl`. Card counts in play are 5, 6 and 7,
+ * so no column count avoids stranding one card alone on a row somewhere — that
+ * is accepted rather than designed around. What matters is that a card is the
+ * same width on every screen it appears on, which is what stops Finance and
+ * Games looking like two different apps.
  */
 export function StatCardGrid({
   children,
@@ -41,6 +41,6 @@ export function StatCardGrid({
   readonly className?: string;
 }): React.ReactElement {
   return (
-    <div className={cn('grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4', className)}>{children}</div>
+    <div className={cn('grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5', className)}>{children}</div>
   );
 }

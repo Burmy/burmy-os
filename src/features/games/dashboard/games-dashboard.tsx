@@ -218,7 +218,13 @@ export function GamesDashboard({
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      {/* These two are `StatCard`s, so they go in the shared grid like every
+          other one. At `sm:grid-cols-2` they rendered 548px wide against every
+          other card's 266px — the same component at more than double the size,
+          on the same page. Two cards in a four-column grid leaves two cells
+          empty, which is the correct trade: a card's size should come from the
+          app's grid, not from how many happen to sit beside it. */}
+      <StatCardGrid>
         <StatCard
           label="Most-played developer"
           value={callouts.topDeveloper?.name ?? '—'}
@@ -231,7 +237,7 @@ export function GamesDashboard({
           value={callouts.bestYear === null ? '—' : String(callouts.bestYear.year)}
           {...(callouts.bestYear === null ? {} : { hint: formatHours(hours(callouts.bestYear.hoursTenths)) })}
         />
-      </div>
+      </StatCardGrid>
     </div>
   );
 }

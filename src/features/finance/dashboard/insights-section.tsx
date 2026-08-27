@@ -3,32 +3,25 @@ import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
 import type { BiggestSpendingDay, CategoryAmount, MonthSummary } from '@/server/finance/dashboard';
 import { cents, format } from '@/server/finance/money';
 import { formatPercent } from '@/components/finance/format-percent';
+import { StatCard } from '@/components/ui/stat-card';
+import { StatCardGrid } from '@/components/ui/stat-card-grid';
 
-function InsightItem({
-  label,
-  value,
-  sub,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly sub?: string;
-}): React.ReactElement {
-  return (
-    // `p-6` and `basis-56`, matching `StatCard`/`Section` exactly. This card
-    // was the app's odd one out on both axes — 12px of padding inside a strip
-    // with 8px between items, next to 24px-padded cards everywhere else — and
-    // it is what made this row read as a different, denser component than the
-    // stat cards directly above it. The TYPE scale stays small on purpose:
-    // an insight is not a headline stat and should not pretend to be one.
-    <div className="min-w-48 max-w-72 flex-1 basis-56 rounded-md bg-card p-6">
-      <div className="text-muted-foreground text-xs">{label}</div>
-      <div className="tabular mt-0.5 truncate text-sm font-semibold" title={value}>
-        {value}
-      </div>
-      {sub ? <div className="text-muted-foreground mt-0.5 truncate text-xs">{sub}</div> : null}
-    </div>
-  );
-}
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * INSIGHTS ARE `StatCard`s. THERE IS NO SEPARATE "SMALL CARD" ANY MORE.
+ *
+ * `InsightItem` used to be its own component with its own padding, its own type
+ * scale and a `flex-wrap`/`basis-56` layout — so every insight sized itself to
+ * whatever space was left, and a row of them came out visibly ragged, none of
+ * them matching the stat cards directly above.
+ *
+ * Its props were `label`/`value`/`sub`, which is `StatCard`'s
+ * `label`/`value`/`hint` renamed. Two components for one shape is how they
+ * drifted apart in the first place, so the copy is gone and these are the real
+ * thing, in the same `StatCardGrid` as every other card in the app.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
 
 function monthLabel(summary: MonthSummary): string {
   return `${MONTH_ABBREVIATIONS[summary.month - 1]} ${summary.year}`;
@@ -66,74 +59,74 @@ export function InsightsSection({
 
   if (largestExpense) {
     items.push(
-      <InsightItem
+      <StatCard
         key="largest-expense"
         label="Largest expense"
         value={format(cents(largestExpense.amountCents))}
-        sub={largestExpense.normalizedMerchant ?? largestExpense.originalDescription}
+        hint={largestExpense.normalizedMerchant ?? largestExpense.originalDescription}
       />,
     );
   }
 
   if (topCategory) {
     items.push(
-      <InsightItem
+      <StatCard
         key="top-category"
         label="Top spending category"
         value={topCategory.name}
-        sub={`${format(cents(topCategory.amountCents))} · ${formatPercent(topCategory.percentOfExpenses)} of expenses`}
+        hint={`${format(cents(topCategory.amountCents))} · ${formatPercent(topCategory.percentOfExpenses)} of expenses`}
       />,
     );
   }
 
   if (biggestSpendingDay) {
     items.push(
-      <InsightItem
+      <StatCard
         key="biggest-day"
         label="Biggest spending day"
         value={`${MONTH_ABBREVIATIONS[spendingDayMonth - 1]} ${biggestSpendingDay.day}, ${spendingDayYear}`}
-        sub={format(cents(biggestSpendingDay.amountCents))}
+        hint={format(cents(biggestSpendingDay.amountCents))}
       />,
     );
   }
 
   if (averageTransactionCents !== null) {
     items.push(
-      <InsightItem key="avg-transaction" label="Average transaction" value={format(cents(Math.round(averageTransactionCents)))} />,
+      <StatCard key="avg-transaction" label="Average transaction" value={format(cents(Math.round(averageTransactionCents)))} />,
     );
   }
 
   if (highestIncomeMonth && highestIncomeMonth.incomeCents > 0) {
     items.push(
-      <InsightItem
+      <StatCard
         key="highest-income"
         label="Highest-income month"
         // Already sign-flipped to positive by `getMonthlyTotalsAllTime` — see the
         // same note on the Income stat card in `finance-dashboard.tsx`.
         value={format(cents(highestIncomeMonth.incomeCents), { signed: true })}
-        sub={monthLabel(highestIncomeMonth)}
+        hint={monthLabel(highestIncomeMonth)}
       />,
     );
   }
 
   if (highestSpendingMonth && highestSpendingMonth.expenseCents > 0) {
     items.push(
-      <InsightItem
+      <StatCard
         key="highest-spending"
         label="Highest-spending month"
         value={format(cents(highestSpendingMonth.expenseCents))}
-        sub={monthLabel(highestSpendingMonth)}
+        hint={monthLabel(highestSpendingMonth)}
       />,
     );
   }
 
   if (bestNetMonth) {
     items.push(
-      <InsightItem
+      <StatCard
         key="best-net"
         label="Best net month"
         value={format(cents(bestNetMonth.netCents), { signed: true })}
-        sub={monthLabel(bestNetMonth)}
+        hint={monthLabel(bestNetMonth)}
       />,
     );
   }
@@ -146,13 +139,9 @@ export function InsightsSection({
           12px gap. These were `text-sm` over 8px, which is a third heading
           style for the same job and part of why this block read as foreign. */}
       <h2 className="font-display text-base font-medium">Insights</h2>
-      {/* flex-wrap, not a fixed grid — with only 1-2 insights available (a
-          brand-new owner), a 4-column grid leaves large empty cells that read
-          as unfinished. Flexible, bounded-width cards just sit compactly
-          instead, and still wrap into a full grid-like row once there are
-          enough of them. `gap-4` is the app's one card gap; nothing in either
-          module lays cards out at any other distance any more. */}
-      <div className="mt-3 flex flex-wrap gap-4">{items}</div>
+      <div className="mt-3">
+        <StatCardGrid>{items}</StatCardGrid>
+      </div>
     </div>
   );
 }
