@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * The single row of filter controls a page is allowed, between its header
- * and its `PageMeta` line.
+ * and its content.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * ONE RULE, NOT ONE WIDGET.

@@ -476,8 +476,6 @@ export async function listTransactionsLedger(
 export interface LedgerSummary {
   readonly totalCount: number;
   readonly needsReviewCount: number;
-  /** `transfer` + `credit_card_payment` rows in scope — excluded from every Monthly total. */
-  readonly excludedCount: number;
   /**
    * Per-status counts for the Status filter CHIPS, computed with every other
    * filter applied but WITHOUT the status filter itself — see
@@ -536,14 +534,26 @@ async function statusFacetCounts(
  * and transfers into one number is not a meaningful total, and showing one
  * risked reading as an authoritative figure competing with Monthly's.
  *
- * `excludedCount` is a plain row count, deliberately WITHOUT a paired dollar
- * amount. A transfer/card-payment PAIR is two rows for one real movement of
- * money — a signed `SUM` cancels toward zero exactly when both legs are in
- * scope, and `SUM(ABS(...))` avoids that but then double-counts the pair
- * (a real $675 payment reads as $1,350 excluded). Netting the pair back down
- * to $675 would mean matching legs — real reconciliation logic this page
- * deliberately does not build. Showing the row count only sidesteps the
- * whole class of bug rather than picking a lesser-wrong number.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THERE IS NO FIGURE HERE FOR EXCLUDED (transfer / credit_card_payment) ROWS,
+ * AND ADDING ONE IS HARDER THAN IT LOOKS.
+ *
+ * This used to report an `excludedCount` — a plain row count, deliberately
+ * with no paired dollar amount — which the Transactions meta line rendered as
+ * "N transfer/card payment transactions excluded from Monthly." The line was
+ * removed as noise, so the field went with it rather than staying as dead SQL.
+ *
+ * The reasoning is kept because it is the expensive part, and a future feature
+ * asking "how much was excluded?" will walk straight back into it: a
+ * transfer/card-payment PAIR is TWO ROWS for ONE real movement of money. A
+ * signed `SUM` cancels toward zero exactly when both legs are in scope, and
+ * `SUM(ABS(...))` avoids the cancellation but then double-counts the pair — a
+ * real $675 payment reads as $1,350 excluded, which is how this shipped once
+ * before the owner caught it. Netting the pair back down to $675 means
+ * MATCHING LEGS, which is real reconciliation logic this page deliberately
+ * does not build. So: not a `SUM` vs `ABS` choice. If a dollar figure is ever
+ * genuinely needed, it is pair-matching work — budget for it accordingly.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function getLedgerSummary(ownerId: string, filters: LedgerFilters): Promise<LedgerSummary> {
   const conditions = ledgerConditions(ownerId, filters);
@@ -556,14 +566,13 @@ export async function getLedgerSummary(ownerId: string, filters: LedgerFilters):
       .select({
         totalCount: sql<number>`count(*)::int`,
         needsReviewCount: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
-        excludedCount: sql<number>`count(*) filter (where ${financeTransactions.transactionType} in ('transfer', 'credit_card_payment'))::int`,
       })
       .from(financeTransactions)
       .where(and(...conditions)),
     statusFacetCounts(ownerId, conditionsWithoutStatus),
   ]);
 
-  return { ...(row ?? { totalCount: 0, needsReviewCount: 0, excludedCount: 0 }), statusCounts };
+  return { ...(row ?? { totalCount: 0, needsReviewCount: 0 }), statusCounts };
 }
 
 /**

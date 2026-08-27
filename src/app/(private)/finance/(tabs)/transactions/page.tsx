@@ -99,6 +99,18 @@ export default async function TransactionsPage({
           on-screen page (see `listTransactionsForExport`). */}
       <PageHeader
         title="Transactions"
+        // Rendered here rather than in the client table because this Server
+        // Component already awaits `summary` (above) — the table receives the
+        // same object, so neither placement costs a query, and the header
+        // belongs to the page.
+        meta={
+          <>
+            <span>
+              {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
+            </span>
+            {summary.needsReviewCount > 0 ? <span>{summary.needsReviewCount} need review</span> : null}
+          </>
+        }
         actions={
           // Default (solid) variant, matching Add game and Import statement
           // — it's this page's one primary action, so it gets the same

@@ -5,11 +5,10 @@ import Link from 'next/link';
 import { Check, Gamepad2, Heart, Loader2, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
-import { FoilShine } from '@/components/games/foil-shine';
+import { FoilCard } from '@/components/games/foil-card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import { MONTH_NAMES } from '@/server/games/upcoming';
 import type { UpcomingMonth, UpcomingMonthGame } from '@/server/games/upcoming';
@@ -97,13 +96,14 @@ export function UpcomingView({
 
       {!igdbConfigured ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">
-          Upcoming games needs IGDB credentials. Set <code className="font-mono">IGDB_CLIENT_ID</code> and{' '}
+          Upcoming games needs IGDB credentials. Set{' '}
+          <code className="font-mono">IGDB_CLIENT_ID</code> and{' '}
           <code className="font-mono">IGDB_CLIENT_SECRET</code> to enable this tab.
         </p>
       ) : months.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">
-          No upcoming games to show right now — either nothing in the next 12 months clears the hype threshold, or
-          IGDB couldn&apos;t be reached. Try again later.
+          No upcoming games to show right now — either nothing in the next 12 months clears the hype
+          threshold, or IGDB couldn&apos;t be reached. Try again later.
         </p>
       ) : (
         <div className="space-y-8">
@@ -123,9 +123,12 @@ export function UpcomingView({
           always accepted a hand-typed title with status Wanted. */}
       {igdbConfigured ? (
         <p className="text-muted-foreground border-t pt-6 text-xs">
-          Don&apos;t see a game here? IGDB only lists titles with real pre-release buzz, in the next 12 months. For
-          anything else — already out, or below IGDB&apos;s radar — add it from the{' '}
-          <Link href="/games/library" className="hover:text-foreground underline underline-offset-2">
+          Don&apos;t see a game here? IGDB only lists titles with real pre-release buzz, in the next
+          12 months. For anything else — already out, or below IGDB&apos;s radar — add it from the{' '}
+          <Link
+            href="/games/library"
+            className="hover:text-foreground underline underline-offset-2"
+          >
             Library
           </Link>{' '}
           and set its status to Wanted.
@@ -152,7 +155,11 @@ function MonthSection({
         // the two used to diverge for no reason.
         <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
           {month.games.map((game) => (
-            <UpcomingGameCard key={game.igdbId} game={game} wishlisted={wishlisted.has(game.igdbId)} />
+            <UpcomingGameCard
+              key={game.igdbId}
+              game={game}
+              wishlisted={wishlisted.has(game.igdbId)}
+            />
           ))}
         </div>
       )}
@@ -205,49 +212,58 @@ function UpcomingGameCard({
       // test anchored to `.rounded-xl` broke the moment the app unified on
       // one 6px radius.
       data-slot="upcoming-card"
-      className={cn(
-        // Same card language as the library grid (`game-card.tsx`):
-        // borderless, a padded box whose FILL carries the state, cover art
-        // rounded-md on its own frame rather than the card's top corners.
-        // The two grids used to diverge visually for no reason.
-        'flex flex-col gap-2.5 rounded-md p-2',
-        wishlisted ? 'bg-card' : null,
-      )}
+      // No padded box and no fill. Wishlisted state used to be a `bg-card`
+      // surface with `p-2` around the whole card — the last survivor of the
+      // "a padded box whose FILL carries the state" pattern the library grid
+      // has since dropped. It is redundant now that the cover itself carries
+      // the cold frost foil plus the heart glyph, and it was also the app's
+      // only remaining card at 8px of padding when every other card is at
+      // 24px. Two ways of saying "wishlisted," one of them off-rhythm.
+      className="flex flex-col gap-2.5"
     >
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-md">
-        {game.coverUrl === null ? (
-          <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
-            <span className="text-muted-foreground/40 text-4xl font-semibold">
-              {game.title.trim().charAt(0).toUpperCase()}
-            </span>
-            <Gamepad2 className="text-muted-foreground/25 size-4" />
-          </div>
-        ) : (
-          <Image
-            src={game.coverUrl}
-            alt=""
-            fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1536px) 25vw, 300px"
-            className="object-cover"
-          />
-        )}
-        {/* Hover-only foil highlight, same as the library grid's wishlist
-            cards — these two galleries share one card language and must not
-            diverge again. See `foil-shine.tsx`. */}
-        {wishlisted ? <FoilShine tone="wishlist" /> : null}
-
-        {/* Monochrome over an opaque scrim, matching the library's own
-            badge treatment — the old violet pill was app-colored chrome
-            sitting on third-party box art, which never composed well. */}
-        {wishlisted ? (
-          <span
-            aria-hidden
-            title="On your wishlist"
-            className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
-          >
-            <Heart className="size-3.5" />
+      {/* Same cover treatment as the library grid — tilt and glare on every
+          card, cold frost once it's on the wishlist. These two galleries share
+          one card language and must not diverge again; see `foil-card.tsx`.
+          What they do NOT share is the text below: this screen still needs the
+          title, the release month and the add control, because a card here is
+          something you act on rather than something you recognise. */}
+      <div className="relative aspect-3/4 w-full">
+        <FoilCard tone={wishlisted ? 'wishlist' : null}>
+          <span className="bg-muted absolute inset-0 block">
+            {game.coverUrl === null ? (
+              <span
+                className="flex h-full flex-col items-center justify-center gap-1.5"
+                aria-hidden
+              >
+                <span className="text-muted-foreground/40 text-4xl font-semibold">
+                  {game.title.trim().charAt(0).toUpperCase()}
+                </span>
+                <Gamepad2 className="text-muted-foreground/25 size-4" />
+              </span>
+            ) : (
+              <Image
+                src={game.coverUrl}
+                alt=""
+                fill
+                sizes="(max-width: 640px) 50vw, (max-width: 1536px) 25vw, 300px"
+                className="object-cover"
+              />
+            )}
           </span>
-        ) : null}
+
+          {/* Monochrome over an opaque scrim, matching the library's own
+              badge treatment — the old violet pill was app-colored chrome
+              sitting on third-party box art, which never composed well. */}
+          {wishlisted ? (
+            <span
+              aria-hidden
+              title="On your wishlist"
+              className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
+            >
+              <Heart className="size-3.5" />
+            </span>
+          ) : null}
+        </FoilCard>
       </div>
 
       <div className="flex flex-1 flex-col gap-1">
@@ -259,7 +275,9 @@ function UpcomingGameCard({
             — absent for the trailing Later/TBD bucket, where the section
             header already conveys "no known date" and repeating that per
             card would be redundant. */}
-        {releaseMonth === null ? null : <span className="text-muted-foreground text-xs">{releaseMonth}</span>}
+        {releaseMonth === null ? null : (
+          <span className="text-muted-foreground text-xs">{releaseMonth}</span>
+        )}
         <div className="mt-auto pt-2">
           <AddToWishlistButton game={game} wishlisted={wishlisted} />
         </div>
@@ -337,7 +355,11 @@ function AddToWishlistButton({
 
   return (
     <Button size="sm" variant="outline" onClick={add} disabled={pending} className="w-full">
-      {pending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Plus className="size-4" aria-hidden />}
+      {pending ? (
+        <Loader2 className="size-4 animate-spin" aria-hidden />
+      ) : (
+        <Plus className="size-4" aria-hidden />
+      )}
       {pending ? 'Adding…' : 'Add to wishlist'}
     </Button>
   );

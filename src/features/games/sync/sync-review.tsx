@@ -108,7 +108,7 @@ export function SyncReview({
 
   if (changes.length === 0) {
     return (
-      <div className="bg-card mt-8 max-w-md space-y-3 rounded-md p-4 text-sm">
+      <div className="bg-card mt-8 max-w-md space-y-3 rounded-md p-6 text-sm">
         <p className="font-medium">Nothing to review.</p>
         <p className="text-muted-foreground">
           This sync run found no changes — your library already matches {sourceLabel}.

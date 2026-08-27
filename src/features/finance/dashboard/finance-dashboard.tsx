@@ -125,7 +125,7 @@ export function FinanceDashboard({
 
       {view === 'month' ? (
         <div className="space-y-8">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard
               label="Income"
               // `summary.incomeCents` is already sign-flipped to a positive display
@@ -159,7 +159,7 @@ export function FinanceDashboard({
             <StatCard label="Transactions" value={String(summary.transactionCount)} />
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <Section title="Income vs Expenses" description="Most recent months of activity">
               <IncomeExpenseTrendChart points={trend} />
             </Section>
@@ -168,7 +168,7 @@ export function FinanceDashboard({
             </Section>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <Section title="Spending by category" description="Selected month, largest first">
               <CategoryBreakdownChart categories={categoryBreakdown} />
             </Section>
@@ -195,7 +195,7 @@ export function FinanceDashboard({
         </div>
       ) : (
         <div className="space-y-8">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 xl:grid-cols-5">
             <StatCard
               label={isCompletedYear ? 'Income' : 'YTD Income'}
               value={format(cents(ytd.summary.incomeCents), { signed: true })}

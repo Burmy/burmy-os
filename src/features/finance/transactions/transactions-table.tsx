@@ -8,7 +8,6 @@ import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { FilterChip } from '@/components/ui/filter-chip';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
-import { PageMeta } from '@/components/ui/page-meta';
 import {
   Select,
   SelectContent,
@@ -251,19 +250,6 @@ export function TransactionsTable({
           />
         ))}
       </div>
-
-      <PageMeta>
-        <span>
-          {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
-        </span>
-        {summary.needsReviewCount > 0 ? <span>{summary.needsReviewCount} need review</span> : null}
-        {summary.excludedCount > 0 ? (
-          <span>
-            {summary.excludedCount} transfer/card payment transaction{summary.excludedCount === 1 ? '' : 's'} excluded
-            from Monthly
-          </span>
-        ) : null}
-      </PageMeta>
 
       {rows.length === 0 ? (
         <EmptyState>No transactions match this filter.</EmptyState>

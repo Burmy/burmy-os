@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { FilterBar } from '@/components/ui/filter-bar';
 import { FilterChip } from '@/components/ui/filter-chip';
 import { FilterSelect } from '@/components/ui/filter-select';
-import { PageMeta } from '@/components/ui/page-meta';
+import { PageHeader } from '@/components/ui/page-header';
 import {
   Select,
   SelectContent,
@@ -185,6 +185,19 @@ export function ReviewQueue({
 
   return (
     <div className="space-y-8">
+      {/* Owned here, not by the page — the count beside the title is the
+          number of rows LEFT to review, which falls as the owner confirms
+          them and so only exists as client state. See the page's own comment. */}
+      <PageHeader
+        title="Review"
+        // Suppressed when empty: the empty state below already says it, and
+        // "0 transactions to review" beside a heading, directly above
+        // "Nothing here, you're caught up," was the same sentence twice.
+        {...(rows.length === 0
+          ? {}
+          : { meta: <span>{`${rows.length} transaction${rows.length === 1 ? '' : 's'} to review`}</span> })}
+      />
+
       {/* Always visible. These three selects used to hide behind a "Filters"
           disclosure — a click to reveal three controls that fit on one line
           and that the owner is here to use. Nothing on this row is worth
@@ -223,13 +236,6 @@ export function ReviewQueue({
           />
         ))}
       </div>
-
-      {/* Suppressed when empty — the empty state below already says it, and
-          "Nothing to review" directly above "Nothing here, you're caught up"
-          was the same sentence twice. */}
-      {rows.length === 0 ? null : (
-        <PageMeta>{`${rows.length} transaction${rows.length === 1 ? '' : 's'} to review`}</PageMeta>
-      )}
 
       {rows.length === 0 ? (
         <p className="text-muted-foreground text-sm">Nothing here. You&apos;re caught up.</p>

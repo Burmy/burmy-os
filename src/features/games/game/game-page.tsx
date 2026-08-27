@@ -148,15 +148,20 @@ export function GamePage({ game }: { readonly game: Game }): React.ReactElement 
         <div className="mt-8">
           <div className="mb-2 flex items-center justify-between">
             <h2 className="text-muted-foreground text-xs font-medium">Trophies</h2>
-            <a
-              href={`https://www.powerpyx.com/?s=${encodeURIComponent(game.title)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
-            >
-              Find on PowerPyx
-              <ExternalLink className="size-3" aria-hidden />
-            </a>
+            {/* A real button, not the 12px grey link this used to be. Looking
+                up a trophy guide is the one thing you actually DO from this
+                section, so it gets the same solid treatment as Add game and
+                Export rather than hiding at the weight of a caption. */}
+            <Button asChild size="sm">
+              <a
+                href={`https://www.powerpyx.com/?s=${encodeURIComponent(game.title)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Find on PowerPyx
+                <ExternalLink className="size-3.5" aria-hidden />
+              </a>
+            </Button>
           </div>
           <TrophiesSection state={trophyState} />
         </div>

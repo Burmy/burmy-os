@@ -62,12 +62,29 @@ function game(overrides: Partial<Game>): Game {
   };
 }
 
+/**
+ * The gallery renders NO visible text — a card is bare box art now (see
+ * `game-card.tsx`). So "is this game on screen?" can no longer be answered
+ * with `getByText(title)`; the title lives only in each card's `aria-label`,
+ * formatted as `"<title> — <Status>"`.
+ *
+ * This reads the gallery the way a screen reader would, which is also the only
+ * way left to read it. Table view still renders real text and its tests still
+ * use `getByText` directly.
+ */
+function galleryTitles(): string[] {
+  return screen
+    .getAllByRole('button')
+    .map((button) => button.getAttribute('aria-label') ?? '')
+    .filter((label) => label.includes(' — '))
+    .map((label) => label.split(' — ')[0]!);
+}
+
 describe('LibraryView', () => {
   it('renders every game in the default gallery view', () => {
     render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' }), game({ id: 'b', title: 'Prey' })]} />);
 
-    expect(screen.getByText('Elden Ring')).toBeInTheDocument();
-    expect(screen.getByText('Prey')).toBeInTheDocument();
+    expect(galleryTitles()).toEqual(['Elden Ring', 'Prey']);
   });
 
   it('switches to a table view without losing any games', async () => {
@@ -98,15 +115,14 @@ describe('LibraryView', () => {
       <LibraryView
         games={[
           game({ id: 'a', title: 'Finished Game', status: 'played' }),
-          game({ id: 'b', title: 'Queued Game', status: 'backlog' }),
+          game({ id: 'b', title: 'Wanted Game', status: 'wanted' }),
         ]}
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /^backlog/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^wanted/i }));
 
-    expect(screen.getByText('Queued Game')).toBeInTheDocument();
-    expect(screen.queryByText('Finished Game')).not.toBeInTheDocument();
+    expect(galleryTitles()).toEqual(['Wanted Game']);
   });
 
   it('filters by platform', async () => {
@@ -121,27 +137,24 @@ describe('LibraryView', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /^steam/i }));
 
-    expect(screen.getByText('Desktop Game')).toBeInTheDocument();
-    expect(screen.queryByText('Console Game')).not.toBeInTheDocument();
+    expect(galleryTitles()).toEqual(['Desktop Game']);
   });
 
   it('combines status and platform filters', async () => {
     render(
       <LibraryView
         games={[
-          game({ id: 'a', title: 'Match', status: 'backlog', platform: 'steam' }),
+          game({ id: 'a', title: 'Match', status: 'wanted', platform: 'steam' }),
           game({ id: 'b', title: 'Wrong status', status: 'played', platform: 'steam' }),
-          game({ id: 'c', title: 'Wrong platform', status: 'backlog', platform: 'ps5' }),
+          game({ id: 'c', title: 'Wrong platform', status: 'wanted', platform: 'ps5' }),
         ]}
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /^backlog/i }));
-    await userEvent.click(screen.getByRole('button', { name: /^steam/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^wanted/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^steam \/ pc/i }));
 
-    expect(screen.getByText('Match')).toBeInTheDocument();
-    expect(screen.queryByText('Wrong status')).not.toBeInTheDocument();
-    expect(screen.queryByText('Wrong platform')).not.toBeInTheDocument();
+    expect(galleryTitles()).toEqual(['Match']);
   });
 
   it('shows a searchable count that reflects the active filter', async () => {
@@ -156,8 +169,8 @@ describe('LibraryView', () => {
 
     await userEvent.type(screen.getByRole('searchbox', { name: /search/i }), 'Queued');
 
-    expect(screen.getByText('Queued Game')).toBeInTheDocument();
-    expect(screen.queryByText('Finished Game')).not.toBeInTheDocument();
+    expect(galleryTitles()).toEqual(['Queued Game']);
+    expect(screen.getByText('1 of 2 games')).toBeInTheDocument();
   });
 
   it('does not render a platform filter chip for a platform with zero games', () => {
@@ -172,28 +185,35 @@ describe('LibraryView', () => {
     expect(screen.queryByRole('button', { name: /^other/i })).not.toBeInTheDocument();
   });
 
-  it('does not render a status filter chip for backlog/wanted with zero games', () => {
+  it('does not render the wanted chip when nothing is wishlisted', () => {
     render(<LibraryView games={[game({ id: 'a', status: 'played' })]} />);
 
-    expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^wanted/i })).not.toBeInTheDocument();
   });
 
-  it('never renders playing or played as status filter chips, even with nonzero counts', () => {
+  /**
+   * `wanted` is the ONLY status that earns a chip. `played` is the default for
+   * ~95% of the library and `playing` covers at most one game, so neither is a
+   * useful library-wide filter; `backlog` had a chip until real use showed it
+   * wasn't a bucket the owner actually filtered by.
+   *
+   * Every status below has a nonzero count on purpose — otherwise this would
+   * pass for the wrong reason (the zero-count filter suppressing them anyway).
+   */
+  it('renders wanted as the only status chip, whatever the other counts are', () => {
     render(
       <LibraryView
         games={[
           game({ id: 'a', status: 'played' }),
-          game({ id: 'b', status: 'played' }),
-          game({ id: 'c', status: 'playing' }),
-          game({ id: 'd', status: 'backlog' }),
+          game({ id: 'b', status: 'playing' }),
+          game({ id: 'c', status: 'backlog' }),
+          game({ id: 'd', status: 'wanted' }),
         ]}
       />,
     );
 
-    // Backlog is a real candidate and has a nonzero count, so it renders —
-    // proving playing/played's absence isn't just a zero-count coincidence.
-    expect(screen.getByRole('button', { name: /^backlog/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^wanted/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^played/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
   });
@@ -222,10 +242,10 @@ describe('LibraryView', () => {
     );
 
     await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
-    expect(screen.queryByText('Daxter')).not.toBeInTheDocument();
+    expect(galleryTitles()).not.toContain('Daxter');
 
     await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
-    expect(screen.getByText('Daxter')).toBeInTheDocument();
+    expect(galleryTitles()).toContain('Daxter');
   });
 
   it('offers Clear only while something is actually filtered', async () => {
@@ -262,12 +282,19 @@ describe('LibraryView', () => {
     expect(screen.getByText(/no games yet/i)).toBeInTheDocument();
   });
 
-  it('formats hours as the owner writes them, not as raw tenths', () => {
+  /**
+   * Asserted through TABLE view, not the gallery: the gallery card is bare box
+   * art now and renders no hours — or any other text — at all. The formatting
+   * contract this guards (tenths in the column, hours on screen) is unchanged;
+   * only the surface that still displays it has moved.
+   */
+  it('formats hours as the owner writes them, not as raw tenths', async () => {
     render(<LibraryView games={[game({ hoursTenths: 1360, platform: 'ps5' })]} />);
-    // Hours share one metadata line with the platform on the cover-first
-    // card (`game-card.tsx`), so this is a substring match on that line
-    // rather than an exact-text match on an element of its own.
+
+    await userEvent.click(screen.getByRole('button', { name: /^table$/i }));
+
     expect(screen.getByText(/\b136h\b/)).toBeInTheDocument();
+    expect(screen.queryByText(/1360/)).not.toBeInTheDocument();
   });
 
   /**
@@ -286,8 +313,7 @@ describe('LibraryView', () => {
         />,
       );
 
-      expect(screen.getByText('Owned Game')).toBeInTheDocument();
-      expect(screen.queryByText('Wishlisted Game')).not.toBeInTheDocument();
+      expect(galleryTitles()).toEqual(['Owned Game']);
     });
 
     it('reveals wanted games only once their own status chip is active', async () => {
@@ -302,8 +328,7 @@ describe('LibraryView', () => {
 
       await userEvent.click(screen.getByRole('button', { name: /^wanted/i }));
 
-      expect(screen.getByText('Wishlisted Game')).toBeInTheDocument();
-      expect(screen.queryByText('Owned Game')).not.toBeInTheDocument();
+      expect(galleryTitles()).toEqual(['Wishlisted Game']);
     });
 
     it('does not count wanted games in the platform chips or the header total', () => {

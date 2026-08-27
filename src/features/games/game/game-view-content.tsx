@@ -12,23 +12,25 @@ import { GAME_OWNERSHIPS, OWNERSHIP_LABELS } from '@/server/games/taxonomy';
 import type { GameOwnership } from '@/server/games/taxonomy';
 import { InlineEditField, InlineEditSelect } from './inline-edit-row';
 
-function Section({
-  title,
-  children,
-}: {
-  readonly title: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
+/**
+ * A group of related rows, separated from the previous group by a rule.
+ *
+ * It used to carry a heading — "Details", "Progress", "Notes". All three were
+ * removed: the rule already does the separating, every row inside is
+ * self-labelled, and "Notes" in particular was a heading sitting directly on
+ * top of a row whose own label was also "Notes". A one-word category name
+ * above a list of labelled fields is a table of contents for four lines.
+ */
+function Section({ children }: { readonly children: React.ReactNode }): React.ReactElement {
   return (
-    <section className="space-y-1 border-t pt-4 first:border-t-0 first:pt-0">
-      <h2 className="text-muted-foreground text-xs font-medium">{title}</h2>
+    <section className="border-t pt-4 first:border-t-0 first:pt-0">
       <div className="divide-y">{children}</div>
     </section>
   );
 }
 
 /**
- * The right column — Details/Progress/Notes, every field independently
+ * The right column — every field independently
  * inline-editable (`inline-edit-row.tsx`). Replaces the old whole-page
  * edit-mode form; `PageHeader`/`GameSummaryPanel` already carry the title
  * and Platform/Status/Rating/Hours/Platinum, so none of those repeat here.
@@ -66,7 +68,7 @@ export function GameDetailsContent({
 }): React.ReactElement {
   return (
     <div className="space-y-4">
-      <Section title="Details">
+      <Section>
         <InlineEditSelect
           label="Ownership"
           value={ownership ?? ''}
@@ -96,7 +98,7 @@ export function GameDetailsContent({
         />
       </Section>
 
-      <Section title="Progress">
+      <Section>
         <InlineEditField
           label="First played"
           value={firstPlayedYear === null ? '' : String(firstPlayedYear)}
@@ -122,7 +124,7 @@ export function GameDetailsContent({
         <PlayYearsRow hoursTenths={hoursTenths} playYears={playYears} onSave={onSavePlayYears} />
       </Section>
 
-      <Section title="Notes">
+      <Section>
         <InlineEditField
           label="Notes"
           value={notes ?? ''}

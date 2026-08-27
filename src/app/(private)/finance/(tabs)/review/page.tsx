@@ -1,6 +1,5 @@
 import type { Metadata } from 'next';
 
-import { PageHeader } from '@/components/ui/page-header';
 import { ReviewQueue } from '@/features/finance/review/review-queue';
 import { requireOwner } from '@/server/auth/owner';
 import { listCategories } from '@/server/db/finance/categories';
@@ -65,13 +64,18 @@ export default async function ReviewPage({
 
   return (
     <div className="space-y-8">
-      {/* No description. The previous one shipped the literal string
-          "Anything M6 could not confidently resolve on its own" — an
-          internal milestone codename leaking into the UI — and prose on a
-          screen the only user already understands is noise either way. The
-          live count lives in `ReviewQueue`'s own `PageMeta` instead. */}
-      <PageHeader title="Review" />
+      {/* `ReviewQueue` renders this page's `PageHeader` itself, the same way
+          `LibraryView` and `FinanceDashboard` do. It has to: the header's
+          count is the number of rows STILL in the queue, which drops as the
+          owner confirms them and therefore only exists as client state. The
+          alternative — passing a callback up so a Server Component could
+          re-render its own header — would be a round trip to move one
+          integer.
 
+          No description here or there. The previous one shipped the literal
+          string "Anything M6 could not confidently resolve on its own," an
+          internal milestone codename leaking into the UI, and prose on a
+          screen the only user already understands is noise either way. */}
       <ReviewQueue
         transactions={transactions}
         categories={categories}

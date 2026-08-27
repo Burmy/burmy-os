@@ -363,3 +363,181 @@ button:not(:disabled) {
 *::-webkit-scrollbar-thumb:hover {
   background-color: var(--muted-foreground);
 }
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FOIL CARD — the library grid's hover treatment.
+ *
+ * Ported from simeydotme/pokemon-cards-css (GPL-3.0, technique only — no code
+ * copied), read from its real source rather than its README: the effect is two
+ * stacked layers over the art plus a 3D tilt, all driven by CSS custom
+ * properties that `foil-card.tsx` writes from the pointer.
+ *
+ *   .foil-card__glare  radial-gradient positioned at --pointer-x/y,
+ *                      mix-blend-mode: overlay. EVERY card gets this.
+ *   .foil-card__shine  repeating-linear-gradient foil positioned from
+ *                      --background-x/y, mix-blend-mode: color-dodge. Only
+ *                      mounted for platinum/wishlist.
+ *
+ * The parallax the owner asked for comes from the two layers reading DIFFERENT
+ * variables at different multipliers: the glare sits exactly under the cursor
+ * while the shine's background-position moves ~2.6x further, so the foil slides
+ * against the glare instead of with it. Feeding both from --pointer-x/y would
+ * flatten it into a plain moving highlight — that mismatch IS the effect.
+ *
+ * MUST stay inside `@layer components`: unlayered CSS beats layered CSS
+ * regardless of specificity, so an unlayered rule here would win against every
+ * Tailwind utility in `@layer utilities`. See the `@layer base` block above for
+ * what that already cost us once with `border-color`.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+@layer components {
+  .foil-card {
+    /* Rest values. `foil-card.tsx` overwrites these on the element itself via
+       CSSOM; CSP does not govern CSSOM writes (only `style` attributes in
+       markup), so no nonce is involved either way. */
+    --pointer-x: 50%;
+    --pointer-y: 50%;
+    --rotate-x: 0deg;
+    --rotate-y: 0deg;
+    --background-x: 50%;
+    --background-y: 50%;
+    --card-opacity: 0;
+
+    perspective: 900px;
+  }
+
+  .foil-card__rotator {
+    display: block;
+    height: 100%;
+    width: 100%;
+    transform: rotateY(var(--rotate-x)) rotateX(var(--rotate-y));
+    transform-style: preserve-3d;
+    /* Slower on the way out than in: the reference springs back rather than
+       snapping, and a snap reads as a glitch when you sweep across a grid. */
+    transition: transform 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+  }
+
+  .foil-card:hover .foil-card__rotator {
+    transition: transform 0.1s ease-out;
+  }
+
+  .foil-card__glare,
+  .foil-card__shine {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    /* Own compositing layer so the blend modes don't force the whole grid to
+       repaint. `will-change` is deliberately NOT set here — see the component. */
+    transform: translateZ(1px);
+  }
+
+  .foil-card__glare {
+    z-index: 11;
+    background-image: radial-gradient(
+      farthest-corner circle at var(--pointer-x) var(--pointer-y),
+      hsl(0 0% 100% / 0.5) 10%,
+      hsl(0 0% 100% / 0.2) 35%,
+      hsl(0 0% 0% / 0.35) 90%
+    );
+    mix-blend-mode: overlay;
+    opacity: var(--card-opacity);
+    transition: opacity 0.3s ease-out;
+  }
+
+  .foil-card__shine {
+    z-index: 12;
+    background-size: 380% 380%, cover;
+    background-blend-mode: overlay;
+    transition:
+      opacity 0.3s ease-out,
+      filter 0.3s ease-out;
+  }
+
+  /* ── Platinum: restrained prismatic ────────────────────────────────────────
+     The reference's `--sunpillar` ramp at full saturation is neon rainbow. This
+     app is monochrome everywhere else, so the hues are held at ~35% saturation
+     and knocked back further by `saturate()` in the filter — it should read as
+     oil-on-metal catching light, not as a Pride flag. This is the ONE place
+     colour is allowed back into the app, earned by rarity (31 of 180 games).
+
+     `opacity` is non-zero AT REST on purpose: a platinum has to be spottable
+     while scanning a 180-card grid without hovering anything. Hovering takes it
+     to full and starts tracking the cursor. */
+  .foil-card[data-foil='platinum'] .foil-card__shine {
+    background-image:
+      repeating-linear-gradient(
+        110deg,
+        hsl(283 55% 60%) 0%,
+        hsl(228 55% 62%) 6%,
+        hsl(176 50% 64%) 12%,
+        hsl(53 58% 64%) 18%,
+        hsl(2 58% 62%) 24%,
+        hsl(283 55% 60%) 30%
+      ),
+      repeating-linear-gradient(
+        90deg,
+        hsl(0 0% 0%) 0px,
+        hsl(0 0% 0%) 1px,
+        hsl(0 0% 42%) 1px,
+        hsl(0 0% 42%) 2px
+      );
+    background-position:
+      calc(((50% - var(--background-x)) * 2.6) + 50%) calc(((50% - var(--background-y)) * 3.5) + 50%),
+      center center;
+    mix-blend-mode: color-dodge;
+    /* Tuned against real box art, not in the abstract. The first pass was
+       `brightness(.72) contrast(2.1) saturate(.55)` over 35%-saturation stops
+       — an effective ~19% saturation, which `color-dodge` then flattened into
+       a plain grey highlight on dark art. It read as neither prismatic nor
+       restrained; it just looked like a light. Raising both the stops and this
+       `saturate()` brings the iridescence back while staying far short of the
+       reference's full-saturation rainbow. */
+    filter: brightness(0.85) contrast(1.9) saturate(1.05);
+    opacity: calc(0.3 + (var(--card-opacity) * 0.7));
+  }
+
+  /* ── Wishlist: cold frost, zero hue ───────────────────────────────────────
+     Deliberately different in KIND from platinum, not merely weaker. A wishlist
+     game is an aspiration, not an achievement, so it must never read as a
+     prize: `saturate(0)` guarantees no hue can survive here no matter what the
+     gradient does, and `soft-light` lays a cold sheen over the art rather than
+     blowing highlights out the way `color-dodge` does.
+
+     No resting opacity — unlike platinum, there is nothing to be proud of yet. */
+  .foil-card[data-foil='wishlist'] .foil-card__shine {
+    background-image: linear-gradient(
+      110deg,
+      transparent 25%,
+      hsl(210 30% 92% / 0.55) 45%,
+      hsl(205 25% 98% / 0.75) 50%,
+      hsl(210 30% 92% / 0.55) 55%,
+      transparent 75%
+    );
+    background-size: 260% 260%;
+    background-position: calc(((50% - var(--background-x)) * 1.8) + 50%) calc(((50% - var(--background-y)) * 1.8) + 50%);
+    mix-blend-mode: soft-light;
+    filter: saturate(0) brightness(1.15);
+    opacity: var(--card-opacity);
+  }
+
+  /**
+   * Reduced motion: kill the tilt and freeze the foil's position, but keep the
+   * card's own opacity change. The point of the effect is legibility of state
+   * (this game is platinum), and removing the sheen entirely would remove
+   * information, not just motion.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .foil-card__rotator {
+      transform: none !important;
+      transition: none;
+    }
+
+    .foil-card__glare,
+    .foil-card__shine {
+      background-position: center center !important;
+      transition: opacity 0.2s ease-out;
+    }
+  }
+}

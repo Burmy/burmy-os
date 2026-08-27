@@ -109,7 +109,7 @@ export function ImportReviewTable({
   // that was supposed to display it.
   if (result) {
     return (
-      <div className="bg-card mt-8 max-w-md space-y-3 rounded-md p-4 text-sm">
+      <div className="bg-card mt-8 max-w-md space-y-3 rounded-md p-6 text-sm">
         <p className="font-medium">Import complete.</p>
         <ul className="text-muted-foreground list-disc space-y-1 pl-4">
           <li>

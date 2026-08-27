@@ -37,97 +37,117 @@ function game(overrides: Partial<Game> = {}): Game {
   };
 }
 
+/** The foil layer's tone, or `null` for an ordinary card. See `foil-card.tsx`. */
+function foilTone(): string | null {
+  return document.querySelector('.foil-card')?.getAttribute('data-foil') ?? null;
+}
+
 /**
- * `played` (the invisible default status) intentionally renders no
- * `StatusBadge` at all — see that component's own doc comment — so for most
- * of the real library, this card-level ring is the ONLY visible signal that
- * a game is platinumed. These tests assert the card itself, not just
- * `PlatinumBadge`, carries a distinguishing treatment.
+ * `played` (the invisible default status) renders no `StatusBadge` at all, so
+ * for most of the real library the card's own treatment is the ONLY signal a
+ * game is platinumed.
+ *
+ * That treatment has now changed twice — a colored badge on the art, then a
+ * metallic ring plus a raised fill — and these tests changed with it each time,
+ * which is the smell that they were asserting the wrong thing. They now assert
+ * the STABLE fact: the card declares which foil it wants via `data-foil`, and
+ * what that resolves to visually is `globals.css`'s business.
  */
 describe('GameCard — platinum treatment', () => {
-  it('gives a platinum game a distinct ring/border the plain card does not have', () => {
+  it('declares the platinum foil, which a plain card does not', () => {
     render(<GameCard game={game({ platinum: true })} onOpen={vi.fn()} />);
 
-    const card = screen.getByRole('button');
-    expect(card.className).toMatch(/ring-slate-400/);
+    expect(foilTone()).toBe('platinum');
   });
 
-  it('does not add the platinum ring/border to a non-platinum game', () => {
+  it('declares no foil at all for a plain game', () => {
     render(<GameCard game={game({ platinum: false })} onOpen={vi.fn()} />);
 
-    const card = screen.getByRole('button');
-    expect(card.className).not.toMatch(/ring-slate-400/);
+    expect(foilTone()).toBeNull();
   });
 
   /**
    * Platinum and wishlist used to be told apart by SILHOUETTE (a
-   * rounded-square medallion vs. a circle) because both were colored
-   * badges painted on box art. That whole approach is gone — real usage
-   * rejected app-colored chrome sitting on third-party cover art. Both
-   * glyphs are now the same quiet monochrome circle, and the two states
-   * are distinguished by the ICON inside and by the card's own treatment
-   * instead. This guards that: a platinum card carries the badge AND the
-   * metallic ring, which is what a wishlist card never has.
+   * rounded-square medallion vs. a circle) because both were colored badges
+   * painted on box art. That approach is gone — real usage rejected
+   * app-colored chrome sitting on third-party cover art. Both glyphs are now
+   * the same quiet monochrome circle, and the two states are distinguished by
+   * the ICON inside plus the card's own foil.
    */
-  it('marks platinum with both a cover badge and the card-level metallic ring', () => {
+  it('marks platinum with both a cover glyph and the platinum foil', () => {
     render(<GameCard game={game({ platinum: true })} onOpen={vi.fn()} />);
 
-    expect(screen.getByTitle('Platinum')).toBeInTheDocument();
-    expect(screen.getByRole('button').className).toMatch(/ring-slate-400/);
+    expect(document.querySelector('.lucide-trophy')).toBeInTheDocument();
+    expect(foilTone()).toBe('platinum');
   });
 
-  it('never shows both the platinum and wishlist badges on one card', () => {
+  it('never shows both the platinum and wishlist glyphs on one card', () => {
     // `wanted` + `platinum` is nonsensical data, but the card renders from
     // whatever the row holds — platinum wins, and only one glyph is drawn.
     render(<GameCard game={game({ platinum: true, status: 'wanted' })} onOpen={vi.fn()} />);
 
-    expect(screen.getByTitle('Platinum')).toBeInTheDocument();
-    expect(screen.queryByTitle('On your wishlist')).not.toBeInTheDocument();
+    expect(document.querySelector('.lucide-trophy')).toBeInTheDocument();
+    expect(document.querySelector('.lucide-heart')).not.toBeInTheDocument();
+    expect(foilTone()).toBe('platinum');
+  });
+
+  it('gives a wishlist game the frost foil, not the platinum one', () => {
+    render(<GameCard game={game({ status: 'wanted' })} onOpen={vi.fn()} />);
+
+    expect(foilTone()).toBe('wishlist');
   });
 });
 
 /**
- * The card went cover-first: real usage found it carried eight competing
- * things at once and read as "too compact, way too much happening." Only
- * the cover, the title and ONE metadata line (platform + hours) survive.
- * These guard that the dropped fields stay dropped — each is still on the
- * game's own page, this is only about what the GRID advertises.
+ * The card has been cut down twice — first to cover + title + one metadata
+ * line, then to the cover alone. Real usage asked for "just the cards," so the
+ * gallery is now a wall of box art with NO visible text whatsoever, not even
+ * on hover; reading a title is what Table view is for.
+ *
+ * That makes `aria-label` load-bearing rather than supplementary, which is
+ * what these tests exist to protect.
  */
-describe('GameCard — cover-first content', () => {
-  it('shows the title and a single platform + hours metadata line', () => {
-    render(<GameCard game={game({ title: 'Bloodborne', platform: 'ps4', hoursTenths: 1360 })} onOpen={vi.fn()} />);
-
-    expect(screen.getByText('Bloodborne')).toBeInTheDocument();
-    expect(screen.getByText('PS4 · 136h')).toBeInTheDocument();
-  });
-
-  it('omits hours entirely rather than printing a fabricated zero', () => {
-    render(<GameCard game={game({ platform: 'ps4', hoursTenths: null })} onOpen={vi.fn()} />);
-
-    expect(screen.getByText('PS4')).toBeInTheDocument();
-    expect(screen.queryByText(/0h/)).not.toBeInTheDocument();
-  });
-
-  it('no longer renders the year, the Steam provenance tag, or a star rating', () => {
-    render(
+describe('GameCard — cover-only content', () => {
+  it('renders no visible text at all', () => {
+    const { container } = render(
       <GameCard
-        game={game({ firstPlayedYear: 2022, steamAppid: 367520, rating: 5, platform: 'steam' })}
+        game={game({ title: 'Bloodborne', platform: 'ps4', hoursTenths: 1360, coverUrl: 'https://x/c.jpg' })}
         onOpen={vi.fn()}
       />,
     );
 
-    expect(screen.queryByText(/2022/)).not.toBeInTheDocument();
-    // The platform LABEL is "Steam / PC"; what's gone is the separate
-    // "· Steam" provenance tag that used to follow the year.
-    expect(screen.queryByText(/· Steam$/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/out of 5/)).not.toBeInTheDocument();
+    expect(container.textContent).toBe('');
+    expect(screen.queryByText('Bloodborne')).not.toBeInTheDocument();
+    expect(screen.queryByText(/136h/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PS4/)).not.toBeInTheDocument();
   });
 
-  it('keeps status in the accessible name even though no status badge renders', () => {
+  /**
+   * The one exception, and it is decorative: a game with no cover art falls
+   * back to a letter tile, so a single initial is rendered. It is `aria-hidden`
+   * — the accessible name still comes from the button's own label.
+   */
+  it('falls back to an aria-hidden initial when there is no cover art', () => {
+    render(<GameCard game={game({ title: 'Bloodborne', coverUrl: null })} onOpen={vi.fn()} />);
+
+    const initial = screen.getByText('B');
+    expect(initial).toBeInTheDocument();
+    expect(initial.closest('[aria-hidden]')).not.toBeNull();
+  });
+
+  it('carries the title and status in the accessible name, the only place they exist', () => {
     render(<GameCard game={game({ title: 'Bloodborne', status: 'backlog' })} onOpen={vi.fn()} />);
 
-    // The visible badge is gone, so this is now the ONLY status signal a
-    // screen-reader user tabbing the grid gets.
     expect(screen.getByRole('button', { name: 'Bloodborne — Backlog' })).toBeInTheDocument();
+  });
+
+  /**
+   * A native tooltip is the only recovery path a sighted owner has for box art
+   * they don't recognise, now that nothing else on the card names the game.
+   */
+  it('exposes the title as a native tooltip', () => {
+    render(<GameCard game={game({ title: 'Bloodborne' })} onOpen={vi.fn()} />);
+
+    expect(screen.getByRole('button')).toHaveAttribute('title', 'Bloodborne');
   });
 });

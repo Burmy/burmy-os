@@ -9,7 +9,6 @@ import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
-import { PageMeta } from '@/components/ui/page-meta';
 import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import type { Game } from '@/server/db/games/games';
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
@@ -21,12 +20,13 @@ import { GameTable } from './game-table';
 type ViewMode = 'gallery' | 'table';
 type StatusFilter = GameStatus | 'all';
 type PlatformFilter = GamePlatform | 'all';
-// `playing`/`played` are deliberately excluded from the status chip row —
-// `played` is the majority-default state for ~95% of the library and
-// `playing` covers at most one game at a time, so neither is a useful
-// library-wide filter. `wanted`/`backlog` are the two actionable buckets an
-// owner actually filters by.
-const STATUS_CHIP_STATUSES = ['backlog', 'wanted'] as const satisfies readonly GameStatus[];
+// Only `wanted` earns a status chip. `played` is the majority-default state
+// for ~95% of the library and `playing` covers at most one game at a time, so
+// neither is a useful library-wide filter; `backlog` was dropped after real
+// use — it wasn't a bucket the owner actually filtered by. `wanted` has to
+// stay regardless of usefulness as a filter, because wishlist games are
+// HIDDEN from the default view and this chip is the only way to see them.
+const STATUS_CHIP_STATUSES = ['wanted'] as const satisfies readonly GameStatus[];
 // Provenance, not platform — `game.steamAppid !== null` is the same signal
 // game-dialog.tsx uses to render Hours/Achievements read-only, independent
 // of the `platform` field (a `steam` platform game can still be unlinked).
@@ -97,6 +97,17 @@ export function LibraryView({
     <div className="space-y-8">
       <PageHeader
         title="Library"
+        // Baseline is the NON-wanted count, not `games.length` — wanted games
+        // are hidden by default, so the default view (no filter touched) must
+        // read as "N games," not "N of M" against a total that silently
+        // includes invisible wishlist rows.
+        meta={
+          <span>
+            {visible.length === nonWantedGames.length
+              ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
+              : `${visible.length} of ${nonWantedGames.length} games`}
+          </span>
+        }
         actions={
           <Button onClick={() => setCreating(true)}>
             <Plus className="size-4" />
@@ -135,16 +146,17 @@ export function LibraryView({
             />
           </FilterField>
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <div className="flex flex-wrap gap-1">
+          {/* ONE flat container, one gap. Status and platform chips used to
+              sit in two separate groups with 12px between the groups and 4px
+              inside them, which read as an unexplained gap in the middle of
+              the row rather than as two categories. They are all just chips
+              you can toggle; nothing about them needed grouping. */}
+          <div className="flex flex-wrap items-center gap-2">
             {/* No "All" chip: an active chip toggles itself off, and the
-                "Clear" control below appears whenever anything is filtered.
-                Three "All …" chips that only ever restated the same total
-                were the bulk of this row's clutter. */}
-            {/* A status with zero games in the library is noise, not a real filter —
-                same principle as the platform chips below. Playing/Played are
-                excluded unconditionally (see STATUS_CHIP_STATUSES), not just
-                when zero-count. */}
+                "Clear" control appears whenever anything is filtered. Three
+                "All …" chips that only ever restated the same total were the
+                bulk of this row's clutter. A zero-count chip is noise too —
+                hence the filters on both lists. */}
             {STATUS_CHIP_STATUSES.filter((value) => (counts.get(value) ?? 0) > 0).map((value) => (
               <FilterChip
                 key={value}
@@ -154,9 +166,7 @@ export function LibraryView({
                 onClick={() => setStatus(status === value ? 'all' : value)}
               />
             ))}
-          </div>
 
-          <div className="flex flex-wrap gap-1">
             {/* Only platforms the owner actually has games on — a zero-count chip
                 like "PC 0" is noise the owner has to read past, not a useful
                 filter (steam absorbs the real PC library; see PLATFORM_LABELS). */}
@@ -169,9 +179,8 @@ export function LibraryView({
                 onClick={() => setPlatform(platform === value ? 'all' : value)}
               />
             ))}
-          </div>
 
-          {/* Replaces the three "All …" chips that used to lead each group.
+            {/* Replaces the three "All …" chips that used to lead each group.
               They spent three permanent slots restating a total the header
               already prints, and one of them ("All sources") headed a group
               whose "Steam" chip meant something different from the "Steam /
@@ -204,16 +213,6 @@ export function LibraryView({
           ]}
         />
       </FilterBar>
-
-      {/* Baseline is the NON-wanted count, not `games.length` — wanted games
-          are hidden by default, so the default view (no filter touched) must
-          read as "N games," not "N of M" against a total that silently
-          includes invisible wishlist rows. */}
-      <PageMeta>
-        {visible.length === nonWantedGames.length
-          ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
-          : `${visible.length} of ${nonWantedGames.length} games`}
-      </PageMeta>
 
       {games.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm">

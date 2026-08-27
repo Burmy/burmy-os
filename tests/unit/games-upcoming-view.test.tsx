@@ -162,16 +162,18 @@ describe('UpcomingView — already-wishlisted state', () => {
   });
 
   /**
-   * Before this treatment, a wishlisted card and a plain one were
-   * pixel-identical above the fold — the only difference was the button at
-   * the very bottom, invisible while scanning the grid. The distinguishing
-   * treatment used to be a violet ring; it is now a raised `bg-card` fill,
-   * matching the library grid's own card language (an app-colored ring on
-   * third-party box art was exactly what real usage rejected). What's being
-   * guarded is unchanged: the CARD itself, not just the button, tells the
-   * two apart.
+   * Before any of this, a wishlisted card and a plain one were pixel-identical
+   * above the fold — the only difference was the button at the very bottom,
+   * invisible while scanning the grid.
+   *
+   * The distinguishing treatment has now changed three times (a violet ring, a
+   * raised `bg-card` fill, and now the cold frost foil the library grid uses),
+   * and this test was rewritten each time because it kept asserting the
+   * CURRENT VISUAL rather than the durable fact. It now asserts what has been
+   * true throughout: the CARD declares the state, not just the button at its
+   * foot. How `data-foil="wishlist"` renders is `globals.css`'s business.
    */
-  it('gives a wishlisted card a distinct surface that a plain card does not have', () => {
+  it('gives a wishlisted card a distinct treatment that a plain card does not have', () => {
     const { rerender } = render(
       <UpcomingView
         {...baseProps({
@@ -182,7 +184,7 @@ describe('UpcomingView — already-wishlisted state', () => {
     );
 
     const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('[data-slot="upcoming-card"]');
-    expect(plainCard?.className).not.toMatch(/bg-card/);
+    expect(plainCard?.querySelector('[data-foil]')).toBeNull();
 
     rerender(
       <UpcomingView
@@ -194,7 +196,7 @@ describe('UpcomingView — already-wishlisted state', () => {
     );
 
     const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('[data-slot="upcoming-card"]');
-    expect(wishlistedCard?.className).toMatch(/bg-card/);
+    expect(wishlistedCard?.querySelector('[data-foil]')).toHaveAttribute('data-foil', 'wishlist');
   });
 
   it('flips a fresh card from "Add to wishlist" to "Added" only after the server confirms it', async () => {

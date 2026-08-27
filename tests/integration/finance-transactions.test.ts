@@ -259,14 +259,23 @@ describe('getLedgerSummary', () => {
     expect(summary.needsReviewCount).toBe(2);
   });
 
-  it('excludedCount is a plain row count — both legs of a linked pair count separately, no netting', async () => {
+  /**
+   * Replaces a test that asserted `getLedgerSummary().excludedCount === 2` for
+   * exactly this fixture. That field is gone — the Transactions meta line that
+   * rendered it ("N transfer/card payment transactions excluded from Monthly")
+   * was removed as noise, and keeping the column would have left dead SQL.
+   *
+   * What is worth guarding survives: both legs of a linked pair are real,
+   * separate rows, and `totalCount` counts them as two. Anything that later
+   * wants a DOLLAR figure for excluded rows starts here and must read
+   * `getLedgerSummary`'s doc comment first — a signed `SUM` over this fixture
+   * is $0 and `SUM(ABS(...))` is $400, and neither is the $200 that actually
+   * moved.
+   */
+  it('counts both legs of a linked pair as separate rows', async () => {
     const owner = await makeOwner('owner@burmy.test');
     const checkingId = await makeAccountId(owner, 'checking', 'Checking');
     const cardId = await makeAccountId(owner, 'credit_card', 'Card');
-    // Deliberately no dollar amount alongside this count — see the
-    // getLedgerSummary() doc comment: a pair is two rows for one real
-    // movement of money, and this page does not attempt to net them back
-    // down to the single real amount, by owner decision.
     await seedTransaction({
       ownerId: owner,
       accountId: checkingId,
@@ -285,7 +294,7 @@ describe('getLedgerSummary', () => {
     });
 
     const summary = await transactions.getLedgerSummary(owner, { year: 2026 });
-    expect(summary.excludedCount).toBe(2);
+    expect(summary.totalCount).toBe(2);
   });
 
 });
