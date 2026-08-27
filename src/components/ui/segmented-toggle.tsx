@@ -36,7 +36,6 @@ export function SegmentedToggle<T extends string>({
           <Button
             key={option.value}
             type="button"
-            size="sm"
             variant={active ? 'secondary' : 'ghost'}
             aria-label={option.icon ? option.label : undefined}
             aria-pressed={active}

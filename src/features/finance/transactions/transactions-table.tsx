@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { FilterBar, FilterField } from '@/components/ui/filter-bar';
+import { FilterChip } from '@/components/ui/filter-chip';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
 import { PageMeta } from '@/components/ui/page-meta';
@@ -51,6 +52,9 @@ const STATUS_LABELS: Record<string, string> = {
   auto: 'Auto-classified',
   confirmed: 'Confirmed',
 };
+
+/** Chip order, widest-scope first — matches the `StatusFacetCounts` keys exactly. */
+const STATUS_CHIP_ORDER = ['all', 'needs_review', 'auto', 'confirmed'] as const;
 
 const STATUS_TONE: Record<string, StatusTone> = {
   needs_review: 'attention',
@@ -166,15 +170,13 @@ export function TransactionsTable({
     });
   }
 
-  const exportParams = new URLSearchParams(searchParams.toString());
-  exportParams.delete('page'); // export always reflects the current filter, never the on-screen page
-  const exportHref = `/finance/transactions/export?${exportParams.toString()}`;
-
+  // The export href is built by the PAGE now, not here — Export became a
+  // header action alongside every other page-level action in the app.
   const totalPages = Math.max(1, Math.ceil(page.totalCount / 100));
   const currentPage = Math.min(totalPages, Math.max(1, Math.floor((searchParams.get('page') ? Number(searchParams.get('page')) : 1))));
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <FilterBar>
         <FilterSelect
           label="Year"
@@ -210,17 +212,6 @@ export function TransactionsTable({
             ...LEDGER_TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t] ?? t] as [string, string]),
           ]}
         />
-        <FilterSelect
-          label="Status"
-          value={filters.reviewStatus ?? 'all'}
-          onChange={(value) => setFilter('status', value === 'all' ? undefined : value)}
-          options={[
-            ['all', STATUS_LABELS.all!],
-            ['needs_review', STATUS_LABELS.needs_review!],
-            ['auto', STATUS_LABELS.auto!],
-            ['confirmed', STATUS_LABELS.confirmed!],
-          ]}
-        />
         <FilterField label="Search">
           <div className="flex gap-2">
             <Input
@@ -240,13 +231,28 @@ export function TransactionsTable({
         </FilterField>
       </FilterBar>
 
-      <PageMeta
-        actions={
-          <a href={exportHref} className="text-sm font-medium underline underline-offset-2">
-            Export {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
-          </a>
-        }
-      >
+      {/* Status is CHIPS, not a dropdown: four short-labelled options with a
+          count worth seeing without opening anything — the same rule Games'
+          library already follows for status/platform. Type stays a dropdown
+          beside it (seven options, labels as long as "Credit Card Payment",
+          which would make an unreadably wide chip row).
+
+          The counts are faceted — computed with every other filter applied
+          but NOT the status filter, so selecting one status doesn't zero out
+          the others. See `statusFacetCounts` in the DAL for why that matters. */}
+      <div className="flex flex-wrap gap-2">
+        {STATUS_CHIP_ORDER.map((value) => (
+          <FilterChip
+            key={value}
+            label={STATUS_LABELS[value]!}
+            count={summary.statusCounts[value]}
+            active={(filters.reviewStatus ?? 'all') === value}
+            onClick={() => setFilter('status', value === 'all' ? undefined : value)}
+          />
+        ))}
+      </div>
+
+      <PageMeta>
         <span>
           {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
         </span>

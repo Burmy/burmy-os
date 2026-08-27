@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { FilterBar } from '@/components/ui/filter-bar';
+import { FilterChip } from '@/components/ui/filter-chip';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { PageMeta } from '@/components/ui/page-meta';
 import {
@@ -26,7 +27,7 @@ import { toast } from '@/components/ui/toast';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
 import type { FinanceCategory } from '@/server/db/finance/categories';
-import type { ReviewFilters, ReviewTransaction } from '@/server/db/finance/transactions';
+import type { ReviewFilters, ReviewTransaction, StatusFacetCounts } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, type ManualTransactionType } from '@/server/finance/classify/manual';
 import {
   bulkUpdateCategoryAction,
@@ -50,6 +51,9 @@ const STATUS_LABELS: Record<string, string> = {
   confirmed: 'Confirmed',
   all: 'All',
 };
+
+/** Worklist order — the default (`needs_review`) leads, unlike Transactions' browser ordering. */
+const STATUS_CHIP_ORDER = ['needs_review', 'auto', 'confirmed', 'all'] as const;
 
 /** Same tone convention `transactions-table.tsx` already uses — one visual language for review_status everywhere it appears. */
 const STATUS_TONE: Record<string, StatusTone> = {
@@ -77,10 +81,12 @@ export function ReviewQueue({
   transactions,
   categories,
   filters,
+  statusCounts,
 }: {
   readonly transactions: readonly ReviewTransaction[];
   readonly categories: readonly FinanceCategory[];
   readonly filters: ReviewFilters;
+  readonly statusCounts: StatusFacetCounts;
 }): React.ReactElement {
   const router = useRouter();
   const pathname = usePathname();
@@ -178,23 +184,12 @@ export function ReviewQueue({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Always visible. These three selects used to hide behind a "Filters"
           disclosure — a click to reveal three controls that fit on one line
           and that the owner is here to use. Nothing on this row is worth
           concealing, and every other filter row in the app is open. */}
       <FilterBar>
-        <FilterSelect
-          label="Status"
-          value={filters.status ?? 'needs_review'}
-          onChange={(value) => setFilter('status', value)}
-          options={[
-            ['needs_review', STATUS_LABELS.needs_review!],
-            ['auto', STATUS_LABELS.auto!],
-            ['confirmed', STATUS_LABELS.confirmed!],
-            ['all', STATUS_LABELS.all!],
-          ]}
-        />
         <FilterSelect
           label="Category"
           value={filters.categoryId ?? 'all'}
@@ -212,6 +207,22 @@ export function ReviewQueue({
           options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
         />
       </FilterBar>
+
+      {/* Status is CHIPS here for the same reason as on Transactions: four
+          short labels with a faceted count worth seeing at a glance. Note
+          the default is `needs_review`, not `all` — Review is a worklist,
+          not a browser. */}
+      <div className="flex flex-wrap gap-2">
+        {STATUS_CHIP_ORDER.map((value) => (
+          <FilterChip
+            key={value}
+            label={STATUS_LABELS[value]!}
+            count={statusCounts[value]}
+            active={(filters.status ?? 'needs_review') === value}
+            onClick={() => setFilter('status', value)}
+          />
+        ))}
+      </div>
 
       {/* Suppressed when empty — the empty state below already says it, and
           "Nothing to review" directly above "Nothing here, you're caught up"

@@ -86,7 +86,10 @@ export function ImportSheet({
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetTrigger asChild>
-        <Button size="sm">
+        {/* No `size` override — this is a page-level header action like Add
+            game and Export, and every interactive control in the app now
+            uses the one shared default height. */}
+        <Button>
           <FileUp className="size-4" />
           Import statement
         </Button>

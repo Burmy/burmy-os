@@ -478,6 +478,56 @@ export interface LedgerSummary {
   readonly needsReviewCount: number;
   /** `transfer` + `credit_card_payment` rows in scope — excluded from every Monthly total. */
   readonly excludedCount: number;
+  /**
+   * Per-status counts for the Status filter CHIPS, computed with every other
+   * filter applied but WITHOUT the status filter itself — see
+   * `statusFacetCounts` below for why that distinction is load-bearing.
+   */
+  readonly statusCounts: StatusFacetCounts;
+}
+
+export interface StatusFacetCounts {
+  readonly all: number;
+  readonly needs_review: number;
+  readonly auto: number;
+  readonly confirmed: number;
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A FACET COUNT MUST NOT INCLUDE ITS OWN FILTER.
+ *
+ * These feed the Status filter chips, which render their count inline
+ * ("Needs review 12"). The count has to answer "how many rows would I see if
+ * I picked this status," so it applies every OTHER active filter (year,
+ * month, category, type, search) but deliberately drops the status condition.
+ *
+ * Reusing `ledgerConditions(ownerId, filters)` verbatim would be the obvious
+ * shortcut and is wrong: that helper applies `filters.reviewStatus`, so the
+ * moment the owner selects one status, every OTHER chip would count rows
+ * that are simultaneously required to be two different statuses and read
+ * `0`. The chips would look broken rather than merely inaccurate.
+ *
+ * Games' library already gets this right for the same reason — see
+ * `library-view.tsx`, whose `counts` map is built from all `games` rather
+ * than from the filtered set.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function statusFacetCounts(
+  ownerId: string,
+  conditionsWithoutStatus: ReturnType<typeof ledgerConditions>,
+): Promise<StatusFacetCounts> {
+  const [row] = await getDb()
+    .select({
+      all: sql<number>`count(*)::int`,
+      needs_review: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
+      auto: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'auto')::int`,
+      confirmed: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'confirmed')::int`,
+    })
+    .from(financeTransactions)
+    .where(and(...conditionsWithoutStatus));
+
+  return row ?? { all: 0, needs_review: 0, auto: 0, confirmed: 0 };
 }
 
 /**
@@ -497,17 +547,41 @@ export interface LedgerSummary {
  */
 export async function getLedgerSummary(ownerId: string, filters: LedgerFilters): Promise<LedgerSummary> {
   const conditions = ledgerConditions(ownerId, filters);
+  // `'all'` is exactly how `ledgerConditions` spells "no status condition",
+  // so this reuses the same helper rather than forking its logic.
+  const conditionsWithoutStatus = ledgerConditions(ownerId, { ...filters, reviewStatus: 'all' });
 
-  const [row] = await getDb()
-    .select({
-      totalCount: sql<number>`count(*)::int`,
-      needsReviewCount: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
-      excludedCount: sql<number>`count(*) filter (where ${financeTransactions.transactionType} in ('transfer', 'credit_card_payment'))::int`,
-    })
-    .from(financeTransactions)
-    .where(and(...conditions));
+  const [[row], statusCounts] = await Promise.all([
+    getDb()
+      .select({
+        totalCount: sql<number>`count(*)::int`,
+        needsReviewCount: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
+        excludedCount: sql<number>`count(*) filter (where ${financeTransactions.transactionType} in ('transfer', 'credit_card_payment'))::int`,
+      })
+      .from(financeTransactions)
+      .where(and(...conditions)),
+    statusFacetCounts(ownerId, conditionsWithoutStatus),
+  ]);
 
-  return row ?? { totalCount: 0, needsReviewCount: 0, excludedCount: 0 };
+  return { ...(row ?? { totalCount: 0, needsReviewCount: 0, excludedCount: 0 }), statusCounts };
+}
+
+/**
+ * Review's own status facet counts. Review has no aggregate of its own —
+ * only `listTransactionsForReview` — so this is the equivalent of
+ * `getLedgerSummary`'s status counts for that page's narrower filter shape,
+ * and it follows the identical "drop the status condition" rule.
+ */
+export async function getReviewStatusCounts(
+  ownerId: string,
+  filters: ReviewFilters,
+): Promise<StatusFacetCounts> {
+  const conditions: ReturnType<typeof ledgerConditions> = [eq(financeTransactions.ownerId, ownerId)];
+  if (filters.categoryId === 'uncategorized') conditions.push(isNull(financeTransactions.categoryId));
+  else if (filters.categoryId) conditions.push(eq(financeTransactions.categoryId, filters.categoryId));
+  if (filters.transactionType) conditions.push(eq(financeTransactions.transactionType, filters.transactionType));
+
+  return statusFacetCounts(ownerId, conditions);
 }
 
 /** One more than the export cap, so the caller can tell "exactly at the cap" from "over it" and fail visibly rather than silently truncate. */

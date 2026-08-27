@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
+import { Download } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { TransactionsTable } from '@/features/finance/transactions/transactions-table';
 import { parseLedgerFilters } from '@/features/finance/transactions/filters';
@@ -80,12 +82,32 @@ export default async function TransactionsPage({
 
   const yearOptions = years.length > 0 ? years : [filters.year];
 
+  const exportParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== 'page' && value) exportParams.set(key, value);
+  }
+  const exportHref = `/finance/transactions/export?${exportParams.toString()}`;
+
   return (
     <div className="space-y-8">
-      {/* Description dropped with the rest of the app's header prose — the
-          live count and the export action live in `TransactionsTable`'s own
-          `PageMeta`, below the filters that produce them. */}
-      <PageHeader title="Transactions" />
+      {/* Export is a PAGE ACTION, so it belongs in the header beside the
+          title like Add game and Import statement — not the 23px underlined
+          link buried in the meta row it used to be. Built here rather than
+          in the client table because this Server Component already holds
+          every raw search param the export needs. `page` is dropped: the
+          export always reflects the whole current filter, never the
+          on-screen page (see `listTransactionsForExport`). */}
+      <PageHeader
+        title="Transactions"
+        actions={
+          <Button asChild variant="outline">
+            <a href={exportHref}>
+              <Download className="size-4" />
+              Export
+            </a>
+          </Button>
+        }
+      />
 
       <TransactionsTable
         page={ledgerPage}

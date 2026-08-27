@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 import { formatPercent } from '@/components/finance/format-percent';
+import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import { Section } from '@/components/ui/section';
@@ -93,18 +94,17 @@ export function FinanceDashboard({
 
   return (
     <div className="space-y-8">
-      {/* One toolbar: title, month/year navigation, Month/This Year mode, and
-          the page-level actions (Transactions, Import statement) that used to
-          sit in their own separate row above this one. All of it is one
-          `actions` slot on the shared `PageHeader`. This bar used to get a
-          bordered/`bg-card` box treatment distinct from every other header
-          in the app; that was reverted in favor of one flat, borderless
-          header style everywhere, Finance and Games alike. */}
+      {/* The header carries only page ACTIONS and the display-mode toggle.
+          The period picker is a FILTER — it changes which data the page
+          shows — so it lives in the filter row below, exactly where
+          Transactions puts its own Year/Month selects. Placement is decided
+          by what a control does, not by which page it happens to be on;
+          this used to be the app's most visible inconsistency (Monthly's
+          period picker top-right, Transactions' identical one underneath). */}
       <PageHeader
         title="Finance"
         actions={
           <>
-            <MonthNavigator year={year} month={month} years={years} mode={view} />
             <SegmentedToggle
               value={view}
               onChange={setView}
@@ -117,6 +117,12 @@ export function FinanceDashboard({
           </>
         }
       />
+
+      <FilterBar>
+        <FilterField label={view === 'year' ? 'Year' : 'Period'}>
+          <MonthNavigator year={year} month={month} years={years} mode={view} />
+        </FilterField>
+      </FilterBar>
 
       {view === 'month' ? (
         <div className="space-y-8">

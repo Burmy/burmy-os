@@ -7,7 +7,6 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
-import { PageMeta } from '@/components/ui/page-meta';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
@@ -95,28 +94,6 @@ export function UpcomingView({
     <div className="space-y-8">
       <PageHeader title="Upcoming" />
 
-      {/* IGDB's feed only ever surfaces titles with real pre-release hype in
-          the next 12 months (see the module doc comment above) — a game
-          that's already out, or never clears the hype floor, can never appear
-          here no matter how long you wait, and the Library's Add Game flow
-          has always accepted any hand-typed title with status Wanted.
-          This survives the app-wide header-prose cull because it is not a
-          description of the screen: it points at a path the owner genuinely
-          cannot discover from here. It sits in `PageMeta` like every other
-          live line rather than in the header. */}
-      {igdbConfigured ? (
-        <PageMeta>
-          <span>
-            Don&apos;t see a game here? IGDB only lists titles with real pre-release buzz, in the next 12 months. For
-            anything else — already out, or below IGDB&apos;s radar — add it from the{' '}
-            <Link href="/games/library" className="hover:text-foreground underline underline-offset-2">
-              Library
-            </Link>{' '}
-            and set its status to Wanted.
-          </span>
-        </PageMeta>
-      ) : null}
-
       {!igdbConfigured ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">
           Upcoming games needs IGDB credentials. Set <code className="font-mono">IGDB_CLIENT_ID</code> and{' '}
@@ -134,6 +111,25 @@ export function UpcomingView({
           ))}
         </div>
       )}
+
+      {/* A FOOTNOTE, not a description — so it sits at the bottom rather than
+          pushing the actual content down on every visit. It survives the
+          app-wide header-prose cull because it isn't describing the screen:
+          IGDB's feed only ever carries titles with real pre-release hype in
+          the next 12 months, so a game that's already out (or below the hype
+          floor) can never appear here no matter how long you wait, and
+          nothing on this page reveals that the Library's Add Game flow has
+          always accepted a hand-typed title with status Wanted. */}
+      {igdbConfigured ? (
+        <p className="text-muted-foreground border-t pt-6 text-xs">
+          Don&apos;t see a game here? IGDB only lists titles with real pre-release buzz, in the next 12 months. For
+          anything else — already out, or below IGDB&apos;s radar — add it from the{' '}
+          <Link href="/games/library" className="hover:text-foreground underline underline-offset-2">
+            Library
+          </Link>{' '}
+          and set its status to Wanted.
+        </p>
+      ) : null}
     </div>
   );
 }

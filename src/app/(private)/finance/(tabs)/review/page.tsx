@@ -7,6 +7,7 @@ import { listCategories } from '@/server/db/finance/categories';
 import {
   type ReviewStatus,
   type TransactionType,
+  getReviewStatusCounts,
   listTransactionsForReview,
 } from '@/server/db/finance/transactions';
 
@@ -56,9 +57,10 @@ export default async function ReviewPage({
   if (categoryId) reviewFilters.categoryId = categoryId;
   if (transactionType) reviewFilters.transactionType = transactionType;
 
-  const [transactions, categories] = await Promise.all([
+  const [transactions, categories, statusCounts] = await Promise.all([
     listTransactionsForReview(owner.userId, reviewFilters),
     listCategories(owner.userId),
+    getReviewStatusCounts(owner.userId, reviewFilters),
   ]);
 
   return (
@@ -70,7 +72,12 @@ export default async function ReviewPage({
           live count lives in `ReviewQueue`'s own `PageMeta` instead. */}
       <PageHeader title="Review" />
 
-      <ReviewQueue transactions={transactions} categories={categories} filters={reviewFilters} />
+      <ReviewQueue
+        transactions={transactions}
+        categories={categories}
+        filters={reviewFilters}
+        statusCounts={statusCounts}
+      />
     </div>
   );
 }
