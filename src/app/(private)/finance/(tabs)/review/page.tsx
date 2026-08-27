@@ -62,11 +62,13 @@ export default async function ReviewPage({
   ]);
 
   return (
-    <div>
-      <PageHeader
-        title="Review"
-        subtitle="Anything M6 could not confidently resolve on its own. Fix what needs it; the rest stays out of your way."
-      />
+    <div className="space-y-8">
+      {/* No description. The previous one shipped the literal string
+          "Anything M6 could not confidently resolve on its own" — an
+          internal milestone codename leaking into the UI — and prose on a
+          screen the only user already understands is noise either way. The
+          live count lives in `ReviewQueue`'s own `PageMeta` instead. */}
+      <PageHeader title="Review" />
 
       <ReviewQueue transactions={transactions} categories={categories} filters={reviewFilters} />
     </div>

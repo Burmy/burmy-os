@@ -5,9 +5,12 @@ import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
+import { PageMeta } from '@/components/ui/page-meta';
+import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import type { Game } from '@/server/db/games/games';
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
@@ -94,41 +97,18 @@ export function LibraryView({
     <div className="space-y-8">
       <PageHeader
         title="Library"
-        subtitle={
-          // Baseline is the NON-wanted count, not `games.length` — wanted
-          // games are hidden by default, so the default view (no filter
-          // touched) must read as "N games," not "N of M" against a total
-          // that silently includes invisible wishlist rows.
-          visible.length === nonWantedGames.length
-            ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
-            : `${visible.length} of ${nonWantedGames.length} games`
-        }
         actions={
           <>
-            <div className="bg-card flex rounded-md p-0.5">
-              <Button
-                variant={view === 'gallery' ? 'secondary' : 'ghost'}
-                size="sm"
-                className="h-7"
-                aria-label="Gallery view"
-                aria-pressed={view === 'gallery'}
-                onClick={() => setView('gallery')}
-              >
-                <LayoutGrid className="size-4" />
-              </Button>
-              <Button
-                variant={view === 'table' ? 'secondary' : 'ghost'}
-                size="sm"
-                className="h-7"
-                aria-label="Table view"
-                aria-pressed={view === 'table'}
-                onClick={() => setView('table')}
-              >
-                <Rows3 className="size-4" />
-              </Button>
-            </div>
+            <SegmentedToggle
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'gallery', label: 'Gallery view', icon: <LayoutGrid className="size-4" /> },
+                { value: 'table', label: 'Table view', icon: <Rows3 className="size-4" /> },
+              ]}
+            />
 
-            <Button size="sm" onClick={() => setCreating(true)}>
+            <Button onClick={() => setCreating(true)}>
               <Plus className="size-4" />
               Add game
             </Button>
@@ -142,16 +122,23 @@ export function LibraryView({
           a chip group's own content (multiple platform names, each with a
           count) push the row wider before wrapping kicked in; stacking is
           the simplest layout that just holds up regardless of how many chips
-          end up in play. */}
-      <div className="space-y-2">
-        <Input
-          type="search"
-          aria-label="Search games"
-          placeholder="Search title, developer, publisher…"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          className="h-8 w-full sm:max-w-64"
-        />
+          end up in play.
+
+          Status and platform stay CHIPS rather than becoming selects: both
+          have a handful of known options and a count worth seeing without
+          opening anything — that's the app's rule for which filters are
+          chips and which are dropdowns (see `filter-bar.tsx`). */}
+      <FilterBar className="flex-col items-stretch gap-3 sm:items-start">
+        <FilterField label="Search">
+          <Input
+            type="search"
+            aria-label="Search games"
+            placeholder="Search title, developer, publisher…"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className="w-full sm:w-72"
+          />
+        </FilterField>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="flex flex-wrap gap-1">
@@ -200,7 +187,7 @@ export function LibraryView({
             <Button
               variant="ghost"
               size="sm"
-              className="text-muted-foreground h-6 px-2 text-xs"
+              className="text-muted-foreground"
               onClick={() => {
                 setStatus('all');
                 setPlatform('all');
@@ -211,7 +198,17 @@ export function LibraryView({
             </Button>
           ) : null}
         </div>
-      </div>
+      </FilterBar>
+
+      {/* Baseline is the NON-wanted count, not `games.length` — wanted games
+          are hidden by default, so the default view (no filter touched) must
+          read as "N games," not "N of M" against a total that silently
+          includes invisible wishlist rows. */}
+      <PageMeta>
+        {visible.length === nonWantedGames.length
+          ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
+          : `${visible.length} of ${nonWantedGames.length} games`}
+      </PageMeta>
 
       {games.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm">

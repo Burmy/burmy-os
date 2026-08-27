@@ -1,10 +1,12 @@
 'use client';
 
-import { ChevronDown } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { FilterBar } from '@/components/ui/filter-bar';
+import { FilterSelect } from '@/components/ui/filter-select';
+import { PageMeta } from '@/components/ui/page-meta';
 import {
   Select,
   SelectContent,
@@ -97,14 +99,6 @@ export function ReviewQueue({
   const [bulkRemember, setBulkRemember] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  // Open by default only when a non-default filter is already narrowing the
-  // list — otherwise the common case (the plain needs_review queue, usually
-  // one or two rows) starts with no toolbar at all to look past.
-  const hasActiveFilter = Boolean(
-    (filters.status && filters.status !== 'needs_review') || filters.categoryId || filters.transactionType,
-  );
-  const [filtersOpen, setFiltersOpen] = useState(hasActiveFilter);
-
   // A filter change (URL navigation) or a `router.refresh()` after a mutation
   // both deliver a NEW `transactions` array reference here.
   if (transactions !== syncedFrom) {
@@ -184,54 +178,50 @@ export function ReviewQueue({
   }
 
   return (
-    <div className="mt-8 space-y-4">
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setFiltersOpen((prev) => !prev)}
-          aria-expanded={filtersOpen}
-          className="text-muted-foreground -ml-2 h-8"
-        >
-          Filters
-          <ChevronDown className={`size-3.5 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
-        </Button>
+    <div className="space-y-6">
+      {/* Always visible. These three selects used to hide behind a "Filters"
+          disclosure — a click to reveal three controls that fit on one line
+          and that the owner is here to use. Nothing on this row is worth
+          concealing, and every other filter row in the app is open. */}
+      <FilterBar>
+        <FilterSelect
+          label="Status"
+          value={filters.status ?? 'needs_review'}
+          onChange={(value) => setFilter('status', value)}
+          options={[
+            ['needs_review', STATUS_LABELS.needs_review!],
+            ['auto', STATUS_LABELS.auto!],
+            ['confirmed', STATUS_LABELS.confirmed!],
+            ['all', STATUS_LABELS.all!],
+          ]}
+        />
+        <FilterSelect
+          label="Category"
+          value={filters.categoryId ?? 'all'}
+          onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
+          options={[
+            ['all', 'All categories'],
+            ['uncategorized', 'Uncategorized'],
+            ...categories.map((c) => [c.id, c.name] as [string, string]),
+          ]}
+        />
+        <FilterSelect
+          label="Type"
+          value={filters.transactionType ?? 'all'}
+          onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
+          options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
+        />
+      </FilterBar>
 
-        {filtersOpen ? (
-          <div className="mt-2 flex flex-wrap items-end gap-3">
-            <FilterSelect
-              label="Status"
-              value={filters.status ?? 'needs_review'}
-              onChange={(value) => setFilter('status', value)}
-              options={[
-                ['needs_review', STATUS_LABELS.needs_review!],
-                ['auto', STATUS_LABELS.auto!],
-                ['confirmed', STATUS_LABELS.confirmed!],
-                ['all', STATUS_LABELS.all!],
-              ]}
-            />
-            <FilterSelect
-              label="Category"
-              value={filters.categoryId ?? 'all'}
-              onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
-              options={[
-                ['all', 'All categories'],
-                ['uncategorized', 'Uncategorized'],
-                ...categories.map((c) => [c.id, c.name] as [string, string]),
-              ]}
-            />
-            <FilterSelect
-              label="Type"
-              value={filters.transactionType ?? 'all'}
-              onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
-              options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
-            />
-          </div>
-        ) : null}
-      </div>
+      {/* Suppressed when empty — the empty state below already says it, and
+          "Nothing to review" directly above "Nothing here, you're caught up"
+          was the same sentence twice. */}
+      {rows.length === 0 ? null : (
+        <PageMeta>{`${rows.length} transaction${rows.length === 1 ? '' : 's'} to review`}</PageMeta>
+      )}
 
       {rows.length === 0 ? (
-        <p className="text-muted-foreground mt-8 text-sm">Nothing here. You&apos;re caught up.</p>
+        <p className="text-muted-foreground text-sm">Nothing here. You&apos;re caught up.</p>
       ) : (
         <>
           {selected.size > 0 ? (
@@ -376,36 +366,6 @@ export function ReviewQueue({
           </Table>
         </>
       )}
-    </div>
-  );
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly options: readonly [string, string][];
-}): React.ReactElement {
-  return (
-    <div className="space-y-1">
-      <span className="text-muted-foreground block text-xs">{label}</span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={label} className="h-8 w-44">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(([optionValue, optionLabel]) => (
-            <SelectItem key={optionValue} value={optionValue}>
-              {optionLabel}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
     </div>
   );
 }

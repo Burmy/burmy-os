@@ -8,13 +8,13 @@ const buttonVariants = cva(
   "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
-      // "Signal Violet" is a scalpel, not a paintbrush — every variant's
-      // RESTING state stays exactly the neutral palette it always was.
-      // Only the interactive (hover) state picks up `--brand`, matching the
-      // one concrete mechanic the design brief itself demonstrates (its own
-      // primary button rests neutral and shifts to its accent on hover).
+      // Monochrome throughout — there is no decorative accent token any
+      // more (see globals.css's own note on why one was removed twice).
+      // Hover states shift tone/opacity rather than hue; `destructive` is
+      // the one colored variant and stays colored because it encodes
+      // meaning, not style.
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-brand hover:text-brand-foreground',
+        default: 'bg-primary text-primary-foreground hover:bg-primary/90',
         destructive:
           'bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40',
         // Fill, not border. This variant used to be the app's one remaining
@@ -24,10 +24,10 @@ const buttonVariants = cva(
         // button just as clearly and matches the rest of the system — the
         // reference design has no bordered button variant at all, only
         // filled ones.
-        outline: 'bg-card hover:bg-muted hover:text-brand',
+        outline: 'bg-card hover:bg-muted',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
-        ghost: 'hover:bg-accent hover:text-brand',
-        link: 'text-primary underline-offset-4 hover:text-brand hover:underline',
+        ghost: 'hover:bg-accent hover:text-accent-foreground',
+        link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {
         default: 'h-9 px-4 py-2 has-[>svg]:px-3',

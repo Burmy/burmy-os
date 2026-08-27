@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 
-import { Button } from '@/components/ui/button';
 import { formatPercent } from '@/components/finance/format-percent';
 import { PageHeader } from '@/components/ui/page-header';
+import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import { Section } from '@/components/ui/section';
 import { StatCard } from '@/components/ui/stat-card';
 import type { TopExpenseRow } from '@/server/db/finance/grid';
@@ -92,11 +92,10 @@ export function FinanceDashboard({
   const isCompletedYear = ytd.summary.monthsElapsed >= 12;
 
   return (
-    <div className="mt-4 space-y-4">
+    <div className="space-y-8">
       {/* One toolbar: title, month/year navigation, Month/This Year mode, and
           the page-level actions (Transactions, Import statement) that used to
-          sit in their own separate row above this one. All of it — period
-          selector, view toggle, divider, and the page-level actions — is one
+          sit in their own separate row above this one. All of it is one
           `actions` slot on the shared `PageHeader`. This bar used to get a
           bordered/`bg-card` box treatment distinct from every other header
           in the app; that was reverted in favor of one flat, borderless
@@ -106,27 +105,14 @@ export function FinanceDashboard({
         actions={
           <>
             <MonthNavigator year={year} month={month} years={years} mode={view} />
-            <div className="bg-card inline-flex rounded-md p-0.5">
-              <Button
-                type="button"
-                size="sm"
-                variant={view === 'month' ? 'secondary' : 'ghost'}
-                className="h-7 px-2.5"
-                onClick={() => setView('month')}
-              >
-                Month
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={view === 'year' ? 'secondary' : 'ghost'}
-                className="h-7 px-2.5"
-                onClick={() => setView('year')}
-              >
-                This Year
-              </Button>
-            </div>
-            <div className="bg-border mx-1 hidden h-6 w-px sm:block" aria-hidden="true" />
+            <SegmentedToggle
+              value={view}
+              onChange={setView}
+              options={[
+                { value: 'month', label: 'Month' },
+                { value: 'year', label: 'This Year' },
+              ]}
+            />
             {actions}
           </>
         }

@@ -101,7 +101,7 @@ export function InlineEditField({
           onClick={() => setEditing(true)}
           disabled={pending}
           className={cn(
-            'hover:text-brand -my-1 max-w-full truncate rounded px-1 py-1 text-right transition-colors',
+            'hover:text-foreground -my-1 max-w-full truncate rounded px-1 py-1 text-right transition-colors',
             value ? '' : 'text-muted-foreground italic',
           )}
         >
@@ -174,7 +174,7 @@ export function InlineEditSelect({
           onClick={() => setEditing(true)}
           disabled={pending}
           className={cn(
-            'hover:text-brand -my-1 rounded px-1 py-1 text-right transition-colors',
+            'hover:text-foreground -my-1 rounded px-1 py-1 text-right transition-colors',
             displayValue ? '' : 'text-muted-foreground italic',
           )}
         >

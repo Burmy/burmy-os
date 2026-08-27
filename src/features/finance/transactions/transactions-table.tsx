@@ -4,7 +4,10 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { FilterBar, FilterField } from '@/components/ui/filter-bar';
+import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
+import { PageMeta } from '@/components/ui/page-meta';
 import {
   Select,
   SelectContent,
@@ -171,8 +174,8 @@ export function TransactionsTable({
   const currentPage = Math.min(totalPages, Math.max(1, Math.floor((searchParams.get('page') ? Number(searchParams.get('page')) : 1))));
 
   return (
-    <div className="mt-4 space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
+    <div className="space-y-6">
+      <FilterBar>
         <FilterSelect
           label="Year"
           value={String(filters.year)}
@@ -218,9 +221,8 @@ export function TransactionsTable({
             ['confirmed', STATUS_LABELS.confirmed!],
           ]}
         />
-        <div className="space-y-1">
-          <span className="text-muted-foreground block text-xs">Search</span>
-          <div className="flex gap-1">
+        <FilterField label="Search">
+          <div className="flex gap-2">
             <Input
               value={searchDraft}
               onChange={(event) => setSearchDraft(event.target.value)}
@@ -229,16 +231,22 @@ export function TransactionsTable({
               }}
               placeholder="Merchant or description"
               aria-label="Search merchant or description"
-              className="h-8 w-48"
+              className="w-56"
             />
-            <Button variant="outline" size="sm" className="h-8" onClick={submitSearch}>
+            <Button variant="outline" onClick={submitSearch}>
               Search
             </Button>
           </div>
-        </div>
-      </div>
+        </FilterField>
+      </FilterBar>
 
-      <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+      <PageMeta
+        actions={
+          <a href={exportHref} className="text-sm font-medium underline underline-offset-2">
+            Export {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
+          </a>
+        }
+      >
         <span>
           {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
         </span>
@@ -249,10 +257,7 @@ export function TransactionsTable({
             from Monthly
           </span>
         ) : null}
-        <a href={exportHref} className="ml-auto font-medium underline underline-offset-2">
-          Export {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
-        </a>
-      </div>
+      </PageMeta>
 
       {rows.length === 0 ? (
         <EmptyState>No transactions match this filter.</EmptyState>
@@ -394,33 +399,3 @@ const MONTH_NAMES = [
   'November',
   'December',
 ];
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly options: readonly [string, string][];
-}): React.ReactElement {
-  return (
-    <div className="space-y-1">
-      <span className="text-muted-foreground block text-xs">{label}</span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={label} className="h-8 w-44">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(([optionValue, optionLabel]) => (
-            <SelectItem key={optionValue} value={optionValue}>
-              {optionLabel}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}

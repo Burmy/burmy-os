@@ -1,44 +1,47 @@
 import { cn } from '@/lib/utils';
 
 /**
- * Page-level heading: a title, an optional subtitle underneath, and an
- * optional actions slot flush right. Replaces three previously-separate
- * shapes — a bare `<h1>` + muted `<p>` (most pages), Finance Monthly's
- * `text-lg` title embedded in a bordered toolbar card beside the period
- * selector and view toggle, and Games' Stats page having no header at all.
+ * Page-level heading: a title and an optional actions slot flush right.
+ * That is the whole contract — deliberately.
  *
- * Every page header in the app renders the same flat, borderless shape now
- * — Finance Monthly and Games Stats used to each get their own bordered/
- * `bg-card` toolbar box via `className`/`titleClassName`, which made the
- * header chrome inconsistent from screen to screen; both reverted to this
- * plain shape. `titleClassName` had no other caller and was removed
- * outright. `className` survives — it still has two unrelated legitimate
- * callers (`finance/import/[importId]`, `games/sync/[runId]`) that need a
- * plain `mt-2` to sit closer to the "← Back" link above them, nothing to do
- * with the toolbar box.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THERE IS NO `subtitle` PROP, ON PURPOSE.
+ *
+ * There used to be, and it was doing three unrelated jobs at once: a live
+ * count on Library ("180 games"), explanatory prose on Transactions/Review/
+ * Upcoming, and nothing at all on Stats/Settings/Finance. That is why no two
+ * page headers in this app looked alike.
+ *
+ * Prose descriptions were deleted outright — the owner is the only user and
+ * already knows what each screen does. (One of them had been shipping the
+ * literal string "Anything M6 could not confidently resolve on its own,"
+ * leaking an internal milestone codename into the UI.)
+ *
+ * Live counts moved DOWN into `PageMeta`, which sits below the filters and
+ * directly above the content. That placement is the point: the number is a
+ * RESULT of the active filters, so it belongs next to the controls that
+ * change it, not in a header that never changes.
+ *
+ * If a page needs to say something, it says it in `PageMeta`. Adding a
+ * subtitle back here re-opens the exact drift this removal closed.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * `className` survives for the two detail pages (`finance/import/[importId]`,
+ * `games/sync/[runId]`) that need a plain `mt-2` to sit closer to the
+ * "← Back" link above them.
  */
 export function PageHeader({
   title,
-  subtitle,
   actions,
   className,
 }: {
   readonly title: React.ReactNode;
-  readonly subtitle?: React.ReactNode;
   readonly actions?: React.ReactNode;
   readonly className?: string;
 }): React.ReactElement {
   return (
-    <div className={cn('flex flex-wrap items-center justify-between gap-3', className)}>
-      <div>
-        {/* `inline-block` so the underline hugs the text width, not the
-            full flex-item width — the accent sits directly under the
-            words themselves, not spanning the header row. */}
-        <h1 className="font-display border-b-2 border-brand inline-block pb-1 text-3xl font-medium tracking-tight">
-          {title}
-        </h1>
-        {subtitle ? <p className="text-muted-foreground mt-2 text-sm">{subtitle}</p> : null}
-      </div>
+    <div className={cn('flex flex-wrap items-center justify-between gap-4', className)}>
+      <h1 className="font-display text-4xl font-medium tracking-tight">{title}</h1>
       {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
     </div>
   );

@@ -30,7 +30,7 @@ function TabsTrigger({
         '-mb-px flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground transition-colors outline-none',
         'hover:text-foreground',
         'focus-visible:ring-ring/50 focus-visible:ring-2',
-        'data-[state=active]:border-brand data-[state=active]:text-foreground data-[state=active]:font-medium',
+        'data-[state=active]:border-foreground data-[state=active]:text-foreground data-[state=active]:font-medium',
         className,
       )}
       {...props}

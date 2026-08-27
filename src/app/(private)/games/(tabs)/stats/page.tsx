@@ -20,7 +20,7 @@ export default async function GamesStatsPage(): Promise<React.ReactElement> {
   const currentYear = new Date().getUTCFullYear();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       <PageHeader title="Stats" />
       <GamesDashboard rows={rows} playYears={playYears} currentYear={currentYear} />
     </div>

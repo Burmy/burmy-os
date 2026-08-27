@@ -81,11 +81,11 @@ export default async function TransactionsPage({
   const yearOptions = years.length > 0 ? years : [filters.year];
 
   return (
-    <div>
-      <PageHeader
-        title="Transactions"
-        subtitle="The complete transaction ledger behind the monthly grid — search, filter, correct history, and export."
-      />
+    <div className="space-y-8">
+      {/* Description dropped with the rest of the app's header prose — the
+          live count and the export action live in `TransactionsTable`'s own
+          `PageMeta`, below the filters that produce them. */}
+      <PageHeader title="Transactions" />
 
       <TransactionsTable
         page={ledgerPage}

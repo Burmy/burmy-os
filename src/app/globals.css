@@ -88,12 +88,21 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  /* The one accent color added by the "Signal Violet" pass — a scalpel, not
-     a paintbrush (see globals.css's own `--brand` doc comment below). Kept
-     entirely separate from shadcn's existing `--accent` token, which already
-     means "hover/muted surface" everywhere and must keep meaning that. */
-  --color-brand: var(--brand);
-  --color-brand-foreground: var(--brand-foreground);
+  /**
+   * THERE IS NO DECORATIVE ACCENT COLOR, ON PURPOSE.
+   *
+   * A `--brand` token existed twice (violet, then red) and was removed both
+   * times for the same reason: with the app's palette this restrained,
+   * there is nowhere for a decorative accent to live that isn't arbitrary.
+   * Its last use was an underline beneath a STATIC page title, which
+   * carried no information — the underline never changed, so it never told
+   * the owner anything. Hierarchy comes from size, weight and spacing.
+   *
+   * `--destructive` below is NOT an exception to this: it encodes meaning
+   * (delete, error), not style. Same for Finance's `--chart-*` series
+   * (green = income, amber = expense) — those are data encodings. Adding a
+   * decorative accent back is a design reversal, not a small tweak.
+   */
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
@@ -153,23 +162,6 @@
   --input: #e4e4e7;
   --ring: #a1a1aa;
 
-  /**
-   * The app's one accent color — real usage found a wider "Signal Violet"
-   * application (this token's first version) still read as too busy, so its
-   * footprint shrank to genuinely rare: the main heading's underline, a
-   * button's hover state, and the active tab indicator. Nowhere else —
-   * `--primary`/`--accent` above keep their existing neutral meanings, and
-   * every other control this token used to touch (focus rings, a checked
-   * checkbox, a select's checkmark) went back to plain black/white/gray.
-   *
-   * Red, matching this same value's use as `--destructive` above (and as
-   * the accent in the `voicebox-DESIGN.md` reference this was built from,
-   * where the accent and the error color are the identical value) —
-   * accepted deliberately, not overlooked: a destructive action is
-   * disambiguated by its trash icon and "Remove" label, not by color alone.
-   */
-  --brand: #dc2626;
-  --brand-foreground: #fafafa;
 
   --chart-income: #16a34a;
   --chart-expense: #d97706;
@@ -215,11 +207,6 @@
     --input: #27272a;
     --ring: #52525b;
 
-    /* See the light `:root` block's `--brand` doc comment — brighter here
-       for legibility against a near-black background, same relationship
-       `--destructive` above already has to its own light-theme value. */
-    --brand: #ef4444;
-    --brand-foreground: #fafafa;
 
     --chart-income: #4ade80;
     --chart-expense: #fb923c;
@@ -265,9 +252,6 @@
   --input: #27272a;
   --ring: #52525b;
 
-  /* See the light `:root` block's `--brand` doc comment. */
-  --brand: #ef4444;
-  --brand-foreground: #fafafa;
 
   --chart-income: #4ade80;
   --chart-expense: #fb923c;

@@ -55,10 +55,10 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
   ]);
 
   return (
-    <div>
+    <div className="space-y-8">
       <PageHeader title="Settings" />
 
-      <div className="mt-8">
+      <div>
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Finance</h2>
         <div className="mt-3 rounded-lg bg-card px-4">
           <ul className="divide-y">
@@ -77,7 +77,7 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
         </div>
       </div>
 
-      <div className="mt-8">
+      <div>
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Games</h2>
         <div className="mt-3 rounded-lg bg-card px-4">
           <h3 className="text-muted-foreground pt-3 text-xs font-medium">Sync</h3>
@@ -91,7 +91,7 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
         </div>
       </div>
 
-      <div className="mt-8">
+      <div>
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">General</h2>
         <div className="mt-3 rounded-lg bg-card px-4">
           <ul>

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { PageHeader } from '@/components/ui/page-header';
+import { PageMeta } from '@/components/ui/page-meta';
 import { ImportReviewTable } from '@/features/finance/import/review-table';
 import { requireOwner } from '@/server/auth/owner';
 import { listAccounts } from '@/server/db/finance/accounts';
@@ -50,11 +51,14 @@ export default async function ImportReviewPage({
       <Link href="/finance/monthly" className="text-muted-foreground hover:text-foreground text-sm">
         ← Finance
       </Link>
-      <PageHeader
-        title="Review import"
-        subtitle={`${importRecord.originalFilename} — ${account?.name ?? 'Unknown account'}`}
-        className="mt-2"
-      />
+      <PageHeader title="Review import" className="mt-2" />
+
+      {/* Which file this is, is real identifying context rather than prose —
+          it moves to `PageMeta` with every other live line in the app. */}
+      <PageMeta className="mt-4">
+        <span>{importRecord.originalFilename}</span>
+        <span>{account?.name ?? 'Unknown account'}</span>
+      </PageMeta>
 
       <ImportReviewTable
         importId={importId}
