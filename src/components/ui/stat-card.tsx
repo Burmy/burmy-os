@@ -14,9 +14,9 @@ import { cn } from '@/lib/utils';
  * still reachable on hover, exactly like Games' own stat cards did before
  * this became shared.
  *
- * No border, `bg-muted` (not `bg-card` — see `Section`'s own doc comment on
- * why), `p-6` — same borderless/tonal/padding treatment `Section` uses, so
- * the app's two shared "card" primitives read as one consistent language.
+ * No border, `bg-card`, `p-6` — the same borderless/tonal/padding treatment
+ * `Section` uses, so the app's two shared "card" primitives read as one
+ * consistent language across both Finance and Games.
  */
 export function StatCard({
   label,
@@ -32,7 +32,7 @@ export function StatCard({
   readonly hint?: string;
 }): React.ReactElement {
   return (
-    <div className="flex h-full flex-col justify-between gap-2 rounded-lg bg-muted p-6">
+    <div className="flex h-full flex-col justify-between gap-2 rounded-lg bg-card p-6">
       <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
       <div>
         <div

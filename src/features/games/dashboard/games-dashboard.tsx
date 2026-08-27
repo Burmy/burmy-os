@@ -79,7 +79,7 @@ export function GamesDashboard({
     financial.averagePriceCents === null ? undefined : `${formatPriceCents(financial.averagePriceCents)} avg per game`;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       {/* Bare stat-card row, no Section/heading wrapper — matches Finance's
           own top-row convention exactly (`finance-dashboard.tsx`'s 6-card
           Income/Expenses/Net/... row has no enclosing box or heading

@@ -106,7 +106,7 @@ export function FinanceDashboard({
         actions={
           <>
             <MonthNavigator year={year} month={month} years={years} mode={view} />
-            <div className="inline-flex rounded-md border p-0.5">
+            <div className="bg-card inline-flex rounded-md p-0.5">
               <Button
                 type="button"
                 size="sm"
@@ -133,7 +133,7 @@ export function FinanceDashboard({
       />
 
       {view === 'month' ? (
-        <div className="space-y-4">
+        <div className="space-y-8">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             <StatCard
               label="Income"
@@ -203,7 +203,7 @@ export function FinanceDashboard({
           </Section>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-8">
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
             <StatCard
               label={isCompletedYear ? 'Income' : 'YTD Income'}

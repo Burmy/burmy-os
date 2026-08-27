@@ -25,8 +25,11 @@ export function FilterChip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
-        active ? 'bg-foreground text-background border-transparent' : 'text-muted-foreground hover:bg-muted',
+        // Borderless: the resting chip carries a tonal fill, the active one
+        // flips to full foreground/background contrast. Part of the app-wide
+        // "fewer borders" pass — the fill is the affordance now.
+        'rounded-full px-3 py-1 text-xs font-medium transition-colors',
+        active ? 'bg-foreground text-background' : 'bg-card text-muted-foreground hover:bg-muted',
       )}
     >
       {label}

@@ -14,7 +14,7 @@ function InsightItem({
   readonly sub?: string;
 }): React.ReactElement {
   return (
-    <div className="min-w-40 max-w-64 flex-1 basis-40 rounded-lg border bg-card p-3">
+    <div className="min-w-40 max-w-64 flex-1 basis-40 rounded-lg bg-card p-3">
       <div className="text-muted-foreground text-xs">{label}</div>
       <div className="tabular mt-0.5 truncate text-sm font-semibold" title={value}>
         {value}

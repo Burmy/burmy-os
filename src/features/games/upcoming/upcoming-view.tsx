@@ -91,7 +91,7 @@ export function UpcomingView({
   }, []);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <PageHeader title="Upcoming" subtitle="Anticipated PS5 and PC releases over the next 12 months." />
 
       {/* IGDB's feed only ever surfaces titles with real pre-release hype
@@ -141,12 +141,14 @@ function MonthSection({
   readonly wishlisted: ReadonlySet<number>;
 }): React.ReactElement {
   return (
-    <section className="space-y-3">
+    <section className="space-y-4">
       <h2 className="text-sm font-semibold">{month.label}</h2>
       {month.games.length === 0 ? (
         <p className="text-muted-foreground text-sm">No anticipated releases this month.</p>
       ) : (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+        // Same column counts and gap as the library grid (`game-grid.tsx`) —
+        // the two used to diverge for no reason.
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {month.games.map((game) => (
             <UpcomingGameCard key={game.igdbId} game={game} wishlisted={wishlisted.has(game.igdbId)} />
           ))}
@@ -196,15 +198,15 @@ function UpcomingGameCard({
   return (
     <div
       className={cn(
-        'flex flex-col rounded-lg border',
-        // Background tint, not just the ring — same reasoning as the
-        // library's platinum card treatment (`game-card.tsx`): a border
-        // alone was easy to miss scanning a full grid.
-        wishlisted &&
-          'border-violet-300 bg-violet-400/15 ring-1 ring-violet-400/50 dark:border-violet-500/50 dark:bg-violet-400/20 dark:ring-violet-400/30',
+        // Same card language as the library grid (`game-card.tsx`):
+        // borderless, a padded box whose FILL carries the state, cover art
+        // rounded on its own frame rather than the card's top corners.
+        // The two grids used to diverge visually for no reason.
+        'flex flex-col gap-3 rounded-xl p-3',
+        wishlisted ? 'bg-card' : null,
       )}
     >
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
         {game.coverUrl === null ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
             <span className="text-muted-foreground/40 text-4xl font-semibold">
@@ -221,19 +223,22 @@ function UpcomingGameCard({
             className="object-cover"
           />
         )}
+        {/* Monochrome over an opaque scrim, matching the library's own
+            badge treatment — the old violet pill was app-colored chrome
+            sitting on third-party box art, which never composed well. */}
         {wishlisted ? (
           <span
             aria-hidden
             title="On your wishlist"
-            className="absolute right-2 bottom-2 inline-flex size-8 items-center justify-center rounded-full bg-violet-500 text-white shadow-sm ring-2 ring-violet-300/60"
+            className="absolute right-2 bottom-2 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
           >
-            <Heart className="size-4 fill-current" strokeWidth={2} />
+            <Heart className="size-3.5" />
           </span>
         ) : null}
       </div>
 
-      <div className="flex flex-1 flex-col gap-1 p-3">
-        <span className="line-clamp-2 text-sm font-semibold">{game.title}</span>
+      <div className="flex flex-1 flex-col gap-1">
+        <span className="line-clamp-2 text-sm font-medium">{game.title}</span>
         <span className="text-muted-foreground text-xs">
           {game.platforms.map((platform) => PLATFORM_LABELS[platform]).join(' · ')}
         </span>
@@ -294,19 +299,22 @@ function AddToWishlistButton({
     // temporarily-unavailable control, so it must not pick up the shared
     // `disabled:opacity-50` rule in button.tsx: that rule fading an already
     // low-contrast `secondary` (gray-on-gray) pairing to half opacity is
-    // exactly why "Added" was nearly illegible. Reuses the emerald register
-    // `StatusBadge`'s `played` style already establishes as this app's
-    // "done" color, at full opacity. `pointer-events-none` keeps it inert
-    // without the HTML `disabled` attribute; `tabIndex={-1}` keeps it out
-    // of tab order now that `disabled` no longer does that automatically —
-    // there's nothing here for a keyboard user to activate.
+    // exactly why "Added" was nearly illegible. `pointer-events-none` keeps
+    // it inert without the HTML `disabled` attribute; `tabIndex={-1}` keeps
+    // it out of tab order now that `disabled` no longer does that
+    // automatically — there's nothing here for a keyboard user to activate.
+    //
+    // Monochrome, not the former emerald: this grid's whole card language
+    // went black-and-white, and a green pill was the last colored chrome
+    // left in it. Full-contrast foreground-on-muted reads as "done" without
+    // needing a second semantic color.
     return (
       <Button
         type="button"
         size="sm"
         variant="ghost"
         tabIndex={-1}
-        className="pointer-events-none w-full border border-emerald-300 bg-emerald-500/15 text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400"
+        className="bg-muted text-foreground pointer-events-none w-full"
       >
         <Check className="size-4" aria-hidden />
         Added

@@ -134,8 +134,12 @@ describe('UpcomingView — already-wishlisted state', () => {
    * `variant="secondary"` — the shared `disabled:opacity-50` rule faded an
    * already-modest gray-on-gray pairing to near-illegibility (reported: hard
    * to read, especially in dark theme). It's a permanent success state, not
-   * a temporarily-unavailable control, so it must not be `disabled` at all,
-   * and must render in the app's emerald "done" register at full opacity.
+   * a temporarily-unavailable control, so it must not be `disabled` at all.
+   *
+   * It used to assert an emerald "done" register; the whole grid went
+   * monochrome, so the guard is now the thing that actually mattered — it
+   * is NOT disabled, and it carries a real full-contrast fill rather than
+   * inheriting the faded shared disabled styling.
    */
   it('renders "Added" at full opacity, not as a disabled control', () => {
     render(
@@ -149,16 +153,25 @@ describe('UpcomingView — already-wishlisted state', () => {
 
     const added = screen.getByRole('button', { name: /added/i });
     expect(added).not.toBeDisabled();
-    expect(added.className).toMatch(/emerald/);
+    expect(added.className).toMatch(/bg-muted/);
+    // Negative lookbehind on purpose: the shared button base class always
+    // carries `disabled:opacity-50`, which is inert here precisely because
+    // the control is not disabled. What must never appear is an
+    // UNCONDITIONAL `opacity-50` actually fading the thing.
+    expect(added.className).not.toMatch(/(?<!disabled:)\bopacity-50\b/);
   });
 
   /**
    * Before this treatment, a wishlisted card and a plain one were
    * pixel-identical above the fold — the only difference was the button at
-   * the very bottom, invisible while scanning a 7-column grid. This asserts
-   * the COVER itself (not just the button) carries a distinguishing class.
+   * the very bottom, invisible while scanning the grid. The distinguishing
+   * treatment used to be a violet ring; it is now a raised `bg-card` fill,
+   * matching the library grid's own card language (an app-colored ring on
+   * third-party box art was exactly what real usage rejected). What's being
+   * guarded is unchanged: the CARD itself, not just the button, tells the
+   * two apart.
    */
-  it('gives a wishlisted card a distinct ring on its cover that a plain card does not have', () => {
+  it('gives a wishlisted card a distinct surface that a plain card does not have', () => {
     const { rerender } = render(
       <UpcomingView
         {...baseProps({
@@ -168,8 +181,8 @@ describe('UpcomingView — already-wishlisted state', () => {
       />,
     );
 
-    const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('.rounded-lg');
-    expect(plainCard?.className).not.toMatch(/ring-violet-400/);
+    const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('.rounded-xl');
+    expect(plainCard?.className).not.toMatch(/bg-card/);
 
     rerender(
       <UpcomingView
@@ -180,8 +193,8 @@ describe('UpcomingView — already-wishlisted state', () => {
       />,
     );
 
-    const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('.rounded-lg');
-    expect(wishlistedCard?.className).toMatch(/ring-violet-400/);
+    const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('.rounded-xl');
+    expect(wishlistedCard?.className).toMatch(/bg-card/);
   });
 
   it('flips a fresh card from "Add to wishlist" to "Added" only after the server confirms it', async () => {

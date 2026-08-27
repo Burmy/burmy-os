@@ -5,13 +5,14 @@
  *
  * No border — real usage found bordered-box-everywhere the biggest
  * contributor to a "compact/scattered" feel. The card reads against the
- * page via a tonal fill instead (`bg-muted`, not `bg-card` — this app's own
- * `--card` token is IDENTICAL to `--background` in light mode, so a
- * borderless `bg-card` box would be invisible against the page; `--muted`
- * is the token that actually contrasts in both themes). Padding
- * (`{spacing.2xl}` 24px = Tailwind's `p-6`) matches `StatCard`'s own —
- * previously `p-6` vs `p-5`, a real inconsistency between this app's two
- * shared "card" primitives that real usage called out directly.
+ * page through its surface fill alone, which is why `--card` was changed to
+ * differ from `--background` in light mode (they were both `#ffffff`, so a
+ * borderless `bg-card` box was literally invisible — see that token's own
+ * comment in `globals.css`).
+ *
+ * Padding (24px = `p-6`) matches `StatCard`'s exactly. These two are the
+ * app's only shared "card" primitives and they used to disagree (`p-6` vs
+ * `p-5`), which is what made Finance and Games look inconsistent.
  */
 export function Section({
   title,
@@ -23,7 +24,7 @@ export function Section({
   readonly children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="rounded-lg bg-muted p-6">
+    <section className="rounded-lg bg-card p-6">
       <h2 className="font-display text-base font-medium">{title}</h2>
       {description ? <p className="text-muted-foreground text-xs">{description}</p> : null}
       <div className="mt-3">{children}</div>

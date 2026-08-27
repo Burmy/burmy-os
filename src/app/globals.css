@@ -130,7 +130,12 @@
 
   --background: #ffffff;
   --foreground: #18181b;
-  --card: #ffffff;
+  /* Deliberately NOT the same as `--background`. Cards carry no border any
+     more, so their surface is the ONLY thing separating them from the page —
+     when these two were both `#ffffff`, a borderless `bg-card` box was
+     literally invisible in light mode. Same background/surface split the
+     reference design system uses. */
+  --card: #f7f7f8;
   --card-foreground: #18181b;
   --popover: #ffffff;
   --popover-foreground: #18181b;
@@ -292,10 +297,25 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-*,
-::after,
-::before {
-  border-color: var(--border);
+/**
+ * MUST stay inside `@layer base`. Unlayered CSS beats LAYERED CSS in the
+ * cascade regardless of specificity, and `@import 'tailwindcss'` puts every
+ * utility in `@layer utilities` — so an unlayered `* { border-color }` rule
+ * silently overrides EVERY `border-<color>` utility in the app.
+ *
+ * That was a real, shipped bug: the page heading's `border-b-2 border-brand`
+ * accent rendered plain grey, and so did `hover:border-brand`,
+ * `data-[state=active]:border-brand`, `focus-visible:border-ring`, and the
+ * emerald/violet borders on the Upcoming cards. It went unnoticed for a long
+ * time because `--input` and `--border` hold the SAME value, so every form
+ * control looked correct by pure coincidence.
+ */
+@layer base {
+  *,
+  ::after,
+  ::before {
+    border-color: var(--border);
+  }
 }
 
 /**

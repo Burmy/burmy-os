@@ -241,7 +241,7 @@ export function GameDialog({
             </div>
 
             {visibleSuggestions.length === 0 ? null : (
-              <ul className="grid grid-cols-3 gap-2 rounded-md border p-2 sm:grid-cols-6">
+              <ul className="bg-card grid grid-cols-3 gap-2 rounded-md p-2 sm:grid-cols-6">
                 {visibleSuggestions.map((suggestion) => (
                   <li key={suggestion.externalId}>
                     <button

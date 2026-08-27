@@ -62,7 +62,7 @@ export default async function SyncRunPage({
 function RunStatusNotice({ run }: { readonly run: SyncRun }): React.ReactElement {
   const { message, tone } = describeStatus(run);
   return (
-    <div className="max-w-md space-y-3 rounded-md border p-4 text-sm">
+    <div className="bg-card max-w-md space-y-3 rounded-md p-4 text-sm">
       <p className={tone === 'error' ? 'text-destructive font-medium' : 'font-medium'}>{message}</p>
       <Link href="/games/library" className="text-muted-foreground hover:text-foreground underline">
         Back to library

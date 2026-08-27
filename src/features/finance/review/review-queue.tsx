@@ -235,7 +235,7 @@ export function ReviewQueue({
       ) : (
         <>
           {selected.size > 0 ? (
-            <div className="bg-muted/50 flex items-center gap-2 rounded-md border p-3 text-sm">
+            <div className="bg-muted/50 flex items-center gap-2 rounded-md p-3 text-sm">
               <span>{selected.size} selected</span>
               <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
                 <SelectTrigger aria-label="Category for selected transactions" className="h-8 w-48">

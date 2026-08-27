@@ -1,54 +1,50 @@
 'use client';
 
 import Image from 'next/image';
-import { Gamepad2 } from 'lucide-react';
+import { Gamepad2, Heart, Trophy } from 'lucide-react';
 
-import { PlatinumBadge } from '@/components/games/platinum-badge';
-import { RatingStars } from '@/components/games/rating-stars';
-import { StatusBadge } from '@/components/games/status-badge';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import { formatHours, hours } from '@/server/games/hours';
 
 /**
- * One game in the gallery. Cover art is the primary affordance; everything else
- * is secondary metadata layered beneath it. Games with no cover fall back to a
- * tile that carries the title itself, rather than a bare icon floating in
- * empty space — roughly half the historical library predates cover art being
- * available at all, and a lone icon next to real box art elsewhere in the
- * grid reads as broken, not intentional. The title always renders in the
- * info panel below too, cover or not, so every card has identical structure
- * and a mixed grid never looks ragged.
+ * One game in the gallery — COVER-FIRST.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * STATUS BADGE STAYS AT THE BOTTOM OF THE COVER, NOT THE TOP.
+ * WHAT THIS CARD DELIBERATELY DOES NOT SHOW.
  *
- * Portrait box art almost always carries the game's own logo/title treatment
- * across the top third of the cover — a badge pinned to the top-left corner
- * sat directly on top of it (reported: "Completed" over DISHONORED 2's own
- * logo, unreadable in both directions — the badge fought the art and the art
- * fought the badge). The bottom of a cover is far more often plain
- * background art, so the badge lives there instead, backed by `StatusBadge`'s
- * `variant="onImage"` (an opaque pill, legible against arbitrary art without
- * reaching for a gradient scrim — see that component for why).
+ * It used to carry eight competing things at once: cover, a status badge over
+ * the art, a platinum badge, title, platform, first-played year, a "Steam"
+ * provenance tag, a star rating and hours. Real usage called that "too
+ * compact and way too much happening," and it was — at seven cards per row
+ * none of it was legible anyway.
+ *
+ * What survives: the cover, the title, and ONE metadata line (platform +
+ * hours). The year, the Steam tag, the star rating and the status badge are
+ * all gone from the grid. Status stays reachable through the library's own
+ * filter chips, and every dropped field is still on the game's own page —
+ * this is a change to what the GRID advertises, not to what is tracked.
  * ─────────────────────────────────────────────────────────────────────────────
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * PLATINUM MOVED TO ITS OWN TOP-RIGHT CORNER, NOT SHARING THE STATUS ROW.
+ * PLATINUM AND WISHLIST ARE CARD-LEVEL TREATMENTS, NOT BADGES-ON-ART.
  *
- * The platinum badge used to share the bottom row with the status badge —
- * real usage found the two blurred together at a glance ("hard to tell"),
- * on top of the badge itself being too small/low-contrast. It now sits
- * independently at `top-2 right-2`; status stays at the bottom, now
- * uncontested. This is a smaller-footprint change than it might sound: the
- * original bottom-placement fix above was about a full-width TEXT PILL
- * colliding with a logo across the top third of the cover — this is a
- * ~36px icon-only medallion in one corner, not a wide element spanning the
- * top. Also gets a card-level ring/border in the exact same slate-300/
- * slate-400 register `PlatinumBadge` uses — not a new color, just a frame —
- * so a scan of the gallery makes every platinum obvious without turning the
- * grid into a casino.
+ * The old approach painted a colored badge on top of the box art (gold
+ * trophy, violet heart), which is exactly the "shitting colors and icons"
+ * the owner objected to — third-party art plus an app-colored sticker never
+ * composes well.
+ *
+ * Instead the whole card changes character, the way a foil trading card
+ * differs from a normal one: a metallic ring plus a raised fill. Silver is
+ * NOT a new accent color in this system — platinum is literally a metal, and
+ * the treatment stays monochrome, so it never competes with the app's one
+ * red accent. Wishlist gets a deliberately DIFFERENT and quieter treatment:
+ * it is an aspiration, not an achievement, so it must not read as a prize.
+ *
+ * Every card keeps the same padded box regardless of state, so the grid
+ * stays aligned — only the FILL changes. A plain game's box is transparent,
+ * which is what lets a treated card stand out at a glance.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function GameCard({
@@ -58,49 +54,33 @@ export function GameCard({
   readonly game: Game;
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
+  const wishlisted = game.status === 'wanted';
+
   return (
     <button
       type="button"
-      // Without an explicit aria-label, the accessible name is computed from
-      // ALL visible content in DOM order — status badge, title, platform,
-      // rating, hours — a wall of text on every card, and it collides with
-      // the status filter chips' own "Backlog"/"Playing" names. Title alone
-      // isn't enough either: status is the card's most prominent visual
-      // signal (a colored badge) with no other channel for a screen-reader
-      // user tabbing the gallery — unlike the table view, which exposes
-      // status in its own dedicated "Status" cell. So the name is title plus
-      // status (plus platinum, when earned — the badge itself is
-      // `aria-hidden` and this is its only accessible signal), and nothing
-      // else from the card's remaining content.
+      // The accessible name still carries status and platinum even though
+      // neither renders as visible text on the card any more — this is now
+      // the ONLY status signal a screen-reader user tabbing the grid gets,
+      // so it matters more than it did when a visible badge existed.
       aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}`}
       onClick={() => onOpen(game)}
       className={cn(
-        // NOT `overflow-hidden` on this element — a ring/box-shadow-based
-        // focus indicator on the SAME element that clips its own content can
-        // itself get clipped in some engines. The cover art below clips its
-        // OWN corners on its own wrapper instead, so this element can stay
-        // un-clipped and the focus ring always renders in full.
-        'group flex flex-col rounded-lg border text-left',
-        'transition-colors hover:border-foreground/20 hover:bg-muted/40',
+        'group flex flex-col gap-3 rounded-xl p-3 text-left transition-colors',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
-        // Ring alone was easy to miss scanning a full grid — real usage
-        // asked for the card's own background to carry the signal, not just
-        // a thin border, so a platinum'd card visibly stands out among
-        // plain ones at a glance, not just on close inspection.
-        game.platinum &&
-          'border-slate-300 bg-slate-400/15 ring-2 ring-slate-400/60 dark:border-slate-500/70 dark:bg-slate-400/20 dark:ring-slate-400/40',
+        game.platinum
+          ? 'bg-card ring-1 ring-slate-300 dark:ring-slate-400/35'
+          : wishlisted
+            ? 'bg-card/60'
+            : 'hover:bg-card',
       )}
     >
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-t-lg">
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
         {game.coverUrl === null ? (
-          // A "letter tile" rather than a lone floating icon — the game's own
-          // initial standing in for missing art, the same convention plenty
-          // of apps use for a missing avatar/image. Deliberately NOT the full
-          // title: it already renders in the info panel below (see the
-          // "identical structure" note above), so repeating it here would
-          // just be noise on the tile itself — and it's decorative
-          // (`aria-hidden`), since the card's own `aria-label` already
-          // carries the real title.
+          // A letter tile rather than a lone floating icon — the game's own
+          // initial standing in for missing art, the convention plenty of
+          // apps use for a missing avatar. Decorative: the button's own
+          // `aria-label` already carries the real title.
           <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
             <span className="text-muted-foreground/40 text-4xl font-semibold">
               {game.title.trim().charAt(0).toUpperCase()}
@@ -112,34 +92,39 @@ export function GameCard({
             src={game.coverUrl}
             alt=""
             fill
-            sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 200px"
-            className="object-cover transition-transform group-hover:scale-[1.03]"
+            sizes="(max-width: 640px) 50vw, (max-width: 1280px) 25vw, 280px"
+            className={cn('object-cover', wishlisted && 'opacity-75')}
           />
         )}
-        <div className="absolute inset-x-2 bottom-2">
-          <StatusBadge status={game.status} variant="onImage" />
-        </div>
-        {game.platinum ? <PlatinumBadge className="absolute top-2 right-2" /> : null}
+
+        {/* One small monochrome glyph, bottom-right, over an opaque scrim so
+            it stays legible against arbitrary box art without a gradient.
+            Bottom rather than top: portrait box art almost always carries
+            the game's own logo across the top third. */}
+        {game.platinum ? (
+          <span
+            aria-hidden
+            title="Platinum"
+            className="absolute right-2 bottom-2 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-slate-200 ring-1 ring-white/25"
+          >
+            <Trophy className="size-3.5" />
+          </span>
+        ) : wishlisted ? (
+          <span
+            aria-hidden
+            title="On your wishlist"
+            className="absolute right-2 bottom-2 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
+          >
+            <Heart className="size-3.5" />
+          </span>
+        ) : null}
       </div>
 
-      <div className="flex flex-1 flex-col gap-1 p-3">
-        <span className="line-clamp-2 text-sm font-semibold">{game.title}</span>
-        <span className="text-muted-foreground text-xs">
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium">{game.title}</div>
+        <div className="text-muted-foreground mt-0.5 truncate text-xs">
           {PLATFORM_LABELS[game.platform]}
-          {game.firstPlayedYear === null ? '' : ` · ${game.firstPlayedYear}`}
-          {/* Provenance, not platform — a `steam` PLATFORM game can still be
-              unlinked (no sync match yet), and this is specifically "does
-              Steam own this game's hours/achievements," the same signal
-              game-dialog.tsx uses to disable those fields. */}
-          {game.steamAppid === null ? '' : ' · Steam'}
-        </span>
-        <div className="mt-auto flex items-center justify-between pt-2">
-          <RatingStars rating={game.rating} />
-          {game.hoursTenths === null ? null : (
-            <span className="text-muted-foreground tabular text-xs">
-              {formatHours(hours(game.hoursTenths))}
-            </span>
-          )}
+          {game.hoursTenths === null ? '' : ` · ${formatHours(hours(game.hoursTenths))}`}
         </div>
       </div>
     </button>

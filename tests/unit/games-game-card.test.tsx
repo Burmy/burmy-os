@@ -60,16 +60,74 @@ describe('GameCard — platinum treatment', () => {
   });
 
   /**
-   * Real usage found the previous circular platinum badge hard to tell
-   * apart from the (also circular) wishlist badge on the Upcoming tab —
-   * see `platinum-badge.tsx`'s own doc comment. It moved to a rounded-square
-   * medallion for a distinct silhouette; this guards that shape decision.
+   * Platinum and wishlist used to be told apart by SILHOUETTE (a
+   * rounded-square medallion vs. a circle) because both were colored
+   * badges painted on box art. That whole approach is gone — real usage
+   * rejected app-colored chrome sitting on third-party cover art. Both
+   * glyphs are now the same quiet monochrome circle, and the two states
+   * are distinguished by the ICON inside and by the card's own treatment
+   * instead. This guards that: a platinum card carries the badge AND the
+   * metallic ring, which is what a wishlist card never has.
    */
-  it('renders the platinum badge as a rounded-square medallion, not a circle', () => {
+  it('marks platinum with both a cover badge and the card-level metallic ring', () => {
     render(<GameCard game={game({ platinum: true })} onOpen={vi.fn()} />);
 
-    const badge = screen.getByTitle('Platinum');
-    expect(badge.className).toMatch(/\brounded-lg\b/);
-    expect(badge.className).not.toMatch(/rounded-full/);
+    expect(screen.getByTitle('Platinum')).toBeInTheDocument();
+    expect(screen.getByRole('button').className).toMatch(/ring-slate-400/);
+  });
+
+  it('never shows both the platinum and wishlist badges on one card', () => {
+    // `wanted` + `platinum` is nonsensical data, but the card renders from
+    // whatever the row holds — platinum wins, and only one glyph is drawn.
+    render(<GameCard game={game({ platinum: true, status: 'wanted' })} onOpen={vi.fn()} />);
+
+    expect(screen.getByTitle('Platinum')).toBeInTheDocument();
+    expect(screen.queryByTitle('On your wishlist')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The card went cover-first: real usage found it carried eight competing
+ * things at once and read as "too compact, way too much happening." Only
+ * the cover, the title and ONE metadata line (platform + hours) survive.
+ * These guard that the dropped fields stay dropped — each is still on the
+ * game's own page, this is only about what the GRID advertises.
+ */
+describe('GameCard — cover-first content', () => {
+  it('shows the title and a single platform + hours metadata line', () => {
+    render(<GameCard game={game({ title: 'Bloodborne', platform: 'ps4', hoursTenths: 1360 })} onOpen={vi.fn()} />);
+
+    expect(screen.getByText('Bloodborne')).toBeInTheDocument();
+    expect(screen.getByText('PS4 · 136h')).toBeInTheDocument();
+  });
+
+  it('omits hours entirely rather than printing a fabricated zero', () => {
+    render(<GameCard game={game({ platform: 'ps4', hoursTenths: null })} onOpen={vi.fn()} />);
+
+    expect(screen.getByText('PS4')).toBeInTheDocument();
+    expect(screen.queryByText(/0h/)).not.toBeInTheDocument();
+  });
+
+  it('no longer renders the year, the Steam provenance tag, or a star rating', () => {
+    render(
+      <GameCard
+        game={game({ firstPlayedYear: 2022, steamAppid: 367520, rating: 5, platform: 'steam' })}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/2022/)).not.toBeInTheDocument();
+    // The platform LABEL is "Steam / PC"; what's gone is the separate
+    // "· Steam" provenance tag that used to follow the year.
+    expect(screen.queryByText(/· Steam$/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/out of 5/)).not.toBeInTheDocument();
+  });
+
+  it('keeps status in the accessible name even though no status badge renders', () => {
+    render(<GameCard game={game({ title: 'Bloodborne', status: 'backlog' })} onOpen={vi.fn()} />);
+
+    // The visible badge is gone, so this is now the ONLY status signal a
+    // screen-reader user tabbing the grid gets.
+    expect(screen.getByRole('button', { name: 'Bloodborne — Backlog' })).toBeInTheDocument();
   });
 });

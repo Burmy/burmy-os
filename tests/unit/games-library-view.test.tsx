@@ -263,8 +263,11 @@ describe('LibraryView', () => {
   });
 
   it('formats hours as the owner writes them, not as raw tenths', () => {
-    render(<LibraryView games={[game({ hoursTenths: 1360 })]} />);
-    expect(screen.getByText('136h')).toBeInTheDocument();
+    render(<LibraryView games={[game({ hoursTenths: 1360, platform: 'ps5' })]} />);
+    // Hours share one metadata line with the platform on the cover-first
+    // card (`game-card.tsx`), so this is a substring match on that line
+    // rather than an exact-text match on an element of its own.
+    expect(screen.getByText(/\b136h\b/)).toBeInTheDocument();
   });
 
   /**

@@ -109,7 +109,7 @@ export function ImportReviewTable({
   // that was supposed to display it.
   if (result) {
     return (
-      <div className="mt-8 max-w-md space-y-3 rounded-md border p-4 text-sm">
+      <div className="bg-card mt-8 max-w-md space-y-3 rounded-md p-4 text-sm">
         <p className="font-medium">Import complete.</p>
         <ul className="text-muted-foreground list-disc space-y-1 pl-4">
           <li>
@@ -253,7 +253,7 @@ export function ImportReviewTable({
   return (
     <div className="space-y-4">
       {priorUpload ? (
-        <div role="status" className="bg-muted/50 rounded-md border p-3 text-sm">
+        <div role="status" className="bg-muted/50 rounded-md p-3 text-sm">
           {priorUploadMessage(priorUpload)}
         </div>
       ) : null}

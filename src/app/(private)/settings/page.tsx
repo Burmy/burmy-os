@@ -37,7 +37,7 @@ const FINANCE_LINKS = [
  * line — the lower-risk direction, since Finance stays untouched.
  *
  * The page later felt too plain/sparse with poor section hierarchy, so each
- * SECTION (not each row) now gets a `rounded-lg border bg-card` shell — this
+ * SECTION (not each row) now gets a `rounded-lg bg-card` shell — this
  * is a different scope than the reverted per-row-card approach above, not a
  * repeat of it: row markup inside each card stays byte-identical to
  * Categories' `divide-y`/`py-2` idiom, only pushed in from `px-4` since rows
@@ -60,7 +60,7 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
 
       <div className="mt-8">
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Finance</h2>
-        <div className="mt-3 rounded-lg border bg-card px-4">
+        <div className="mt-3 rounded-lg bg-card px-4">
           <ul className="divide-y">
             {FINANCE_LINKS.map(({ href, label, description, Icon }) => (
               <li key={href}>
@@ -79,7 +79,7 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
 
       <div className="mt-8">
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Games</h2>
-        <div className="mt-3 rounded-lg border bg-card px-4">
+        <div className="mt-3 rounded-lg bg-card px-4">
           <h3 className="text-muted-foreground pt-3 text-xs font-medium">Sync</h3>
           <GamesSyncSection
             steamConfigured={steamConfigured}
@@ -93,7 +93,7 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
 
       <div className="mt-8">
         <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">General</h2>
-        <div className="mt-3 rounded-lg border bg-card px-4">
+        <div className="mt-3 rounded-lg bg-card px-4">
           <ul>
             <li className="flex items-center justify-between py-2 text-sm">
               <span>

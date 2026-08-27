@@ -91,7 +91,7 @@ export function LibraryView({
   }, [nonWantedGames]);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       <PageHeader
         title="Library"
         subtitle={
@@ -105,7 +105,7 @@ export function LibraryView({
         }
         actions={
           <>
-            <div className="flex rounded-md border p-0.5">
+            <div className="bg-card flex rounded-md p-0.5">
               <Button
                 variant={view === 'gallery' ? 'secondary' : 'ghost'}
                 size="sm"

@@ -30,7 +30,7 @@ export function TopGames({
   readonly entries: readonly LeaderboardEntry[];
 }): React.ReactElement {
   return (
-    <div className="bg-card rounded-lg border p-4">
+    <div className="bg-card rounded-lg p-4">
       <div className="mb-3">
         <h3 className="text-sm font-medium">{title}</h3>
         <p className="text-muted-foreground text-xs">{hint}</p>

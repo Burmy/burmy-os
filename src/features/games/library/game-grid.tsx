@@ -11,10 +11,12 @@ export function GameGrid({
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   return (
-    // One extra step at `md` (was a straight 3->5 jump) and a cap at `2xl` —
-    // without it, cards on an ultra-wide monitor just keep getting wider
-    // past 6 columns' worth of space instead of adding a 7th column.
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7">
+    // Caps at 5 columns, down from 7. Real usage found the denser grid
+    // "too compact" — at 7-up the cover art was too small to recognize a
+    // game without reading its title, which defeats the point of a
+    // cover-first card (see `game-card.tsx`). `gap-6` matches the app's
+    // shared 24px spacing step.
+    <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
       {games.map((game) => (
         <GameCard key={game.id} game={game} onOpen={onOpen} />
       ))}

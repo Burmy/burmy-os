@@ -17,8 +17,14 @@ const buttonVariants = cva(
         default: 'bg-primary text-primary-foreground hover:bg-brand hover:text-brand-foreground',
         destructive:
           'bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40',
-        outline:
-          'border bg-background shadow-xs hover:border-brand hover:text-brand dark:border-input dark:bg-input/30',
+        // Fill, not border. This variant used to be the app's one remaining
+        // bordered control outside real form fields, which is why a pass
+        // that removed card borders everywhere still left visible boxes on
+        // e.g. the Settings sync buttons. A subtle surface fill reads as a
+        // button just as clearly and matches the rest of the system — the
+        // reference design has no bordered button variant at all, only
+        // filled ones.
+        outline: 'bg-card hover:bg-muted hover:text-brand',
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-brand',
         link: 'text-primary underline-offset-4 hover:text-brand hover:underline',
