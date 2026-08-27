@@ -1,5 +1,6 @@
 import { Section } from '@/components/ui/section';
 import { StatCard } from '@/components/ui/stat-card';
+import { StatCardGrid } from '@/components/ui/stat-card-grid';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatPriceCents } from '@/server/games/money';
 import type { PlayYearRow } from '@/server/games/play-years';
@@ -111,7 +112,7 @@ export function GamesDashboard({
           truncates by design (long values must not widen the grid), so the
           failure was silent — a headline number quietly becoming unreadable.
           Two rows of four give every card room for its value. */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+      <StatCardGrid>
         <StatCard label="Games" value={String(summary.totalGames)} {...(qualityHint === undefined ? {} : { hint: qualityHint })} />
         <StatCard
           label="Hours played"
@@ -144,7 +145,7 @@ export function GamesDashboard({
           value={financial.costPerHourCents === null ? '—' : `${formatPriceCents(financial.costPerHourCents)}/hr`}
           hint={`${formatPriceCents(financial.backlogValueCents)} sitting in backlog`}
         />
-      </div>
+      </StatCardGrid>
 
       {/* Above `Year by year` deliberately: the hunt is current, the
           year-by-year table is history, and history reads better underneath.

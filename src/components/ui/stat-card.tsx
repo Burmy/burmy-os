@@ -31,8 +31,15 @@ export function StatCard({
   readonly comparison?: React.ReactNode;
   readonly hint?: string;
 }): React.ReactElement {
+  // `gap-2` stacking from the top, NOT `justify-between`. Grid rows stretch
+  // every card to the tallest in the row, and `justify-between` then pushed the
+  // value block to the FLOOR of that stretched box. On a row where one card
+  // carries two comparison lines and another carries none, "Savings rate" ended
+  // up with its 29.2% floating an inch below its own label — a rendering fault,
+  // not a layout. Stacking from the top keeps a value under its label whatever
+  // its neighbours contain.
   return (
-    <div className="flex h-full flex-col justify-between gap-2 rounded-md bg-card p-6">
+    <div className="flex h-full flex-col gap-2 rounded-md bg-card p-6">
       <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
       <div>
         <div
