@@ -9,8 +9,8 @@ export default function FinanceTabsLoading(): React.ReactElement {
   return (
     <div aria-busy="true" aria-live="polite" className="space-y-4">
       <span className="sr-only">Loading</span>
-      <div className="bg-muted h-7 w-48 animate-pulse rounded" />
-      <div className="bg-muted mt-8 h-40 w-full animate-pulse rounded" />
+      <div className="bg-muted h-7 w-48 animate-pulse rounded-md" />
+      <div className="bg-muted mt-8 h-40 w-full animate-pulse rounded-md" />
     </div>
   );
 }

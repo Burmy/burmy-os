@@ -297,7 +297,7 @@ function ChangeGroup({
  */
 function NewGameCover({ coverUrl, title }: { readonly coverUrl: string | null; readonly title: string }): React.ReactElement {
   return (
-    <div className="bg-muted relative h-14 w-[2.625rem] shrink-0 overflow-hidden rounded">
+    <div className="bg-muted relative h-14 w-[2.625rem] shrink-0 overflow-hidden rounded-md">
       {coverUrl === null ? (
         <span className="text-muted-foreground flex h-full items-center justify-center text-sm font-semibold" aria-hidden>
           {title.charAt(0).toUpperCase()}

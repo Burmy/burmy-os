@@ -30,7 +30,7 @@ export function TopGames({
   readonly entries: readonly LeaderboardEntry[];
 }): React.ReactElement {
   return (
-    <div className="bg-card rounded-lg p-4">
+    <div className="bg-card rounded-md p-4">
       <div className="mb-3">
         <h3 className="text-sm font-medium">{title}</h3>
         <p className="text-muted-foreground text-xs">{hint}</p>
@@ -45,7 +45,7 @@ export function TopGames({
               <span className="text-muted-foreground w-3 shrink-0 text-center text-xs font-semibold tabular">
                 {index + 1}
               </span>
-              <div className="bg-muted relative h-14 w-[2.625rem] shrink-0 overflow-hidden rounded">
+              <div className="bg-muted relative h-14 w-[2.625rem] shrink-0 overflow-hidden rounded-md">
                 {entry.coverUrl === null ? (
                   // The game's own initial standing in for missing art, the same
                   // convention `game-card.tsx` uses. Decorative — the title is

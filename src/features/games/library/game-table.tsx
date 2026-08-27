@@ -65,7 +65,7 @@ export function GameTable({
                   onOpen(game);
                 }}
                 className={cn(
-                  'rounded-sm text-left focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
+                  'rounded-md text-left focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
                 )}
               >
                 {game.title}

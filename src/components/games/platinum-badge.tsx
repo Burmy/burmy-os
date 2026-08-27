@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils';
  * all): a platinum is an achievement worth showing off, so this reaches for
  * a metallic platinum/silver register instead of another flat color pill.
  *
- * `rounded-lg` (a medallion), not `rounded-full` — real usage found the
+ * `rounded-md` (a medallion), not `rounded-full` — real usage found the
  * previous 24px circular badge hard to tell apart from the wishlist heart
  * badge on the Upcoming tab despite the different icon/color, since both
  * were "a generic circle with a symbol in it" at a glance. A distinct
@@ -29,7 +29,7 @@ export function PlatinumBadge({ className }: { readonly className?: string }): R
       aria-hidden
       title="Platinum"
       className={cn(
-        'inline-flex size-9 items-center justify-center rounded-lg',
+        'inline-flex size-9 items-center justify-center rounded-md',
         'bg-gradient-to-br from-slate-100 via-slate-300 to-slate-400 text-slate-700 shadow-sm ring-1 ring-slate-400/50',
         'dark:from-slate-200 dark:via-slate-300 dark:to-slate-400 dark:text-slate-800',
         className,

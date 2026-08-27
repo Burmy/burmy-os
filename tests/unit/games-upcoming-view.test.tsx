@@ -181,7 +181,7 @@ describe('UpcomingView — already-wishlisted state', () => {
       />,
     );
 
-    const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('.rounded-xl');
+    const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('[data-slot="upcoming-card"]');
     expect(plainCard?.className).not.toMatch(/bg-card/);
 
     rerender(
@@ -193,7 +193,7 @@ describe('UpcomingView — already-wishlisted state', () => {
       />,
     );
 
-    const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('.rounded-xl');
+    const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('[data-slot="upcoming-card"]');
     expect(wishlistedCard?.className).toMatch(/bg-card/);
   });
 

@@ -15,7 +15,7 @@ import { PlatinumBadge } from './platinum-badge';
  * `StatusBadge`'s theme-aware tint pattern either: a medal's color is a
  * fact about the trophy, not a UI accent that should shift with light/dark
  * theme any more than platinum's does. `rounded-md`, not `PlatinumBadge`'s
- * `rounded-lg` medallion or a circle — smaller and quieter, since this sits
+ * `rounded-md` medallion or a circle — smaller and quieter, since this sits
  * in a dense list of many rows rather than alone on a card corner.
  */
 export function TrophyTierBadge({

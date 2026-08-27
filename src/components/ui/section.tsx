@@ -24,7 +24,7 @@ export function Section({
   readonly children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="rounded-lg bg-card p-6">
+    <section className="rounded-md bg-card p-6">
       <h2 className="font-display text-base font-medium">{title}</h2>
       {description ? <p className="text-muted-foreground text-xs">{description}</p> : null}
       <div className="mt-3">{children}</div>

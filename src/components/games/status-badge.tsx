@@ -77,7 +77,7 @@ export function StatusBadge({
 
   if (variant === 'onImage') {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-black/75 px-2 py-0.5 text-xs font-medium text-white">
+      <span className="inline-flex items-center gap-1.5 rounded-md bg-black/75 px-2 py-0.5 text-xs font-medium text-white">
         <span className={cn('size-1.5 shrink-0 rounded-full', DOT_STYLES[status])} aria-hidden />
         {STATUS_LABELS[status]}
       </span>
@@ -85,7 +85,7 @@ export function StatusBadge({
   }
 
   return (
-    <span className={cn('rounded-full px-2 py-0.5 text-xs font-medium', STYLES[status])}>
+    <span className={cn('rounded-md px-2 py-0.5 text-xs font-medium', STYLES[status])}>
       {STATUS_LABELS[status]}
     </span>
   );

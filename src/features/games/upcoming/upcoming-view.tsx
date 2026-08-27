@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Check, Gamepad2, Heart, Loader2, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 
+import { FoilShine } from '@/components/games/foil-shine';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
@@ -198,16 +199,22 @@ function UpcomingGameCard({
 
   return (
     <div
+      // `data-slot` is this codebase's existing hook convention (every
+      // shadcn primitive carries one). Tests reach the card through it
+      // rather than a radius class — a radius is styling that moves, and a
+      // test anchored to `.rounded-xl` broke the moment the app unified on
+      // one 6px radius.
+      data-slot="upcoming-card"
       className={cn(
         // Same card language as the library grid (`game-card.tsx`):
         // borderless, a padded box whose FILL carries the state, cover art
-        // rounded on its own frame rather than the card's top corners.
+        // rounded-md on its own frame rather than the card's top corners.
         // The two grids used to diverge visually for no reason.
-        'flex flex-col gap-2.5 rounded-xl p-2',
+        'flex flex-col gap-2.5 rounded-md p-2',
         wishlisted ? 'bg-card' : null,
       )}
     >
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-md">
         {game.coverUrl === null ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
             <span className="text-muted-foreground/40 text-4xl font-semibold">
@@ -224,6 +231,11 @@ function UpcomingGameCard({
             className="object-cover"
           />
         )}
+        {/* Hover-only foil highlight, same as the library grid's wishlist
+            cards — these two galleries share one card language and must not
+            diverge again. See `foil-shine.tsx`. */}
+        {wishlisted ? <FoilShine tone="wishlist" /> : null}
+
         {/* Monochrome over an opaque scrim, matching the library's own
             badge treatment — the old violet pill was app-colored chrome
             sitting on third-party box art, which never composed well. */}
@@ -231,7 +243,7 @@ function UpcomingGameCard({
           <span
             aria-hidden
             title="On your wishlist"
-            className="absolute right-2 bottom-2 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
+            className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
           >
             <Heart className="size-3.5" />
           </span>

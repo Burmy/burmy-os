@@ -32,7 +32,7 @@ export function StatCard({
   readonly hint?: string;
 }): React.ReactElement {
   return (
-    <div className="flex h-full flex-col justify-between gap-2 rounded-lg bg-card p-6">
+    <div className="flex h-full flex-col justify-between gap-2 rounded-md bg-card p-6">
       <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
       <div>
         <div

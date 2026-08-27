@@ -146,7 +146,7 @@ export function GamesDashboard({
       </Section>
 
       {/* Bare, no Section/heading — same reasoning as the top stat-card row
-          above. `TopGames` is itself a bordered card (`bg-card rounded-lg
+          above. `TopGames` is itself a bordered card (`bg-card rounded-md
           border p-4`), so wrapping four of them in a second outer Section
           box was the same "double box" problem the top row already fixed,
           just with a richer card instead of a plain StatCard. */}

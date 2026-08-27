@@ -117,7 +117,12 @@ function TrophyList({ trophies }: { readonly trophies: readonly Trophy[] }): Rea
           // matching how PSN's own clients treat this exact flag.
           const redact = trophy.hidden && !trophy.earned;
           return (
-            <TableRow key={trophy.id}>
+            // The earned row sits on a raised surface, so a 50-row list
+            // scans as blocks of "done" rather than making the reader
+            // compare two badge shades. The grayscale badge on unearned
+            // rows stays too — the two signals reinforce rather than
+            // replace each other.
+            <TableRow key={trophy.id} className={trophy.earned ? 'bg-card' : undefined}>
               <TableCell>
                 {/* Full tier color once earned; grayed/desaturated until
                     then — the same visual language the PlayStation app

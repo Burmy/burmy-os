@@ -108,7 +108,7 @@ export function SubNav({
           >
             {label}
             {badge ? (
-              <span className="bg-secondary text-secondary-foreground tabular rounded-full px-1.5 py-0.5 text-xs">
+              <span className="bg-secondary text-secondary-foreground tabular rounded-md px-1.5 py-0.5 text-xs">
                 {badge}
               </span>
             ) : null}

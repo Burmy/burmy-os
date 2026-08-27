@@ -233,11 +233,46 @@ describe('GamePage Steam provenance', () => {
     expect(screen.queryByRole('button', { name: 'Achievements total' })).not.toBeInTheDocument();
   });
 
-  it('keeps Rating and Status editable for a Steam-linked game', async () => {
-    const user = userEvent.setup();
+  it('keeps Rating and Status editable for a Steam-linked game', () => {
     render(<GamePage game={game({ steamAppid: 367520 })} />);
-    await user.click(screen.getByRole('button', { name: 'Rating' }));
-    expect(screen.getByRole('textbox', { name: 'Rating' })).toBeInTheDocument();
+    // Rating is a directly-interactive star row now, not a click-to-reveal
+    // text field — Steam owning hours/achievements must not disable it.
+    expect(screen.getByRole('radiogroup', { name: 'Rating' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '4 stars' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Status' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * Rating is the one field that commits directly on click rather than
+ * revealing an input first — a star row is already the control. See
+ * `rating-input.tsx`.
+ */
+describe('GamePage — star rating', () => {
+  it('renders the current rating as selected and saves the star that is clicked', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ rating: 5 })} />);
+
+    expect(screen.getByRole('radio', { name: '5 stars' })).toBeChecked();
+
+    await user.click(screen.getByRole('radio', { name: '3 stars' }));
+
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'rating', '3');
+    });
+  });
+
+  it('clears the rating when the already-selected star is clicked again', async () => {
+    const user = userEvent.setup();
+    render(<GamePage game={game({ rating: 4 })} />);
+
+    await user.click(screen.getByRole('radio', { name: '4 stars' }));
+
+    // An empty value is how every other field here spells "cleared" —
+    // without this there is no way back to unrated once a star is set.
+    await waitFor(() => {
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'rating', '');
+    });
   });
 });
 

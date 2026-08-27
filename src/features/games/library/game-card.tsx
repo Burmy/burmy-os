@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { Gamepad2, Heart, Trophy } from 'lucide-react';
 
+import { FoilShine } from '@/components/games/foil-shine';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
@@ -66,7 +67,7 @@ export function GameCard({
       aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}`}
       onClick={() => onOpen(game)}
       className={cn(
-        'group flex flex-col gap-2.5 rounded-xl p-2 text-left transition-colors',
+        'group flex flex-col gap-2.5 rounded-md p-2 text-left transition-colors',
         'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
         game.platinum
           ? 'bg-card ring-1 ring-slate-300 dark:ring-slate-400/35'
@@ -75,7 +76,7 @@ export function GameCard({
             : 'hover:bg-card',
       )}
     >
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-md">
         {game.coverUrl === null ? (
           // A letter tile rather than a lone floating icon — the game's own
           // initial standing in for missing art, the convention plenty of
@@ -97,6 +98,11 @@ export function GameCard({
           />
         )}
 
+        {/* Hover-only foil highlight. A platinum/wishlist card already sits
+            on the raised surface a plain card only gets ON hover, so without
+            this they had no hover state at all — see `foil-shine.tsx`. */}
+        {game.platinum ? <FoilShine tone="platinum" /> : wishlisted ? <FoilShine tone="wishlist" /> : null}
+
         {/* One small monochrome glyph, bottom-right, over an opaque scrim so
             it stays legible against arbitrary box art without a gradient.
             Bottom rather than top: portrait box art almost always carries
@@ -105,7 +111,7 @@ export function GameCard({
           <span
             aria-hidden
             title="Platinum"
-            className="absolute right-2 bottom-2 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-slate-200 ring-1 ring-white/25"
+            className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-slate-200 ring-1 ring-white/25"
           >
             <Trophy className="size-3.5" />
           </span>
@@ -113,7 +119,7 @@ export function GameCard({
           <span
             aria-hidden
             title="On your wishlist"
-            className="absolute right-2 bottom-2 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
+            className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
           >
             <Heart className="size-3.5" />
           </span>

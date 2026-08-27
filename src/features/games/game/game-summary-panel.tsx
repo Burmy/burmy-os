@@ -1,13 +1,14 @@
 'use client';
 
 import Image from 'next/image';
-import { Gamepad2, Star } from 'lucide-react';
+import { useState } from 'react';
+import { Gamepad2 } from 'lucide-react';
 
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { PlatinumBadge } from '@/components/games/platinum-badge';
+import { RatingInput } from '@/components/games/rating-input';
 import { toast } from '@/components/ui/toast';
-import { cn } from '@/lib/utils';
 import type { ActionResult } from '@/features/games/action-result';
 import type { GameFieldKey } from '@/features/games/game-actions';
 import { formatHours, hours } from '@/server/games/hours';
@@ -48,7 +49,7 @@ export function GameSummaryPanel({
 }): React.ReactElement {
   return (
     <div className="space-y-4 sm:sticky sm:top-6">
-      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-lg">
+      <div className="bg-muted relative aspect-[3/4] w-full overflow-hidden rounded-md">
         {coverUrl === null || coverUrl === '' ? (
           <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
             <span className="text-muted-foreground/40 text-4xl font-semibold">
@@ -109,12 +110,14 @@ export function GameSummaryPanel({
 }
 
 /**
- * Rating shows as stars when idle (matching the library gallery's own
- * `RatingStars`), but editing five individual star buttons that each save
- * independently would be five separate round-trips for one value — instead
- * clicking any star reveals the same plain numeric `InlineEditField` every
- * other scalar field uses, pre-filled, so the actual commit is still one
- * save.
+ * Rating is the one field that is DIRECTLY interactive rather than
+ * click-to-reveal-an-input: clicking a star both sets and commits the
+ * value, because a star row is already the control — making the owner
+ * click it once to reveal a numeric box, then type a digit, was the wrong
+ * shape for a rating and is what this replaced. Re-clicking the active
+ * star clears the rating, which is the only way back to "unrated."
+ *
+ * Still one round-trip per change, same as every other field here.
  */
 function RatingRow({
   rating,
@@ -123,25 +126,19 @@ function RatingRow({
   readonly rating: number | null;
   readonly onSave: (value: string) => Promise<ActionResult>;
 }): React.ReactElement {
+  const [pending, setPending] = useState(false);
+
+  async function save(next: number | null): Promise<void> {
+    setPending(true);
+    const result = await onSave(next === null ? '' : String(next));
+    setPending(false);
+    if (!result.ok) toast.error(result.error);
+  }
+
   return (
-    <InlineEditField
-      label="Rating"
-      value={rating === null ? '' : String(rating)}
-      displayValue={
-        rating === null ? undefined : (
-          <span className="inline-flex items-center gap-0.5" aria-label={`${rating} out of 5`}>
-            {[1, 2, 3, 4, 5].map((position) => (
-              <Star
-                key={position}
-                aria-hidden
-                className={cn('size-3.5', position <= rating ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/30')}
-              />
-            ))}
-          </span>
-        )
-      }
-      placeholder="Not rated"
-      onSave={onSave}
-    />
+    <div className="flex items-center justify-between gap-4 py-1.5 text-sm">
+      <span className="text-muted-foreground shrink-0">Rating</span>
+      <RatingInput value={rating} disabled={pending} onChange={(next) => void save(next)} />
+    </div>
   );
 }

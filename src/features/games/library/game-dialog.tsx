@@ -247,7 +247,7 @@ export function GameDialog({
                     <button
                       type="button"
                       onClick={() => applySuggestion(suggestion)}
-                      className="hover:ring-ring block w-full overflow-hidden rounded text-left hover:ring-2"
+                      className="hover:ring-ring block w-full overflow-hidden rounded-md text-left hover:ring-2"
                     >
                       <span className="bg-muted relative block aspect-[3/4] w-full">
                         {suggestion.coverUrl === null ? null : (

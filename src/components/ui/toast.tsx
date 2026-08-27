@@ -129,7 +129,7 @@ export function Toaster(): React.ReactElement {
             type="button"
             aria-label="Dismiss"
             onClick={() => onDismiss(item.id)}
-            className="text-muted-foreground hover:text-foreground -m-1 shrink-0 rounded p-1"
+            className="text-muted-foreground hover:text-foreground -m-1 shrink-0 rounded-md p-1"
           >
             <X className="size-3.5" />
           </button>
