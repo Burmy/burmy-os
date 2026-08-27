@@ -64,7 +64,7 @@ export function InlineEditText({
       onClick={() => setEditing(true)}
       title={value || undefined}
       className={cn(
-        'hover:bg-muted/50 -mx-1 block max-w-full truncate rounded px-1 py-1 text-left text-sm',
+        'hover:bg-muted/50 -mx-1 block max-w-full truncate rounded-md px-1 py-1 text-left text-sm',
         value ? '' : 'text-muted-foreground italic',
         className,
       )}

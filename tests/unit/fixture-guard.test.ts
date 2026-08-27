@@ -5,7 +5,8 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 /**
- * GUARD: no committed fixture may contain real financial data.
+ * GUARD: no committed fixture may contain real financial (or, since the Games
+ * module, personal library) data.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHY THIS TEST EXISTS
@@ -20,26 +21,48 @@ import { beforeAll, describe, expect, it } from 'vitest';
  * M4 also amended the invariant: fixtures used to be "synthetic only", and are now
  * "redacted from real exports" because a parser must be tested against real quirks.
  * Redaction replaced synthesis as the safety property — so redaction needs a test.
+ *
+ * The walk covers `tests/fixtures/**` — every subdirectory, not just
+ * `tests/fixtures/finance` — because the `.gitignore` exception above is written
+ * the same way: `!tests/fixtures/**\/*.csv` re-includes ANY csv anywhere under
+ * this tree. `tests/fixtures/games/` exists for exactly the same reason the
+ * Finance corpus does (`scripts/import-game-log.mjs` reads a real personal Google
+ * Sheet export), so a guard that only ever looked at `finance/` would leave that
+ * directory completely unchecked.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const FIXTURES = path.resolve(process.cwd(), 'tests/fixtures/finance');
+const FIXTURES_ROOT = path.resolve(process.cwd(), 'tests/fixtures');
 
 interface Fixture {
+  /** Path relative to `tests/fixtures`, POSIX-separated (e.g. `finance/boa-card-2026-05.csv`). */
   readonly name: string;
   readonly text: string;
 }
 
 let fixtures: Fixture[] = [];
 
+async function collectCsvFixtures(dir: string): Promise<Fixture[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const collected: Fixture[] = [];
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collected.push(...(await collectCsvFixtures(fullPath)));
+    } else if (entry.isFile() && entry.name.endsWith('.csv')) {
+      collected.push({
+        name: path.relative(FIXTURES_ROOT, fullPath).split(path.sep).join('/'),
+        text: await readFile(fullPath, 'utf8'),
+      });
+    }
+  }
+
+  return collected;
+}
+
 beforeAll(async () => {
-  const names = (await readdir(FIXTURES)).filter((name) => name.endsWith('.csv'));
-  fixtures = await Promise.all(
-    names.map(async (name) => ({
-      name,
-      text: await readFile(path.join(FIXTURES, name), 'utf8'),
-    })),
-  );
+  fixtures = await collectCsvFixtures(FIXTURES_ROOT);
 });
 
 describe('the corpus exists and is being checked', () => {
@@ -161,8 +184,8 @@ describe('the redaction actually happened', () => {
   it('kept the structural quirks that make the corpus worth having', () => {
     // Redaction that also flattened the format would leave fixtures that prove
     // nothing. These are the characteristics the real files had.
-    const deposit = fixtures.find((f) => f.name === 'boa-deposit-2026-05.csv');
-    const card = fixtures.find((f) => f.name === 'boa-card-2026-05.csv');
+    const deposit = fixtures.find((f) => f.name === 'finance/boa-deposit-2026-05.csv');
+    const card = fixtures.find((f) => f.name === 'finance/boa-card-2026-05.csv');
 
     expect(deposit).toBeDefined();
     expect(card).toBeDefined();
@@ -201,8 +224,8 @@ describe('the redaction actually happened', () => {
     // the same confirmation token. Substituting the two files independently would
     // have destroyed it silently, and M6's counterpart matching would have lost
     // its strongest test.
-    const deposit = fixtures.find((f) => f.name === 'boa-deposit-2026-05.csv')!.text;
-    const card = fixtures.find((f) => f.name === 'boa-card-2026-05.csv')!.text;
+    const deposit = fixtures.find((f) => f.name === 'finance/boa-deposit-2026-05.csv')!.text;
+    const card = fixtures.find((f) => f.name === 'finance/boa-card-2026-05.csv')!.text;
 
     const tokens = (text: string, pattern: RegExp): Set<string> =>
       new Set([...text.matchAll(pattern)].map((match) => match[1] ?? ''));
@@ -226,16 +249,17 @@ describe('the corpus is checksummed', () => {
      * makes the change visible in review, which is the point.
      */
     const expected: Record<string, string> = {
-      'boa-card-2026-05-crlf.csv': '390920d6240abc7b',
-      'boa-card-2026-05.csv': 'bdf77bbf2d5ca702',
-      'boa-card-all-inflows.csv': '9774d9d06644db07',
-      'boa-card-thousands-quoted.csv': 'eb31d3492549e898',
-      'boa-deposit-2026-05-bom.csv': 'd2fd8bce24880536',
-      'boa-deposit-2026-05-crlf.csv': '000eeacbce8eeea4',
-      'boa-deposit-2026-05.csv': '0cd680f57284a01c',
-      'boa-deposit-totals-mismatch.csv': '5b69ba0e436e0558',
-      'malformed.csv': 'f84991711e93801e',
-      'unknown-headers.csv': '49c4a0ed672b72f8',
+      'finance/boa-card-2026-05-crlf.csv': '390920d6240abc7b',
+      'finance/boa-card-2026-05.csv': 'bdf77bbf2d5ca702',
+      'finance/boa-card-all-inflows.csv': '9774d9d06644db07',
+      'finance/boa-card-thousands-quoted.csv': 'eb31d3492549e898',
+      'finance/boa-deposit-2026-05-bom.csv': 'd2fd8bce24880536',
+      'finance/boa-deposit-2026-05-crlf.csv': '000eeacbce8eeea4',
+      'finance/boa-deposit-2026-05.csv': '0cd680f57284a01c',
+      'finance/boa-deposit-totals-mismatch.csv': '5b69ba0e436e0558',
+      'finance/malformed.csv': 'f84991711e93801e',
+      'finance/unknown-headers.csv': '49c4a0ed672b72f8',
+      'games/game-log-sample.csv': '7d8bc2382bf1376c',
     };
 
     const actual = Object.fromEntries(

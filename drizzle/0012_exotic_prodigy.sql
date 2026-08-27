@@ -1,0 +1,1 @@
+ALTER TABLE "game_sync_runs" ADD COLUMN "psn_token_fingerprint" text;

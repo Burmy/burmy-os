@@ -146,7 +146,7 @@ function callsGuard(source: string): boolean {
  * deliberate and reviewed, not a silent accident, which is what
  * "allowlisted pages are genuinely pure redirects" below enforces.
  */
-const PURE_REDIRECT_PAGE_ALLOWLIST = ['/finance/import'] as const;
+const PURE_REDIRECT_PAGE_ALLOWLIST = ['/finance/import', '/games'] as const;
 
 describe('the unprotected allowlist', () => {
   it('is exactly one entry', () => {

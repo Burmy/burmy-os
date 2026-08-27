@@ -6,6 +6,7 @@ import { listCategories } from '@/server/db/finance/categories';
 import {
   type ReviewStatus,
   type TransactionType,
+  getReviewStatusCounts,
   listTransactionsForReview,
 } from '@/server/db/finance/transactions';
 
@@ -55,20 +56,32 @@ export default async function ReviewPage({
   if (categoryId) reviewFilters.categoryId = categoryId;
   if (transactionType) reviewFilters.transactionType = transactionType;
 
-  const [transactions, categories] = await Promise.all([
+  const [transactions, categories, statusCounts] = await Promise.all([
     listTransactionsForReview(owner.userId, reviewFilters),
     listCategories(owner.userId),
+    getReviewStatusCounts(owner.userId, reviewFilters),
   ]);
 
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Review</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        Anything M6 could not confidently resolve on its own. Fix what needs it; the rest stays out
-        of your way.
-      </p>
+    <div className="space-y-8">
+      {/* `ReviewQueue` renders this page's `PageHeader` itself, the same way
+          `LibraryView` and `FinanceDashboard` do. It has to: the header's
+          count is the number of rows STILL in the queue, which drops as the
+          owner confirms them and therefore only exists as client state. The
+          alternative — passing a callback up so a Server Component could
+          re-render its own header — would be a round trip to move one
+          integer.
 
-      <ReviewQueue transactions={transactions} categories={categories} filters={reviewFilters} />
+          No description here or there. The previous one shipped the literal
+          string "Anything M6 could not confidently resolve on its own," an
+          internal milestone codename leaking into the UI, and prose on a
+          screen the only user already understands is noise either way. */}
+      <ReviewQueue
+        transactions={transactions}
+        categories={categories}
+        filters={reviewFilters}
+        statusCounts={statusCounts}
+      />
     </div>
   );
 }

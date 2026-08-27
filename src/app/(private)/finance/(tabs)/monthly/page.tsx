@@ -23,6 +23,7 @@ import {
   buildCategoryTrend,
   buildTrend,
   buildYearlyBreakdown,
+  compareToBaseline,
   compareToPreviousMonth,
   computeAverageDailySpending,
   computeSavingsRate,
@@ -161,6 +162,11 @@ export default async function MonthlyPage({
   const comparison = compareToPreviousMonth(summary, previousSummary);
   const previousMonthLabel = MONTH_ABBREVIATIONS[previous.month - 1] ?? '';
 
+  // The second, more useful comparison: this month against the owner's own
+  // trailing average rather than one arbitrary prior month. `monthlyTotals` is
+  // already the full history — no extra query.
+  const baseline = compareToBaseline(summary, monthlyTotals.map(toMonthSummary), year, month);
+
   const savingsRatePercent = computeSavingsRate(summary.incomeCents, summary.expenseCents);
   const dailyDivisor = isCurrentMonth ? now.getUTCDate() : daysInMonth(year, month);
   const avgDailySpendingCents = computeAverageDailySpending(summary.expenseCents, dailyDivisor);
@@ -240,7 +246,7 @@ export default async function MonthlyPage({
       ) : null}
 
       {needsReviewCount > 0 ? (
-        <div role="status" className="bg-muted/50 mt-3 rounded-md border px-3 py-2 text-sm">
+        <div role="status" className="bg-muted/50 mt-3 rounded-md px-3 py-2 text-sm">
           {needsReviewCount} transaction{needsReviewCount === 1 ? '' : 's'} need attention —{' '}
           <Link href="/finance/review" className="font-medium underline underline-offset-2">
             Review
@@ -249,7 +255,7 @@ export default async function MonthlyPage({
       ) : null}
 
       {grid.unreconciled.count > 0 ? (
-        <div role="alert" className="border-destructive/50 text-destructive mt-3 rounded-md border px-3 py-2 text-sm">
+        <div role="alert" className="bg-destructive/10 text-destructive mt-3 rounded-md px-3 py-2 text-sm">
           {grid.unreconciled.count} confirmed transaction{grid.unreconciled.count === 1 ? '' : 's'} (
           {format(cents(Math.abs(grid.unreconciled.totalCents)))}) {grid.unreconciled.count === 1 ? 'has' : 'have'}{' '}
           no category and {grid.unreconciled.count === 1 ? "doesn't" : "don't"} appear in any column below —{' '}
@@ -274,6 +280,7 @@ export default async function MonthlyPage({
             actions={actions}
             summary={summary}
             comparison={comparison}
+        baseline={baseline}
             savingsRatePercent={savingsRatePercent}
             avgDailySpendingCents={avgDailySpendingCents}
             avgTransactionCents={avgTransactionCents}

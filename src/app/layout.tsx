@@ -1,12 +1,26 @@
 import type { Metadata, Viewport } from 'next';
 import { headers } from 'next/headers';
+import { Space_Grotesk } from 'next/font/google';
 
 import { Toaster } from '@/components/ui/toast';
 import { StyleNonce } from '@/features/shell/style-nonce';
+import { cn } from '@/lib/utils';
 import { NONCE_HEADER } from '@/server/security/csp';
 import { readTheme, themeClass } from '@/server/security/theme';
 
 import './globals.css';
+
+// Self-hosted at build time (next/font downloads and serves the font files
+// from this app's own domain) — no runtime <link>/<style> injection, so this
+// carries no CSP risk unlike a client-side Google Fonts loader would.
+// Exposed as a CSS variable, not `className` on <html>, so it layers in as
+// one more token (`--font-display`) beside the existing `--font-sans`
+// rather than replacing the whole app's font wholesale.
+const spaceGrotesk = Space_Grotesk({
+  subsets: ['latin'],
+  variable: '--font-display',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'Burmy',
@@ -38,7 +52,7 @@ export default async function RootLayout({
   const nonce = requestHeaders.get(NONCE_HEADER) ?? '';
 
   return (
-    <html lang="en" className={themeClass(theme)} suppressHydrationWarning>
+    <html lang="en" className={cn(themeClass(theme), spaceGrotesk.variable)} suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <StyleNonce nonce={nonce} />
         {children}

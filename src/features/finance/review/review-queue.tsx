@@ -1,10 +1,13 @@
 'use client';
 
-import { ChevronDown } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { FilterBar } from '@/components/ui/filter-bar';
+import { FilterChip } from '@/components/ui/filter-chip';
+import { FilterSelect } from '@/components/ui/filter-select';
+import { PageHeader } from '@/components/ui/page-header';
 import {
   Select,
   SelectContent,
@@ -24,7 +27,7 @@ import { toast } from '@/components/ui/toast';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
 import type { FinanceCategory } from '@/server/db/finance/categories';
-import type { ReviewFilters, ReviewTransaction } from '@/server/db/finance/transactions';
+import type { ReviewFilters, ReviewTransaction, StatusFacetCounts } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, type ManualTransactionType } from '@/server/finance/classify/manual';
 import {
   bulkUpdateCategoryAction,
@@ -48,6 +51,9 @@ const STATUS_LABELS: Record<string, string> = {
   confirmed: 'Confirmed',
   all: 'All',
 };
+
+/** Worklist order — the default (`needs_review`) leads, unlike Transactions' browser ordering. */
+const STATUS_CHIP_ORDER = ['needs_review', 'auto', 'confirmed', 'all'] as const;
 
 /** Same tone convention `transactions-table.tsx` already uses — one visual language for review_status everywhere it appears. */
 const STATUS_TONE: Record<string, StatusTone> = {
@@ -75,10 +81,12 @@ export function ReviewQueue({
   transactions,
   categories,
   filters,
+  statusCounts,
 }: {
   readonly transactions: readonly ReviewTransaction[];
   readonly categories: readonly FinanceCategory[];
   readonly filters: ReviewFilters;
+  readonly statusCounts: StatusFacetCounts;
 }): React.ReactElement {
   const router = useRouter();
   const pathname = usePathname();
@@ -96,14 +104,6 @@ export function ReviewQueue({
   const [bulkCategoryId, setBulkCategoryId] = useState<string>('');
   const [bulkRemember, setBulkRemember] = useState(false);
   const [pending, startTransition] = useTransition();
-
-  // Open by default only when a non-default filter is already narrowing the
-  // list — otherwise the common case (the plain needs_review queue, usually
-  // one or two rows) starts with no toolbar at all to look past.
-  const hasActiveFilter = Boolean(
-    (filters.status && filters.status !== 'needs_review') || filters.categoryId || filters.transactionType,
-  );
-  const [filtersOpen, setFiltersOpen] = useState(hasActiveFilter);
 
   // A filter change (URL navigation) or a `router.refresh()` after a mutation
   // both deliver a NEW `transactions` array reference here.
@@ -184,58 +184,65 @@ export function ReviewQueue({
   }
 
   return (
-    <div className="mt-8 space-y-4">
-      <div>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setFiltersOpen((prev) => !prev)}
-          aria-expanded={filtersOpen}
-          className="text-muted-foreground -ml-2 h-8"
-        >
-          Filters
-          <ChevronDown className={`size-3.5 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
-        </Button>
+    <div className="space-y-8">
+      {/* Owned here, not by the page — the count beside the title is the
+          number of rows LEFT to review, which falls as the owner confirms
+          them and so only exists as client state. See the page's own comment. */}
+      <PageHeader
+        title="Review"
+        // Suppressed when empty: the empty state below already says it, and
+        // "0 transactions to review" beside a heading, directly above
+        // "Nothing here, you're caught up," was the same sentence twice.
+        {...(rows.length === 0
+          ? {}
+          : { meta: <span>{`${rows.length} transaction${rows.length === 1 ? '' : 's'} to review`}</span> })}
+      />
 
-        {filtersOpen ? (
-          <div className="mt-2 flex flex-wrap items-end gap-3">
-            <FilterSelect
-              label="Status"
-              value={filters.status ?? 'needs_review'}
-              onChange={(value) => setFilter('status', value)}
-              options={[
-                ['needs_review', STATUS_LABELS.needs_review!],
-                ['auto', STATUS_LABELS.auto!],
-                ['confirmed', STATUS_LABELS.confirmed!],
-                ['all', STATUS_LABELS.all!],
-              ]}
-            />
-            <FilterSelect
-              label="Category"
-              value={filters.categoryId ?? 'all'}
-              onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
-              options={[
-                ['all', 'All categories'],
-                ['uncategorized', 'Uncategorized'],
-                ...categories.map((c) => [c.id, c.name] as [string, string]),
-              ]}
-            />
-            <FilterSelect
-              label="Type"
-              value={filters.transactionType ?? 'all'}
-              onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
-              options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
-            />
-          </div>
-        ) : null}
+      {/* Always visible. These three selects used to hide behind a "Filters"
+          disclosure — a click to reveal three controls that fit on one line
+          and that the owner is here to use. Nothing on this row is worth
+          concealing, and every other filter row in the app is open. */}
+      <FilterBar>
+        <FilterSelect
+          label="Category"
+          value={filters.categoryId ?? 'all'}
+          onChange={(value) => setFilter('category', value === 'all' ? undefined : value)}
+          options={[
+            ['all', 'All categories'],
+            ['uncategorized', 'Uncategorized'],
+            ...categories.map((c) => [c.id, c.name] as [string, string]),
+          ]}
+        />
+        <FilterSelect
+          label="Type"
+          value={filters.transactionType ?? 'all'}
+          onChange={(value) => setFilter('type', value === 'all' ? undefined : value)}
+          options={[['all', 'All types'], ...MANUAL_TRANSACTION_TYPES.map((t) => [t, TYPE_LABELS[t]!] as [string, string])]}
+        />
+      </FilterBar>
+
+      {/* Status is CHIPS here for the same reason as on Transactions: four
+          short labels with a faceted count worth seeing at a glance. Note
+          the default is `needs_review`, not `all` — Review is a worklist,
+          not a browser. */}
+      <div className="flex flex-wrap gap-2">
+        {STATUS_CHIP_ORDER.map((value) => (
+          <FilterChip
+            key={value}
+            label={STATUS_LABELS[value]!}
+            count={statusCounts[value]}
+            active={(filters.status ?? 'needs_review') === value}
+            onClick={() => setFilter('status', value)}
+          />
+        ))}
       </div>
 
       {rows.length === 0 ? (
-        <p className="text-muted-foreground mt-8 text-sm">Nothing here. You&apos;re caught up.</p>
+        <p className="text-muted-foreground text-sm">Nothing here. You&apos;re caught up.</p>
       ) : (
         <>
           {selected.size > 0 ? (
-            <div className="bg-muted/50 flex items-center gap-2 rounded-md border p-3 text-sm">
+            <div className="bg-muted/50 flex items-center gap-2 rounded-md p-3 text-sm">
               <span>{selected.size} selected</span>
               <Select value={bulkCategoryId} onValueChange={setBulkCategoryId}>
                 <SelectTrigger aria-label="Category for selected transactions" className="h-8 w-48">
@@ -376,36 +383,6 @@ export function ReviewQueue({
           </Table>
         </>
       )}
-    </div>
-  );
-}
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly options: readonly [string, string][];
-}): React.ReactElement {
-  return (
-    <div className="space-y-1">
-      <span className="text-muted-foreground block text-xs">{label}</span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={label} className="h-8 w-44">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(([optionValue, optionLabel]) => (
-            <SelectItem key={optionValue} value={optionValue}>
-              {optionLabel}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
     </div>
   );
 }

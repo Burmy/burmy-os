@@ -64,7 +64,7 @@ export default defineConfig({
 
     coverage: {
       provider: 'v8',
-      include: ['src/server/finance/**'],
+      include: ['src/server/finance/**', 'src/server/games/**'],
       reporter: ['text', 'html'],
     },
   },

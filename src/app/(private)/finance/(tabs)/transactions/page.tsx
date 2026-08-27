@@ -1,5 +1,8 @@
 import type { Metadata } from 'next';
+import { Download } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/page-header';
 import { TransactionsTable } from '@/features/finance/transactions/transactions-table';
 import { parseLedgerFilters } from '@/features/finance/transactions/filters';
 import { requireOwner } from '@/server/auth/owner';
@@ -79,13 +82,47 @@ export default async function TransactionsPage({
 
   const yearOptions = years.length > 0 ? years : [filters.year];
 
+  const exportParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(raw)) {
+    if (key !== 'page' && value) exportParams.set(key, value);
+  }
+  const exportHref = `/finance/transactions/export?${exportParams.toString()}`;
+
   return (
-    <div>
-      <h1 className="text-xl font-semibold">Transactions</h1>
-      <p className="text-muted-foreground mt-1 text-sm">
-        The complete transaction ledger behind the monthly grid — search, filter, correct history, and
-        export.
-      </p>
+    <div className="space-y-8">
+      {/* Export is a PAGE ACTION, so it belongs in the header beside the
+          title like Add game and Import statement — not the 23px underlined
+          link buried in the meta row it used to be. Built here rather than
+          in the client table because this Server Component already holds
+          every raw search param the export needs. `page` is dropped: the
+          export always reflects the whole current filter, never the
+          on-screen page (see `listTransactionsForExport`). */}
+      <PageHeader
+        title="Transactions"
+        // Rendered here rather than in the client table because this Server
+        // Component already awaits `summary` (above) — the table receives the
+        // same object, so neither placement costs a query, and the header
+        // belongs to the page.
+        meta={
+          <>
+            <span>
+              {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
+            </span>
+            {summary.needsReviewCount > 0 ? <span>{summary.needsReviewCount} need review</span> : null}
+          </>
+        }
+        actions={
+          // Default (solid) variant, matching Add game and Import statement
+          // — it's this page's one primary action, so it gets the same
+          // weight theirs do rather than the quieter `outline` fill.
+          <Button asChild>
+            <a href={exportHref}>
+              <Download className="size-4" />
+              Export
+            </a>
+          </Button>
+        }
+      />
 
       <TransactionsTable
         page={ledgerPage}

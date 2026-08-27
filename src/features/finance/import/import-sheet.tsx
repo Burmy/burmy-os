@@ -86,7 +86,10 @@ export function ImportSheet({
   return (
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetTrigger asChild>
-        <Button size="sm">
+        {/* No `size` override — this is a page-level header action like Add
+            game and Export, and every interactive control in the app now
+            uses the one shared default height. */}
+        <Button>
           <FileUp className="size-4" />
           Import statement
         </Button>
@@ -144,7 +147,7 @@ export function ImportSheet({
                     <li key={imp.id}>
                       <Link
                         href={`/finance/import/${imp.id}`}
-                        className="hover:bg-muted/50 flex items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors"
+                        className="bg-card hover:bg-muted/50 flex items-center justify-between rounded-md px-3 py-2 text-sm transition-colors"
                       >
                         <span>{imp.originalFilename}</span>
                         <span className="text-muted-foreground text-xs">{imp.rowCount} rows</span>

@@ -234,12 +234,39 @@ export function normalizeMerchant(
 }
 
 /**
- * The matching key from an ALREADY-normalized merchant name — extracted so M7
- * can rederive it from `finance_transactions.normalized_merchant` (which is
- * persisted; `merchant_key` itself is not) when the owner opts to remember a
- * category correction. Same rule `normalizeMerchant` uses internally: strip
- * everything but letters and digits.
+ * The matching key from an ALREADY-normalized merchant name — rederived from
+ * `finance_transactions.normalized_merchant` (which is persisted;
+ * `merchant_key` itself is not) whenever the owner opts to remember a category
+ * correction. Same rule `normalizeMerchant` uses internally: strip everything
+ * but letters and digits.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `.toUpperCase()` IS LOAD-BEARING. WITHOUT IT THIS FUNCTION SILENTLY COLLAPSES
+ * EVERY HAND-TYPED MERCHANT TO ITS CAPITAL LETTERS.
+ *
+ * The name says "already-normalized", and for a bank-imported description that
+ * is true — `normalizeMerchant` upper-cases before calling this, and CSV
+ * descriptions arrive in caps anyway. But the ledger's inline merchant editor
+ * lets the owner RETYPE a merchant in any case, and that value lands in the
+ * same column this function reads.
+ *
+ * With a bare `[^A-Z0-9]` strip, "Petco" became `"P"`. So did "Paycheck",
+ * "Payment", "Parking", "Pizza" and "Pie" — 86 transactions across 8 distinct
+ * merchants collapsing onto one key, with "Cava"/"Chatgpt"/"Chipotle"/"Claude"
+ * doing the same on `"C"` and "Steam"/"Starbucks"/"Stocks" on `"S"`.
+ *
+ * Nothing had broken yet only because merchant memory is written just when the
+ * owner ticks "remember", and they had never happened to tick it on a
+ * hand-typed merchant: all 184 stored keys came from ALL-CAPS bank
+ * descriptions, where upper-casing is a no-op. The first "remember Petco as
+ * Pets" would have taught the app that every future `P`-keyed merchant —
+ * including the PAYCHECK — was Pets.
+ *
+ * Verified before the fix: 199 merchants produced a wrong key, and NONE of them
+ * were in `finance_merchant_memory`, so correcting this moves no stored row and
+ * needs no migration.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function merchantKeyFrom(normalizedMerchant: string): string {
-  return normalizedMerchant.replace(/[^A-Z0-9]/g, '');
+  return normalizedMerchant.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }

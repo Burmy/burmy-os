@@ -1,0 +1,1 @@
+ALTER TABLE "game_sync_runs" ADD COLUMN "last_game_id" uuid;

@@ -107,9 +107,14 @@ export function Toaster(): React.ReactElement {
         <div
           key={item.id}
           className={cn(
-            'pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-md border p-3 shadow-sm',
+            // Borderless like every other surface; the shadow is what
+            // separates this floating layer from the page behind it. The
+            // error variant keeps a destructive ring rather than a full
+            // border — still a distinct signal, without reintroducing the
+            // box chrome the rest of the app just shed.
+            'pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-md p-3 shadow-md',
             'bg-popover text-popover-foreground',
-            item.kind === 'error' && 'border-destructive/50',
+            item.kind === 'error' && 'ring-destructive/40 ring-1',
           )}
         >
           {item.kind === 'success' ? (
@@ -124,7 +129,7 @@ export function Toaster(): React.ReactElement {
             type="button"
             aria-label="Dismiss"
             onClick={() => onDismiss(item.id)}
-            className="text-muted-foreground hover:text-foreground -m-1 shrink-0 rounded p-1"
+            className="text-muted-foreground hover:text-foreground -m-1 shrink-0 rounded-md p-1"
           >
             <X className="size-3.5" />
           </button>

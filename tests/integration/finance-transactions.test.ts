@@ -71,6 +71,7 @@ interface SeedTxn {
   readonly amountCents?: number;
   readonly date?: string;
   readonly description?: string;
+  /** `null` is meaningfully different from omitted: omitted takes the default, `null` seeds a merchant-less row. */
   readonly normalizedMerchant?: string | null;
   readonly transactionType?: string;
   readonly typeSource?: string;
@@ -90,7 +91,7 @@ async function seedTransaction(options: SeedTxn): Promise<string> {
        "categorization_source", "counterpart_transaction_id", "dedupe_key")
     values
       (${options.ownerId}, ${options.accountId}, ${options.date ?? '2026-05-15'},
-       ${options.description ?? 'TEST MERCHANT'}, ${options.normalizedMerchant ?? 'TEST MERCHANT'},
+       ${options.description ?? 'TEST MERCHANT'}, ${options.normalizedMerchant === undefined ? 'TEST MERCHANT' : options.normalizedMerchant},
        ${options.amountCents ?? 1000}, ${options.transactionType ?? 'expense'},
        ${options.typeSource ?? 'default'}, ${options.reviewStatus ?? 'confirmed'},
        ${options.categoryId ?? null}, ${options.categorizationSource ?? null},
@@ -259,14 +260,23 @@ describe('getLedgerSummary', () => {
     expect(summary.needsReviewCount).toBe(2);
   });
 
-  it('excludedCount is a plain row count — both legs of a linked pair count separately, no netting', async () => {
+  /**
+   * Replaces a test that asserted `getLedgerSummary().excludedCount === 2` for
+   * exactly this fixture. That field is gone — the Transactions meta line that
+   * rendered it ("N transfer/card payment transactions excluded from Monthly")
+   * was removed as noise, and keeping the column would have left dead SQL.
+   *
+   * What is worth guarding survives: both legs of a linked pair are real,
+   * separate rows, and `totalCount` counts them as two. Anything that later
+   * wants a DOLLAR figure for excluded rows starts here and must read
+   * `getLedgerSummary`'s doc comment first — a signed `SUM` over this fixture
+   * is $0 and `SUM(ABS(...))` is $400, and neither is the $200 that actually
+   * moved.
+   */
+  it('counts both legs of a linked pair as separate rows', async () => {
     const owner = await makeOwner('owner@burmy.test');
     const checkingId = await makeAccountId(owner, 'checking', 'Checking');
     const cardId = await makeAccountId(owner, 'credit_card', 'Card');
-    // Deliberately no dollar amount alongside this count — see the
-    // getLedgerSummary() doc comment: a pair is two rows for one real
-    // movement of money, and this page does not attempt to net them back
-    // down to the single real amount, by owner decision.
     await seedTransaction({
       ownerId: owner,
       accountId: checkingId,
@@ -285,7 +295,7 @@ describe('getLedgerSummary', () => {
     });
 
     const summary = await transactions.getLedgerSummary(owner, { year: 2026 });
-    expect(summary.excludedCount).toBe(2);
+    expect(summary.totalCount).toBe(2);
   });
 
 });
@@ -549,5 +559,149 @@ describe('listTransactionsForExport', () => {
     const { rows } = await transactions.listTransactionsForExport(alice, { year: 2026 });
     expect(rows).toHaveLength(1);
     expect(rows[0]?.accountId).toBe(aliceAccount);
+  });
+});
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * RETROACTIVE MERCHANT RULES.
+ *
+ * A categorization decision used to apply only forward, which left ~19% of the
+ * owner's real spending ($24k across 190 transactions) parked in "Other" —
+ * fixing it meant editing every row by hand and doing it again next month.
+ *
+ * These rewrite history, so what the preview promises and what the apply does
+ * must match exactly. The split between "will move" and "already categorized"
+ * is the whole safety model: BUC-EE'S is legitimately Food AND Gas, and 829 of
+ * 961 categorized rows were filed by hand.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('previewMerchantRule', () => {
+  it('finds a merchant other uncategorized transactions and excludes the subject itself', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const gaming = await categories.createCategory(owner, { name: 'Gaming', slug: 'gaming', kind: 'spending' });
+
+    const subject = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', categoryId: gaming.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', date: '2026-01-02' });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', date: '2026-01-03' });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Netflix' });
+
+    const preview = await transactions.previewMerchantRule(owner, subject, gaming.id, null);
+
+    expect(preview?.willMove).toHaveLength(2);
+    expect(preview?.conflicting).toHaveLength(0);
+    expect(preview?.willMove.map((r) => r.id)).not.toContain(subject);
+  });
+
+  /**
+   * The BUC-EE'S case, which is why the preview has two lists at all. A row
+   * already filed under a real category must never be silently swept up.
+   */
+  it('separates rows already filed under a different category', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const gas = await categories.createCategory(owner, { name: 'Gas', slug: 'gas', kind: 'spending' });
+    const food = await categories.createCategory(owner, { name: 'Food', slug: 'food', kind: 'spending' });
+
+    const subject = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: "BUC-EE'S", categoryId: gas.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: "BUC-EE'S", date: '2026-02-02' });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: "BUC-EE'S", date: '2026-02-03', categoryId: food.id });
+
+    const preview = await transactions.previewMerchantRule(owner, subject, gas.id, null);
+
+    expect(preview?.willMove).toHaveLength(1);
+    expect(preview?.conflicting).toHaveLength(1);
+    expect(preview?.conflicting[0]?.categoryName).toBe('Food');
+  });
+
+  /** A row already where it is being sent is not a pending change. */
+  it('omits rows already in the target category', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const gaming = await categories.createCategory(owner, { name: 'Gaming', slug: 'gaming', kind: 'spending' });
+
+    const subject = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', categoryId: gaming.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', date: '2026-01-02', categoryId: gaming.id });
+
+    const preview = await transactions.previewMerchantRule(owner, subject, gaming.id, null);
+    expect(preview?.willMove).toHaveLength(0);
+    expect(preview?.conflicting).toHaveLength(0);
+  });
+
+  /**
+   * Matching is on `merchantKeyFrom`, which strips punctuation and case. This
+   * is the reason that function had to be fixed first: before it upper-cased,
+   * "Steam" and "Starbucks" both keyed to "S" and would have matched here.
+   */
+  it('matches on the normalized key, not raw string equality', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const gaming = await categories.createCategory(owner, { name: 'Gaming', slug: 'gaming', kind: 'spending' });
+
+    const subject = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', categoryId: gaming.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'STEAM', date: '2026-01-02' });
+    // Would have collided on the old single-capital key.
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Starbucks', date: '2026-01-03' });
+
+    const preview = await transactions.previewMerchantRule(owner, subject, gaming.id, null);
+
+    expect(preview?.willMove).toHaveLength(1);
+    expect(preview?.willMove[0]?.originalDescription).toBeDefined();
+  });
+
+  /**
+   * ───────────────────────────────────────────────────────────────────────────
+   * THE CASE THIS FEATURE ACTUALLY EXISTS FOR, and the one an earlier draft got
+   * wrong. Five Steam charges sat in "Other" — which IS a category, so an
+   * "uncategorized vs everything else" split put all five in the unticked
+   * column and made the owner tick each one, defeating the point of a rule.
+   *
+   * A row in the category the subject just LEFT is following the same
+   * correction that was already made, so it belongs in the pre-ticked list.
+   * ───────────────────────────────────────────────────────────────────────────
+   */
+  it('pre-selects rows sitting in the category being corrected away from', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const other = await categories.createCategory(owner, { name: 'Other', slug: 'other', kind: 'spending' });
+    const gaming = await categories.createCategory(owner, { name: 'Gaming', slug: 'gaming', kind: 'spending' });
+    const shopping = await categories.createCategory(owner, { name: 'Shopping', slug: 'shopping', kind: 'spending' });
+
+    // The subject: just moved from Other to Gaming.
+    const subject = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', categoryId: gaming.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', date: '2026-01-02', categoryId: other.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', date: '2026-01-03', categoryId: other.id });
+    await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: 'Steam', date: '2026-01-04', categoryId: shopping.id });
+
+    const preview = await transactions.previewMerchantRule(owner, subject, gaming.id, other.id);
+
+    // The two still in Other follow the correction; the Shopping one does not.
+    expect(preview?.willMove).toHaveLength(2);
+    expect(preview?.conflicting).toHaveLength(1);
+    expect(preview?.conflicting[0]?.categoryName).toBe('Shopping');
+  });
+
+  it('never reaches across owners', async () => {
+    const mine = await makeOwner('mine@burmy.test');
+    const theirs = await makeOwner('theirs@burmy.test');
+    const myAccount = await makeAccountId(mine);
+    const theirAccount = await makeAccountId(theirs);
+    const gaming = await categories.createCategory(mine, { name: 'Gaming', slug: 'gaming', kind: 'spending' });
+
+    const subject = await seedTransaction({ ownerId: mine, accountId: myAccount, normalizedMerchant: 'Steam', categoryId: gaming.id });
+    await seedTransaction({ ownerId: theirs, accountId: theirAccount, normalizedMerchant: 'Steam' });
+
+    const preview = await transactions.previewMerchantRule(mine, subject, gaming.id, null);
+    expect(preview?.willMove).toHaveLength(0);
+  });
+
+  it('returns null for a transaction with no merchant to key on', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const accountId = await makeAccountId(owner);
+    const gaming = await categories.createCategory(owner, { name: 'Gaming', slug: 'gaming', kind: 'spending' });
+    const subject = await seedTransaction({ ownerId: owner, accountId, normalizedMerchant: null, categoryId: gaming.id });
+
+    expect(await transactions.previewMerchantRule(owner, subject, gaming.id, null)).toBeNull();
   });
 });

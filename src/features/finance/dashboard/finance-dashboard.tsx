@@ -2,8 +2,13 @@
 
 import { useState } from 'react';
 
-import { Button } from '@/components/ui/button';
 import { formatPercent } from '@/components/finance/format-percent';
+import { FilterBar, FilterField } from '@/components/ui/filter-bar';
+import { PageHeader } from '@/components/ui/page-header';
+import { SegmentedToggle } from '@/components/ui/segmented-toggle';
+import { Section } from '@/components/ui/section';
+import { StatCard } from '@/components/ui/stat-card';
+import { StatCardGrid } from '@/components/ui/stat-card-grid';
 import type { TopExpenseRow } from '@/server/db/finance/grid';
 import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
 import type {
@@ -27,25 +32,6 @@ import { ComparisonIndicator } from './comparison-indicator';
 import { InsightsSection } from './insights-section';
 import { LargestExpensesList } from './largest-expenses-list';
 import { MonthNavigator } from './month-navigator';
-import { StatCard } from './stat-card';
-
-function ChartCard({
-  title,
-  subtitle,
-  children,
-}: {
-  readonly title: string;
-  readonly subtitle?: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="rounded-lg border bg-card p-5">
-      <h2 className="text-sm font-medium">{title}</h2>
-      {subtitle ? <p className="text-muted-foreground text-xs">{subtitle}</p> : null}
-      <div className="mt-3">{children}</div>
-    </div>
-  );
-}
 
 export interface FinanceDashboardProps {
   readonly year: number;
@@ -56,6 +42,8 @@ export interface FinanceDashboardProps {
   readonly actions: React.ReactNode;
   readonly summary: MonthSummary;
   readonly comparison: MonthComparison | null;
+  /** The same three metrics against a trailing 12-month average — see `compareToBaseline`. */
+  readonly baseline: MonthComparison | null;
   readonly savingsRatePercent: number | null;
   readonly avgDailySpendingCents: number;
   readonly avgTransactionCents: number | null;
@@ -80,6 +68,18 @@ export interface FinanceDashboardProps {
 }
 
 /**
+ * Sections inside a dashboard sit 20px apart — the same distance as the gap
+ * BETWEEN cards in a `StatCardGrid`, so the whole page runs on one spacing
+ * value instead of switching at every section boundary.
+ *
+ * The page-level rhythm ABOVE this (title -> filter row -> content) stays 32px.
+ * That belongs to the shared page contract (`PageHeader`/`FilterBar`), not to
+ * either dashboard, and separating a page's chrome from its content is a
+ * different job from separating two blocks of that content.
+ */
+const SECTION_STACK = 'space-y-5';
+
+/**
  * Top-level composition only — every number here arrives already computed
  * (`page.tsx` does the fetching and the pure-function calls, matching how it
  * already builds the M8 grid itself). This component's only own state is
@@ -94,6 +94,7 @@ export function FinanceDashboard({
   actions,
   summary,
   comparison,
+  baseline,
   savingsRatePercent,
   avgDailySpendingCents,
   avgTransactionCents,
@@ -108,44 +109,39 @@ export function FinanceDashboard({
   const isCompletedYear = ytd.summary.monthsElapsed >= 12;
 
   return (
-    <div className="mt-4 space-y-4">
-      {/* One toolbar: title, month/year navigation, Month/This Year mode, and
-          the page-level actions (Transactions, Import statement) that used to
-          sit in their own separate row above this one. */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-card px-4 py-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-lg font-semibold">Finance</h1>
+    <div className="space-y-8">
+      {/* The header carries only page ACTIONS and the display-mode toggle.
+          The period picker is a FILTER — it changes which data the page
+          shows — so it lives in the filter row below, exactly where
+          Transactions puts its own Year/Month selects. Placement is decided
+          by what a control does, not by which page it happens to be on;
+          this used to be the app's most visible inconsistency (Monthly's
+          period picker top-right, Transactions' identical one underneath). */}
+      <PageHeader title="Finance" actions={actions} />
+
+      {/* Every CONTROL lives on this one row; the header keeps only the
+          page's primary action. Filters sit left, the display-mode toggle
+          right — it isn't a filter (it changes how the same data is shown,
+          not which data), so it reads as distinct while still living with
+          the other controls instead of floating up beside the title. */}
+      <FilterBar className="justify-between">
+        <FilterField label={view === 'year' ? 'Year' : 'Period'}>
           <MonthNavigator year={year} month={month} years={years} mode={view} />
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-md border p-0.5">
-            <Button
-              type="button"
-              size="sm"
-              variant={view === 'month' ? 'secondary' : 'ghost'}
-              className="h-7 px-2.5"
-              onClick={() => setView('month')}
-            >
-              Month
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={view === 'year' ? 'secondary' : 'ghost'}
-              className="h-7 px-2.5"
-              onClick={() => setView('year')}
-            >
-              This Year
-            </Button>
-          </div>
-          <div className="bg-border mx-1 hidden h-6 w-px sm:block" aria-hidden="true" />
-          {actions}
-        </div>
-      </div>
+        </FilterField>
+
+        <SegmentedToggle
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'month', label: 'Month' },
+            { value: 'year', label: 'This Year' },
+          ]}
+        />
+      </FilterBar>
 
       {view === 'month' ? (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        <div className={SECTION_STACK}>
+          <StatCardGrid>
             <StatCard
               label="Income"
               // `summary.incomeCents` is already sign-flipped to a positive display
@@ -153,17 +149,44 @@ export function FinanceDashboard({
               // would flip it AGAIN and print it negative. `formatInflow` is for raw,
               // still-negative stored values (a single transaction row); this isn't one.
               value={format(cents(summary.incomeCents), { signed: true })}
-              comparison={comparison ? <ComparisonIndicator comparison={comparison.income} previousLabel={previousMonthLabel} /> : null}
+              comparison={
+                // Stacked, not inline: two indicators side by side wrap
+                // mid-phrase in a narrow stat card. Last month first, because
+                // it is the one you can hold in your head; the baseline sits
+                // under it as the answer to "but is that normal?"
+                <div className="flex flex-col gap-1">
+                  {comparison ? <ComparisonIndicator comparison={comparison.income} previousLabel={previousMonthLabel} /> : null}
+                  {baseline ? <ComparisonIndicator comparison={baseline.income} previousLabel="12-mo avg" /> : null}
+                </div>
+              }
             />
             <StatCard
               label="Expenses"
               value={format(cents(summary.expenseCents))}
-              comparison={comparison ? <ComparisonIndicator comparison={comparison.expense} previousLabel={previousMonthLabel} /> : null}
+              comparison={
+                // Stacked, not inline: two indicators side by side wrap
+                // mid-phrase in a narrow stat card. Last month first, because
+                // it is the one you can hold in your head; the baseline sits
+                // under it as the answer to "but is that normal?"
+                <div className="flex flex-col gap-1">
+                  {comparison ? <ComparisonIndicator comparison={comparison.expense} previousLabel={previousMonthLabel} /> : null}
+                  {baseline ? <ComparisonIndicator comparison={baseline.expense} previousLabel="12-mo avg" /> : null}
+                </div>
+              }
             />
             <StatCard
               label="Net"
               value={format(cents(summary.netCents), { signed: true })}
-              comparison={comparison ? <ComparisonIndicator comparison={comparison.net} previousLabel={previousMonthLabel} /> : null}
+              comparison={
+                // Stacked, not inline: two indicators side by side wrap
+                // mid-phrase in a narrow stat card. Last month first, because
+                // it is the one you can hold in your head; the baseline sits
+                // under it as the answer to "but is that normal?"
+                <div className="flex flex-col gap-1">
+                  {comparison ? <ComparisonIndicator comparison={comparison.net} previousLabel={previousMonthLabel} /> : null}
+                  {baseline ? <ComparisonIndicator comparison={baseline.net} previousLabel="12-mo avg" /> : null}
+                </div>
+              }
               {...(summary.netCents < 0 ? { valueClassName: 'text-destructive' } : {})}
             />
             <StatCard
@@ -177,24 +200,24 @@ export function FinanceDashboard({
               hint={isCurrentMonth ? 'So far this month' : 'Daily average'}
             />
             <StatCard label="Transactions" value={String(summary.transactionCount)} />
-          </div>
+          </StatCardGrid>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <ChartCard title="Income vs Expenses" subtitle="Most recent months of activity">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <Section title="Income vs Expenses" description="Most recent months of activity">
               <IncomeExpenseTrendChart points={trend} />
-            </ChartCard>
-            <ChartCard title="Net cash flow" subtitle="Income minus expenses, per month">
+            </Section>
+            <Section title="Net cash flow" description="Income minus expenses, per month">
               <NetCashflowChart points={trend} />
-            </ChartCard>
+            </Section>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <ChartCard title="Spending by category" subtitle="Selected month, largest first">
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <Section title="Spending by category" description="Selected month, largest first">
               <CategoryBreakdownChart categories={categoryBreakdown} />
-            </ChartCard>
-            <ChartCard title="Category trends" subtitle="Top categories, trailing months">
+            </Section>
+            <Section title="Category trends" description="Top categories, trailing months">
               <CategoryTrendChart series={categoryTrend} />
-            </ChartCard>
+            </Section>
           </div>
 
           <InsightsSection
@@ -209,16 +232,13 @@ export function FinanceDashboard({
             bestNetMonth={insights.bestNetMonth}
           />
 
-          <div className="rounded-lg border bg-card p-5">
-            <h2 className="text-sm font-medium">Largest expenses this month</h2>
-            <div className="mt-3">
-              <LargestExpensesList expenses={topExpenses} year={year} month={month} />
-            </div>
-          </div>
+          <Section title="Largest expenses this month">
+            <LargestExpensesList expenses={topExpenses} year={year} month={month} />
+          </Section>
         </div>
       ) : (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <div className={SECTION_STACK}>
+          <StatCardGrid>
             <StatCard
               label={isCompletedYear ? 'Income' : 'YTD Income'}
               value={format(cents(ytd.summary.incomeCents), { signed: true })}
@@ -238,7 +258,7 @@ export function FinanceDashboard({
               value={ytd.summary.savingsRatePercent === null ? '—' : formatPercent(ytd.summary.savingsRatePercent)}
               {...(ytd.summary.savingsRatePercent === null ? { hint: 'No income yet' } : {})}
             />
-          </div>
+          </StatCardGrid>
 
           {ytd.summary.highestSpendingMonth ? (
             <p className="text-muted-foreground text-sm">
@@ -250,20 +270,20 @@ export function FinanceDashboard({
             </p>
           ) : null}
 
-          <ChartCard
+          <Section
             title={`${ytd.summary.year} income vs expenses`}
-            subtitle={isCompletedYear ? 'Every month this year' : 'Every month so far this year'}
+            description={isCompletedYear ? 'Every month this year' : 'Every month so far this year'}
           >
             <IncomeExpenseTrendChart points={ytd.trend} />
-          </ChartCard>
+          </Section>
 
-          <ChartCard title="Yearly breakdown" subtitle="Why one month cost more than another — Jan through Dec">
+          <Section title="Yearly breakdown" description="Why one month cost more than another — Jan through Dec">
             <YearlyBreakdownChart breakdown={ytd.yearlyBreakdown} />
-          </ChartCard>
+          </Section>
 
-          <ChartCard title="Spending by category" subtitle={`${ytd.summary.year}, largest first`}>
+          <Section title="Spending by category" description={`${ytd.summary.year}, largest first`}>
             <AnnualCategoryChart categories={ytd.annualCategories} totalCents={ytd.summary.expenseCents} />
-          </ChartCard>
+          </Section>
         </div>
       )}
     </div>

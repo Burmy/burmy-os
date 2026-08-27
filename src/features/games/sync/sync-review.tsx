@@ -1,0 +1,446 @@
+'use client';
+
+import Image from 'next/image';
+import { useRouter } from 'next/navigation';
+import { useState, useTransition } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { toast } from '@/components/ui/toast';
+import type { SyncChange, SyncRun } from '@/server/db/games/sync';
+import { formatHours, hours } from '@/server/games/hours';
+import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import type { GamePlatform } from '@/server/games/taxonomy';
+import { commitSyncRunAction, setSyncChangeSelectedAction } from './sync-actions';
+
+/**
+ * `new_game` changes at or above this count get a visibly prominent count
+ * and warning in the "New games" group header below — a curated ~160-game
+ * PlayStation library can have PSN report back several hundred demos and PS
+ * Plus claims, and the owner asked for that volume to be impossible to miss
+ * BEFORE approving a run, not just documented as a risk. Source-agnostic on
+ * purpose: nothing stops a large Steam library from crossing it too, and the
+ * warning is equally correct either way.
+ */
+const NEW_GAME_VOLUME_WARNING_THRESHOLD = 100;
+
+/**
+ * The sync review screen — the owner's last word before anything a sync run
+ * proposed reaches `games`. Shared verbatim between Steam and PSN runs
+ * (`run.source`): both engines produce the exact same `PlannedChange` shape
+ * (`sync-plan.ts` / `psn-plan.ts`), so this is one screen, not two — only
+ * the handful of source-specific words below (`sourceLabel`, the Links
+ * column, a field's display value) branch on `run.source` at all.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * SELECTION IS THE SAME OPTIMISTIC-PATCH-THEN-REVERT IDIOM AS FINANCE'S
+ * `ImportReviewTable` (`src/features/finance/import/review-table.tsx`): a
+ * checkbox flips local state immediately, then awaits the Server Action, and
+ * only patches back to the previous value if that action reports failure.
+ * There is no `Set`-based bulk-selection model anywhere in this codebase —
+ * this does not introduce one either.
+ *
+ * THE COMMIT BUTTON'S DISABLED STATE IS PLAIN `useState`, NOT `useOptimistic`.
+ * This codebase has a documented bug (see CLAUDE.md) where an assertion
+ * passed on optimistic state alone while the server write had not actually
+ * landed. `committing` here only ever reflects a real awaited response.
+ *
+ * `reconcile` changes are staged with `selected: false` by `appendSyncChanges`
+ * (`src/server/db/games/sync.ts`) and rendered exactly as given — this
+ * component never re-derives or overrides that default.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function SyncReview({
+  run,
+  changes: initialChanges,
+}: {
+  readonly run: SyncRun;
+  readonly changes: readonly SyncChange[];
+}): React.ReactElement {
+  const router = useRouter();
+  const [changes, setChanges] = useState(initialChanges);
+  const [pending, startTransition] = useTransition();
+  const [committing, setCommitting] = useState(false);
+
+  function patchChange(changeId: string, patch: Partial<SyncChange>): void {
+    setChanges((prev) => prev.map((change) => (change.id === changeId ? { ...change, ...patch } : change)));
+  }
+
+  function setSelected(changeId: string, selected: boolean): void {
+    const previous = changes.find((change) => change.id === changeId)?.selected ?? !selected;
+    patchChange(changeId, { selected });
+    startTransition(async () => {
+      const outcome = await setSyncChangeSelectedAction(changeId, selected);
+      if (!outcome.ok) {
+        toast.error(outcome.error);
+        patchChange(changeId, { selected: previous });
+      }
+    });
+  }
+
+  async function commit(): Promise<void> {
+    setCommitting(true);
+    const outcome = await commitSyncRunAction(run.id);
+    // Deliberately not reset to `false` on success: the button below
+    // navigates away immediately, and leaving it disabled (rather than
+    // clickable again for a fraction of a second) avoids a double-commit
+    // attempt racing the redirect.
+    if (!outcome.ok) {
+      setCommitting(false);
+      toast.error(outcome.error);
+      return;
+    }
+    // `skipped` counts a staged `new_game` change that turned out to already
+    // exist — a different run created it since this one was staged (see
+    // `commitSyncRun`'s doc comment). Surfaced so the owner sees "3 already
+    // existed" instead of silently getting fewer new games than approved.
+    if (outcome.skipped > 0) {
+      toast.success(
+        `Applied ${outcome.applied + outcome.created} change${outcome.applied + outcome.created === 1 ? '' : 's'} — ` +
+          `${outcome.skipped} new game${outcome.skipped === 1 ? '' : 's'} already existed and ${outcome.skipped === 1 ? 'was' : 'were'} skipped.`,
+      );
+    }
+    router.push('/games/library');
+  }
+
+  const sourceLabel = run.source === 'psn' ? 'PlayStation' : 'Steam';
+
+  if (changes.length === 0) {
+    return (
+      <div className="bg-card mt-8 max-w-md space-y-3 rounded-md p-6 text-sm">
+        <p className="font-medium">Nothing to review.</p>
+        <p className="text-muted-foreground">
+          This sync run found no changes — your library already matches {sourceLabel}.
+        </p>
+        <Button size="sm" onClick={() => router.push('/games/library')}>
+          Back to library
+        </Button>
+      </div>
+    );
+  }
+
+  const needsAttention = changes.filter((change) => change.kind === 'reconcile');
+  const newGames = changes.filter((change) => change.kind === 'new_game');
+  const fieldUpdates = changes.filter((change) => change.kind === 'field_update');
+  const links = changes.filter((change) => change.kind === 'link');
+
+  const selectedCount = changes.filter((change) => change.selected).length;
+  const disableApply = pending || committing || selectedCount === 0;
+
+  return (
+    <div className="space-y-8">
+      {needsAttention.length > 0 ? (
+        <ChangeGroup title="Needs attention" description="These need your review — nothing here applies automatically.">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">Select</TableHead>
+                <TableHead>Game</TableHead>
+                <TableHead>Details</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {needsAttention.map((change) => (
+                <TableRow key={change.id}>
+                  <SelectCell change={change} disabled={pending} onChange={setSelected} />
+                  <TableCell className="font-medium">{change.title}</TableCell>
+                  <TableCell className="text-muted-foreground">{reconcileDescription(change.payload)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </ChangeGroup>
+      ) : null}
+
+      {newGames.length > 0 ? (
+        <ChangeGroup
+          title={`New games (${newGames.length})`}
+          description={
+            newGames.length > NEW_GAME_VOLUME_WARNING_THRESHOLD
+              ? `${newGames.length} new games found — review carefully before applying. A full library mirror can include demos and claimed-but-unplayed titles.`
+              : 'Owned, not yet in your library.'
+          }
+          warn={newGames.length > NEW_GAME_VOLUME_WARNING_THRESHOLD}
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">Select</TableHead>
+                <TableHead className="w-14"></TableHead>
+                <TableHead>Title</TableHead>
+                <TableHead className="text-right">Hours</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {newGames.map((change) => {
+                const payload = parseNewGamePayload(change.payload);
+                return (
+                  <TableRow key={change.id}>
+                    <SelectCell change={change} disabled={pending} onChange={setSelected} />
+                    <TableCell>
+                      <NewGameCover coverUrl={payload.coverUrl} title={change.title} />
+                    </TableCell>
+                    <TableCell className="font-medium">{change.title}</TableCell>
+                    <TableCell className="tabular text-right">{formatFieldValue('hoursTenths', payload.hoursTenths)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </ChangeGroup>
+      ) : null}
+
+      {fieldUpdates.length > 0 ? (
+        <ChangeGroup title="Field updates" description={`${sourceLabel}'s numbers differ from what's stored.`}>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">Select</TableHead>
+                <TableHead>Title</TableHead>
+                <TableHead>Field</TableHead>
+                <TableHead>Change</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {fieldUpdates.map((change) => {
+                const payload = parseFieldUpdatePayload(change.payload);
+                return (
+                  <TableRow key={change.id}>
+                    <SelectCell change={change} disabled={pending} onChange={setSelected} />
+                    <TableCell className="font-medium">{change.title}</TableCell>
+                    <TableCell className="text-muted-foreground">{FIELD_LABELS[payload.field] ?? payload.field}</TableCell>
+                    <TableCell className="tabular">
+                      {formatFieldValue(payload.field, payload.from)} → {formatFieldValue(payload.field, payload.to)}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </ChangeGroup>
+      ) : null}
+
+      {links.length > 0 ? (
+        <ChangeGroup
+          title="Links"
+          description={`Matched to a ${run.source === 'psn' ? 'PlayStation title' : 'Steam app'} for the first time.`}
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-10">Select</TableHead>
+                <TableHead>Title</TableHead>
+                <TableHead>{run.source === 'psn' ? 'PlayStation IDs' : 'Steam app'}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {links.map((change) => {
+                const payload = parseLinkPayload(change.payload);
+                return (
+                  <TableRow key={change.id}>
+                    <SelectCell change={change} disabled={pending} onChange={setSelected} />
+                    <TableCell className="font-medium">{change.title}</TableCell>
+                    <TableCell className="text-muted-foreground">{formatLinkPayload(payload)}</TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </ChangeGroup>
+      ) : null}
+
+      <div className="bg-background sticky bottom-0 flex items-center gap-3 border-t py-3">
+        <Button onClick={commit} disabled={disableApply}>
+          {committing ? 'Applying…' : `Apply ${selectedCount} selected change${selectedCount === 1 ? '' : 's'}`}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ChangeGroup({
+  title,
+  description,
+  warn = false,
+  children,
+}: {
+  readonly title: string;
+  readonly description: string;
+  /** Renders the description in the app's standing "needs attention" amber, for a volume the owner should not skim past. */
+  readonly warn?: boolean;
+  readonly children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <section className="space-y-2">
+      <div>
+        <h2 className="text-base font-semibold">{title}</h2>
+        <p className={warn ? 'text-sm font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground text-sm'}>
+          {description}
+        </p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * A `new_game` change's cover thumbnail — real IGDB art when the enrichment
+ * phase (`advanceSyncEnrichmentAction`) found a HIGH-confidence match before
+ * this run reached the review screen, otherwise the same letter-tile
+ * fallback `game-card.tsx`/`top-games.tsx` already use for a game with no
+ * cover at all. Enrichment is asynchronous and best-effort (see that
+ * function's own "NEVER BLOCKS OR FAILS A SYNC" doc comment), so this cell
+ * showing a letter tile is an entirely normal outcome, not a bug — the
+ * owner can always add art by hand later, exactly as before enrichment
+ * existed.
+ */
+function NewGameCover({ coverUrl, title }: { readonly coverUrl: string | null; readonly title: string }): React.ReactElement {
+  return (
+    <div className="bg-muted relative h-14 w-[2.625rem] shrink-0 overflow-hidden rounded-md">
+      {coverUrl === null ? (
+        <span className="text-muted-foreground flex h-full items-center justify-center text-sm font-semibold" aria-hidden>
+          {title.charAt(0).toUpperCase()}
+        </span>
+      ) : (
+        <Image src={coverUrl} alt="" fill sizes="42px" className="object-cover" />
+      )}
+    </div>
+  );
+}
+
+function SelectCell({
+  change,
+  disabled,
+  onChange,
+}: {
+  readonly change: SyncChange;
+  readonly disabled: boolean;
+  readonly onChange: (changeId: string, selected: boolean) => void;
+}): React.ReactElement {
+  return (
+    <TableCell>
+      <Checkbox
+        aria-label={`Include ${change.title}`}
+        checked={change.selected}
+        disabled={disabled}
+        onCheckedChange={(state) => onChange(change.id, state === true)}
+      />
+    </TableCell>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payload parsing — display-only, deliberately permissive.
+//
+// `SyncChange.payload` is `Record<string, unknown>`: real staging shapes,
+// but not compile-time checked at this boundary. Unlike `commitSyncRun`'s own
+// whitelist (`src/server/db/games/sync.ts`), a malformed value here degrades
+// to a placeholder rather than throwing — this is a read-only review screen,
+// not the write path, so there is nothing to protect by refusing to render.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIELD_LABELS: Record<string, string> = {
+  hoursTenths: 'Hours',
+  achievementsUnlocked: 'Achievements unlocked',
+  achievementsTotal: 'Achievements total',
+  steamAppid: 'Steam app',
+  // PSN-only fields — see `planLinkedPsnGameChanges` in `psn-plan.ts`.
+  firstPlayedYear: 'First played',
+  platform: 'Platform',
+  lastPlayedAt: 'Last played',
+  platinum: 'Platinum',
+};
+
+function asNumber(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+/**
+ * A `field_update`'s `from`/`to` value, narrowed to the three primitive
+ * shapes a staged change ever actually carries: `hoursTenths`/achievement
+ * counts/`firstPlayedYear` are numbers, `platform`/`lastPlayedAt` are
+ * strings, and `platinum` (PSN-only — see `psn-plan.ts`) is a boolean.
+ * Anything else collapses to `null`, matching this section's "malformed
+ * payload degrades to a placeholder" rule.
+ */
+type FieldValue = number | string | boolean | null;
+
+function asFieldValue(value: unknown): FieldValue {
+  if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return value;
+  return null;
+}
+
+function formatFieldValue(field: string, value: FieldValue): string {
+  if (value === null) return '—';
+  if (field === 'hoursTenths' && typeof value === 'number') return formatHours(hours(value));
+  if (field === 'platform' && typeof value === 'string') {
+    return value in PLATFORM_LABELS ? PLATFORM_LABELS[value as GamePlatform] : value;
+  }
+  if (field === 'lastPlayedAt' && typeof value === 'string') {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+  }
+  if (field === 'platinum' && typeof value === 'boolean') return value ? 'Yes' : 'No';
+  return String(value);
+}
+
+function parseFieldUpdatePayload(payload: Record<string, unknown>): {
+  readonly field: string;
+  readonly from: FieldValue;
+  readonly to: FieldValue;
+} {
+  return {
+    field: typeof payload.field === 'string' ? payload.field : 'field',
+    from: asFieldValue(payload.from),
+    to: asFieldValue(payload.to),
+  };
+}
+
+function parseNewGamePayload(payload: Record<string, unknown>): {
+  readonly hoursTenths: number | null;
+  readonly coverUrl: string | null;
+} {
+  return {
+    hoursTenths: asNumber(payload.hoursTenths),
+    coverUrl: typeof payload.coverUrl === 'string' ? payload.coverUrl : null,
+  };
+}
+
+function parseLinkPayload(payload: Record<string, unknown>): {
+  readonly steamAppid: number | null;
+  readonly psnTitleId: string | null;
+  readonly psnNpCommunicationId: string | null;
+} {
+  return {
+    steamAppid: asNumber(payload.steamAppid),
+    psnTitleId: typeof payload.psnTitleId === 'string' ? payload.psnTitleId : null,
+    psnNpCommunicationId: typeof payload.psnNpCommunicationId === 'string' ? payload.psnNpCommunicationId : null,
+  };
+}
+
+/**
+ * A `link` change's identity value(s), formatted for display. A Steam link
+ * carries exactly one field (`steamAppid`); a PSN link can carry either or
+ * both `psnTitleId`/`psnNpCommunicationId` in the SAME change — see
+ * `planLinkedPsnGameChanges`'s doc comment in `psn-plan.ts` on why the
+ * played-title id and the trophy-title id can resolve in the same change —
+ * so both are shown when present rather than picking one.
+ */
+function formatLinkPayload(payload: ReturnType<typeof parseLinkPayload>): string {
+  if (payload.steamAppid !== null) return `#${payload.steamAppid}`;
+  const parts: string[] = [];
+  if (payload.psnTitleId !== null) parts.push(`Title ${payload.psnTitleId}`);
+  if (payload.psnNpCommunicationId !== null) parts.push(`Trophy ${payload.psnNpCommunicationId}`);
+  return parts.length > 0 ? parts.join(' · ') : '—';
+}
+
+function reconcileDescription(payload: Record<string, unknown>): string {
+  const newTotal = asNumber(payload.newTotalTenths);
+  const split = asNumber(payload.splitTenths);
+  if (newTotal === null || split === null) return 'Your year-by-year split no longer matches the new total.';
+  return `Your recorded years add up to ${formatFieldValue('hoursTenths', split)}, but the new total is ${formatFieldValue(
+    'hoursTenths',
+    newTotal,
+  )}. Rebalance the split on the game's page.`;
+}

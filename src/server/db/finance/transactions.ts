@@ -7,7 +7,7 @@
  */
 
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import { cache } from 'react';
 
 import { getDb } from '@/server/db';
@@ -287,6 +287,122 @@ export async function updateTransactionNote(
   if (!rows[0]) throw new NotFoundError('Transaction');
 }
 
+export interface MerchantRuleMatch {
+  readonly id: string;
+  readonly transactionDate: string;
+  readonly amountCents: number;
+  readonly originalDescription: string;
+  readonly categoryId: string | null;
+  readonly categoryName: string | null;
+}
+
+export interface MerchantRulePreview {
+  readonly merchantKey: string;
+  readonly normalizedMerchant: string;
+  /**
+   * Rows this rule moves without argument: uncategorized, or sitting in the
+   * very category the owner just moved the subject OUT of. Pre-selected.
+   */
+  readonly willMove: readonly MerchantRuleMatch[];
+  /**
+   * Rows filed under some THIRD category — neither the source nor the
+   * destination of the correction being made. NOT pre-selected; see this
+   * function's own doc comment for why that distinction is the safety story.
+   */
+  readonly conflicting: readonly MerchantRuleMatch[];
+}
+
+/**
+ * Every OTHER transaction sharing a merchant with `transactionId`, split by
+ * whether re-filing it would overwrite a real decision.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE SPLIT EXISTS, IN THE OWNER'S OWN DATA.
+ *
+ * "Apply this category to every transaction from this merchant" sounds
+ * unambiguous and is not. BUC-EE'S appears 9 times across Food AND Gas, both
+ * correct — it is a petrol station with a food hall. SHELL OIL and CIRCLE K
+ * split the same way; Planet Fitness spans Gym and Shopping. And 829 of 961
+ * categorized rows were filed by hand, so a blunt "apply to all" is aimed
+ * squarely at the owner's own deliberate work.
+ *
+ * So the preview never presents one undifferentiated count.
+ *
+ * `fromCategoryId` is what makes the split useful rather than merely safe. The
+ * real case is five Steam charges sitting in "Other" — Other IS a category, so
+ * a naive "uncategorized vs everything else" split would put all five in the
+ * unticked column and make the owner tick each one, defeating the entire point
+ * of a bulk rule. A row in the category the subject just LEFT is following the
+ * same correction the owner already made, so it is pre-ticked. A row in some
+ * unrelated third category is a different decision, and is not.
+ *
+ * MATCHING HAPPENS IN TYPESCRIPT, NOT SQL, on purpose. The key comes from
+ * `merchantKeyFrom`, and re-expressing that normalization as a Postgres
+ * `regexp_replace` would create a second definition of merchant identity that
+ * could drift from the first — exactly the split-brain `dedupe_key` vs
+ * `merchant_key` already warns about in CLAUDE.md. The candidate set is one
+ * owner's transactions with a merchant name (~1k rows here); if that ever grows
+ * enough to matter, persist `merchant_key` as a column rather than duplicating
+ * the rule.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function previewMerchantRule(
+  ownerId: string,
+  transactionId: string,
+  categoryId: string,
+  /** The category the subject was in immediately before this correction. `null` when it had none. */
+  fromCategoryId: string | null,
+): Promise<MerchantRulePreview | null> {
+  const [subject] = await getDb()
+    .select({ id: financeTransactions.id, normalizedMerchant: financeTransactions.normalizedMerchant })
+    .from(financeTransactions)
+    .where(and(eq(financeTransactions.id, transactionId), eq(financeTransactions.ownerId, ownerId)))
+    .limit(1);
+
+  if (!subject || subject.normalizedMerchant === null) return null;
+  const merchantKey = merchantKeyFrom(subject.normalizedMerchant);
+  if (merchantKey === '') return null;
+
+  const rows = await getDb()
+    .select({
+      id: financeTransactions.id,
+      transactionDate: financeTransactions.transactionDate,
+      amountCents: financeTransactions.amountCents,
+      originalDescription: financeTransactions.originalDescription,
+      normalizedMerchant: financeTransactions.normalizedMerchant,
+      categoryId: financeTransactions.categoryId,
+      categoryName: financeCategories.name,
+    })
+    .from(financeTransactions)
+    .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
+    .where(and(eq(financeTransactions.ownerId, ownerId), isNotNull(financeTransactions.normalizedMerchant)))
+    .orderBy(desc(financeTransactions.transactionDate));
+
+  const willMove: MerchantRuleMatch[] = [];
+  const conflicting: MerchantRuleMatch[] = [];
+
+  for (const row of rows) {
+    if (row.id === transactionId) continue;
+    if (row.normalizedMerchant === null || merchantKeyFrom(row.normalizedMerchant) !== merchantKey) continue;
+    // Already where it is being sent — nothing to change, and listing it as a
+    // pending change would overstate what the rule does.
+    if (row.categoryId === categoryId) continue;
+
+    const match: MerchantRuleMatch = {
+      id: row.id,
+      transactionDate: row.transactionDate,
+      amountCents: row.amountCents,
+      originalDescription: row.originalDescription,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+    };
+    if (row.categoryId === null || row.categoryId === fromCategoryId) willMove.push(match);
+    else conflicting.push(match);
+  }
+
+  return { merchantKey, normalizedMerchant: subject.normalizedMerchant, willMove, conflicting };
+}
+
 /**
  * Bulk category assignment. Deliberately the only bulk action, and
  * deliberately writes nothing to merchant memory — several unrelated
@@ -476,8 +592,56 @@ export async function listTransactionsLedger(
 export interface LedgerSummary {
   readonly totalCount: number;
   readonly needsReviewCount: number;
-  /** `transfer` + `credit_card_payment` rows in scope — excluded from every Monthly total. */
-  readonly excludedCount: number;
+  /**
+   * Per-status counts for the Status filter CHIPS, computed with every other
+   * filter applied but WITHOUT the status filter itself — see
+   * `statusFacetCounts` below for why that distinction is load-bearing.
+   */
+  readonly statusCounts: StatusFacetCounts;
+}
+
+export interface StatusFacetCounts {
+  readonly all: number;
+  readonly needs_review: number;
+  readonly auto: number;
+  readonly confirmed: number;
+}
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A FACET COUNT MUST NOT INCLUDE ITS OWN FILTER.
+ *
+ * These feed the Status filter chips, which render their count inline
+ * ("Needs review 12"). The count has to answer "how many rows would I see if
+ * I picked this status," so it applies every OTHER active filter (year,
+ * month, category, type, search) but deliberately drops the status condition.
+ *
+ * Reusing `ledgerConditions(ownerId, filters)` verbatim would be the obvious
+ * shortcut and is wrong: that helper applies `filters.reviewStatus`, so the
+ * moment the owner selects one status, every OTHER chip would count rows
+ * that are simultaneously required to be two different statuses and read
+ * `0`. The chips would look broken rather than merely inaccurate.
+ *
+ * Games' library already gets this right for the same reason — see
+ * `library-view.tsx`, whose `counts` map is built from all `games` rather
+ * than from the filtered set.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function statusFacetCounts(
+  ownerId: string,
+  conditionsWithoutStatus: ReturnType<typeof ledgerConditions>,
+): Promise<StatusFacetCounts> {
+  const [row] = await getDb()
+    .select({
+      all: sql<number>`count(*)::int`,
+      needs_review: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
+      auto: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'auto')::int`,
+      confirmed: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'confirmed')::int`,
+    })
+    .from(financeTransactions)
+    .where(and(...conditionsWithoutStatus));
+
+  return row ?? { all: 0, needs_review: 0, auto: 0, confirmed: 0 };
 }
 
 /**
@@ -486,28 +650,63 @@ export interface LedgerSummary {
  * and transfers into one number is not a meaningful total, and showing one
  * risked reading as an authoritative figure competing with Monthly's.
  *
- * `excludedCount` is a plain row count, deliberately WITHOUT a paired dollar
- * amount. A transfer/card-payment PAIR is two rows for one real movement of
- * money — a signed `SUM` cancels toward zero exactly when both legs are in
- * scope, and `SUM(ABS(...))` avoids that but then double-counts the pair
- * (a real $675 payment reads as $1,350 excluded). Netting the pair back down
- * to $675 would mean matching legs — real reconciliation logic this page
- * deliberately does not build. Showing the row count only sidesteps the
- * whole class of bug rather than picking a lesser-wrong number.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THERE IS NO FIGURE HERE FOR EXCLUDED (transfer / credit_card_payment) ROWS,
+ * AND ADDING ONE IS HARDER THAN IT LOOKS.
+ *
+ * This used to report an `excludedCount` — a plain row count, deliberately
+ * with no paired dollar amount — which the Transactions meta line rendered as
+ * "N transfer/card payment transactions excluded from Monthly." The line was
+ * removed as noise, so the field went with it rather than staying as dead SQL.
+ *
+ * The reasoning is kept because it is the expensive part, and a future feature
+ * asking "how much was excluded?" will walk straight back into it: a
+ * transfer/card-payment PAIR is TWO ROWS for ONE real movement of money. A
+ * signed `SUM` cancels toward zero exactly when both legs are in scope, and
+ * `SUM(ABS(...))` avoids the cancellation but then double-counts the pair — a
+ * real $675 payment reads as $1,350 excluded, which is how this shipped once
+ * before the owner caught it. Netting the pair back down to $675 means
+ * MATCHING LEGS, which is real reconciliation logic this page deliberately
+ * does not build. So: not a `SUM` vs `ABS` choice. If a dollar figure is ever
+ * genuinely needed, it is pair-matching work — budget for it accordingly.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export async function getLedgerSummary(ownerId: string, filters: LedgerFilters): Promise<LedgerSummary> {
   const conditions = ledgerConditions(ownerId, filters);
+  // `'all'` is exactly how `ledgerConditions` spells "no status condition",
+  // so this reuses the same helper rather than forking its logic.
+  const conditionsWithoutStatus = ledgerConditions(ownerId, { ...filters, reviewStatus: 'all' });
 
-  const [row] = await getDb()
-    .select({
-      totalCount: sql<number>`count(*)::int`,
-      needsReviewCount: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
-      excludedCount: sql<number>`count(*) filter (where ${financeTransactions.transactionType} in ('transfer', 'credit_card_payment'))::int`,
-    })
-    .from(financeTransactions)
-    .where(and(...conditions));
+  const [[row], statusCounts] = await Promise.all([
+    getDb()
+      .select({
+        totalCount: sql<number>`count(*)::int`,
+        needsReviewCount: sql<number>`count(*) filter (where ${financeTransactions.reviewStatus} = 'needs_review')::int`,
+      })
+      .from(financeTransactions)
+      .where(and(...conditions)),
+    statusFacetCounts(ownerId, conditionsWithoutStatus),
+  ]);
 
-  return row ?? { totalCount: 0, needsReviewCount: 0, excludedCount: 0 };
+  return { ...(row ?? { totalCount: 0, needsReviewCount: 0 }), statusCounts };
+}
+
+/**
+ * Review's own status facet counts. Review has no aggregate of its own —
+ * only `listTransactionsForReview` — so this is the equivalent of
+ * `getLedgerSummary`'s status counts for that page's narrower filter shape,
+ * and it follows the identical "drop the status condition" rule.
+ */
+export async function getReviewStatusCounts(
+  ownerId: string,
+  filters: ReviewFilters,
+): Promise<StatusFacetCounts> {
+  const conditions: ReturnType<typeof ledgerConditions> = [eq(financeTransactions.ownerId, ownerId)];
+  if (filters.categoryId === 'uncategorized') conditions.push(isNull(financeTransactions.categoryId));
+  else if (filters.categoryId) conditions.push(eq(financeTransactions.categoryId, filters.categoryId));
+  if (filters.transactionType) conditions.push(eq(financeTransactions.transactionType, filters.transactionType));
+
+  return statusFacetCounts(ownerId, conditions);
 }
 
 /** One more than the export cap, so the caller can tell "exactly at the cap" from "over it" and fail visibly rather than silently truncate. */

@@ -4,6 +4,9 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { FilterBar, FilterField } from '@/components/ui/filter-bar';
+import { FilterChip } from '@/components/ui/filter-chip';
+import { FilterSelect } from '@/components/ui/filter-select';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -29,13 +32,16 @@ import { formatHumanDate } from '@/lib/format-date';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type {
   LedgerFilters,
+  MerchantRulePreview,
   LedgerPage,
   LedgerSummary,
   LedgerTransaction,
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type ManualTransactionType } from '@/server/finance/classify/manual';
 import { LEDGER_TRANSACTION_TYPES } from './filters';
+import { MerchantRuleDialog } from './merchant-rule-dialog';
 import {
+  previewMerchantRuleAction,
   updateTransactionCategoryAction,
   updateTransactionMerchantAction,
   updateTransactionNoteAction,
@@ -48,6 +54,9 @@ const STATUS_LABELS: Record<string, string> = {
   auto: 'Auto-classified',
   confirmed: 'Confirmed',
 };
+
+/** Chip order, widest-scope first — matches the `StatusFacetCounts` keys exactly. */
+const STATUS_CHIP_ORDER = ['all', 'needs_review', 'auto', 'confirmed'] as const;
 
 const STATUS_TONE: Record<string, StatusTone> = {
   needs_review: 'attention',
@@ -80,6 +89,8 @@ export function TransactionsTable({
   const [rows, setRows] = useState(page.rows);
   const [syncedFrom, setSyncedFrom] = useState(page.rows);
   const [searchDraft, setSearchDraft] = useState(filters.search ?? '');
+  /** The pending "apply to this merchant's other transactions?" offer, or null. */
+  const [rulePreview, setRulePreview] = useState<{ readonly preview: MerchantRulePreview; readonly categoryId: string } | null>(null);
   const [, startTransition] = useTransition();
 
   // A filter change or `router.refresh()` after an edit delivers a NEW
@@ -115,6 +126,20 @@ export function TransactionsTable({
 
     startTransition(async () => {
       const result = await updateTransactionCategoryAction(row.id, categoryId, false);
+
+      // Offered only on a real assignment, never on un-categorizing: "clear
+      // this category everywhere" is a destructive bulk action nobody asked
+      // for, and the whole point of the rule is to FILL Other, not empty a
+      // category.
+      if (result.ok && categoryId !== null) {
+        const preview = await previewMerchantRuleAction(row.id, categoryId, previous);
+        // Silent when there is nothing else from this merchant — a dialog
+        // saying "0 other transactions" is an interruption, not information.
+        if (preview.ok && preview.preview !== null && preview.preview.willMove.length + preview.preview.conflicting.length > 0) {
+          setRulePreview({ preview: preview.preview, categoryId });
+        }
+      }
+
       if (!result.ok) {
         toast.error(result.error);
         setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, categoryId: previous } : r)));
@@ -163,16 +188,14 @@ export function TransactionsTable({
     });
   }
 
-  const exportParams = new URLSearchParams(searchParams.toString());
-  exportParams.delete('page'); // export always reflects the current filter, never the on-screen page
-  const exportHref = `/finance/transactions/export?${exportParams.toString()}`;
-
+  // The export href is built by the PAGE now, not here — Export became a
+  // header action alongside every other page-level action in the app.
   const totalPages = Math.max(1, Math.ceil(page.totalCount / 100));
   const currentPage = Math.min(totalPages, Math.max(1, Math.floor((searchParams.get('page') ? Number(searchParams.get('page')) : 1))));
 
   return (
-    <div className="mt-4 space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
+    <div className="space-y-8">
+      <FilterBar>
         <FilterSelect
           label="Year"
           value={String(filters.year)}
@@ -207,20 +230,8 @@ export function TransactionsTable({
             ...LEDGER_TRANSACTION_TYPES.map((t) => [t, TRANSACTION_TYPE_LABELS[t] ?? t] as [string, string]),
           ]}
         />
-        <FilterSelect
-          label="Status"
-          value={filters.reviewStatus ?? 'all'}
-          onChange={(value) => setFilter('status', value === 'all' ? undefined : value)}
-          options={[
-            ['all', STATUS_LABELS.all!],
-            ['needs_review', STATUS_LABELS.needs_review!],
-            ['auto', STATUS_LABELS.auto!],
-            ['confirmed', STATUS_LABELS.confirmed!],
-          ]}
-        />
-        <div className="space-y-1">
-          <span className="text-muted-foreground block text-xs">Search</span>
-          <div className="flex gap-1">
+        <FilterField label="Search">
+          <div className="flex gap-2">
             <Input
               value={searchDraft}
               onChange={(event) => setSearchDraft(event.target.value)}
@@ -229,29 +240,34 @@ export function TransactionsTable({
               }}
               placeholder="Merchant or description"
               aria-label="Search merchant or description"
-              className="h-8 w-48"
+              className="w-56"
             />
-            <Button variant="outline" size="sm" className="h-8" onClick={submitSearch}>
+            <Button variant="outline" onClick={submitSearch}>
               Search
             </Button>
           </div>
-        </div>
-      </div>
+        </FilterField>
+      </FilterBar>
 
-      <div className="text-muted-foreground flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <span>
-          {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
-        </span>
-        {summary.needsReviewCount > 0 ? <span>{summary.needsReviewCount} need review</span> : null}
-        {summary.excludedCount > 0 ? (
-          <span>
-            {summary.excludedCount} transfer/card payment transaction{summary.excludedCount === 1 ? '' : 's'} excluded
-            from Monthly
-          </span>
-        ) : null}
-        <a href={exportHref} className="ml-auto font-medium underline underline-offset-2">
-          Export {summary.totalCount} transaction{summary.totalCount === 1 ? '' : 's'}
-        </a>
+      {/* Status is CHIPS, not a dropdown: four short-labelled options with a
+          count worth seeing without opening anything — the same rule Games'
+          library already follows for status/platform. Type stays a dropdown
+          beside it (seven options, labels as long as "Credit Card Payment",
+          which would make an unreadably wide chip row).
+
+          The counts are faceted — computed with every other filter applied
+          but NOT the status filter, so selecting one status doesn't zero out
+          the others. See `statusFacetCounts` in the DAL for why that matters. */}
+      <div className="flex flex-wrap gap-2">
+        {STATUS_CHIP_ORDER.map((value) => (
+          <FilterChip
+            key={value}
+            label={STATUS_LABELS[value]!}
+            count={summary.statusCounts[value]}
+            active={(filters.reviewStatus ?? 'all') === value}
+            onClick={() => setFilter('status', value === 'all' ? undefined : value)}
+          />
+        ))}
       </div>
 
       {rows.length === 0 ? (
@@ -376,6 +392,18 @@ export function TransactionsTable({
           </div>
         </>
       )}
+
+      {/* Rendered from the ledger rather than from the row, so it survives
+          `router.refresh()` re-rendering the table underneath it. */}
+      <MerchantRuleDialog
+        preview={rulePreview?.preview ?? null}
+        categoryId={rulePreview?.categoryId ?? ''}
+        categoryName={categories.find((c) => c.id === rulePreview?.categoryId)?.name ?? ''}
+        onClose={() => {
+          setRulePreview(null);
+          router.refresh();
+        }}
+      />
     </div>
   );
 }
@@ -394,33 +422,3 @@ const MONTH_NAMES = [
   'November',
   'December',
 ];
-
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  readonly label: string;
-  readonly value: string;
-  readonly onChange: (value: string) => void;
-  readonly options: readonly [string, string][];
-}): React.ReactElement {
-  return (
-    <div className="space-y-1">
-      <span className="text-muted-foreground block text-xs">{label}</span>
-      <Select value={value} onValueChange={onChange}>
-        <SelectTrigger aria-label={label} className="h-8 w-44">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map(([optionValue, optionLabel]) => (
-            <SelectItem key={optionValue} value={optionValue}>
-              {optionLabel}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}

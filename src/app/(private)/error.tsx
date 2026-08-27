@@ -40,7 +40,7 @@ export default function PrivateError({
       {error.digest ? (
         <p className="mt-4 text-sm">
           <span className="text-muted-foreground">Reference </span>
-          <code className="bg-muted rounded px-1.5 py-0.5 font-mono">{error.digest}</code>
+          <code className="bg-muted rounded-md px-1.5 py-0.5 font-mono">{error.digest}</code>
         </p>
       ) : null}
 

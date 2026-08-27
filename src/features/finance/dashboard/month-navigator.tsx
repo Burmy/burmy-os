@@ -61,7 +61,6 @@ export function MonthNavigator({
       <Button
         variant="outline"
         size="icon"
-        className="size-8"
         aria-label={mode === 'year' ? 'Previous year' : 'Previous month'}
         onClick={goPrevious}
       >
@@ -70,7 +69,7 @@ export function MonthNavigator({
 
       {mode === 'month' ? (
         <Select value={String(month)} onValueChange={(value) => go(year, Number.parseInt(value, 10))}>
-          <SelectTrigger aria-label="Month" className="h-8 w-28 font-medium">
+          <SelectTrigger aria-label="Month" className="w-28 font-medium">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -84,7 +83,7 @@ export function MonthNavigator({
       ) : null}
 
       <Select value={String(year)} onValueChange={(value) => go(Number.parseInt(value, 10), month)}>
-        <SelectTrigger aria-label="Year" className="h-8 w-24 font-medium">
+        <SelectTrigger aria-label="Year" className="w-24 font-medium">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -99,7 +98,6 @@ export function MonthNavigator({
       <Button
         variant="outline"
         size="icon"
-        className="size-8"
         aria-label={mode === 'year' ? 'Next year' : 'Next month'}
         onClick={goNext}
       >

@@ -116,6 +116,42 @@ export const ruleOperatorEnum = pgEnum('rule_operator', [
   'between',
 ]);
 
+// ── Games ───────────────────────────────────────────────────────────────────
+
+/** Where a game was played. `other` covers retro/emulated/misc without inventing a taxonomy. */
+export const gamePlatformEnum = pgEnum('game_platform', ['ps5', 'ps4', 'psp', 'steam', 'pc', 'other']);
+
+export const gameOwnershipEnum = pgEnum('game_ownership', ['physical', 'digital']);
+
+/**
+ * Lifecycle. `paused_dropped` is deliberately ONE state, not two: the
+ * difference between "I'll come back" and "I won't" is a sentence in `notes`,
+ * not a schema decision, and splitting it would put two nearly-identical
+ * buckets in every filter.
+ *
+ * `completed` was renamed to `played` in migration 0013 (`ALTER TYPE …
+ * RENAME VALUE`) once real usage showed 171 of 180 games sat in that one
+ * bucket — a status describing 95% of the library carries no information.
+ * `played` is the app's invisible default for "this game has simply been
+ * played" (see `StatusBadge`, which renders nothing for it) and a non-null
+ * sentinel rather than a nullable column, so every count/filter and the
+ * `wanted` exclusion stay plain non-null SQL. `paused_dropped` had ZERO rows
+ * at the same audit and is no longer reachable from the app (removed from
+ * `GAME_STATUSES` in `src/server/games/taxonomy.ts`) — it stays in this
+ * Postgres enum only because Postgres has no `DROP VALUE`; removing it here
+ * would mean creating a new type, swapping the column, and re-pointing the
+ * default and its indexes for a value nothing ever writes.
+ */
+export const gameStatusEnum = pgEnum('game_status', [
+  'backlog',
+  'playing',
+  'played',
+  'paused_dropped',
+  // Added in migration 0011 — a wishlist entry sourced from IGDB's upcoming
+  // query, not yet owned. See "Upcoming games" in docs/GAMES.md.
+  'wanted',
+]);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Identity
 // ─────────────────────────────────────────────────────────────────────────────
@@ -780,4 +816,404 @@ export const auditEvents = pgTable(
     metadata: jsonb('metadata'),
   },
   (t) => [index('audit_events_owner_at_idx').on(t.ownerId, t.at)],
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Games
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One row per game owned, wanted, or played. Replaces a hand-maintained
+ * spreadsheet.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * HOURS ARE ONE NUMBER, NOT A SESSION LOG.
+ *
+ * The source spreadsheet wrote "53 + 6" in an hours cell — which looks like
+ * session tracking but is not. It meant "53 hours on the base game in 2025, 6
+ * on the DLC in 2026", kept visually separate only so a manual yearly rollup
+ * stayed readable. A `play_sessions` table was considered and REJECTED: the
+ * owner logs a total, once, by hand. `notes` carries the DLC nuance in plain
+ * language.
+ *
+ * `firstPlayedYear` is nullable and genuinely sparse — pre-2015 PSP/PS2 entries
+ * carry a rating and nothing else. That is data, not an omission to backfill.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const games = pgTable(
+  'games',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    platform: gamePlatformEnum('platform').notNull().default('other'),
+    developer: text('developer'),
+    publisher: text('publisher'),
+    ownership: gameOwnershipEnum('ownership'),
+    /** Signed cents, same convention as finance. Independent of finance_transactions by design. */
+    priceCents: bigint('price_cents', { mode: 'number' }),
+    status: gameStatusEnum('status').notNull().default('backlog'),
+    /** 1-5. Nullable: an unplayed backlog entry has no opinion yet. */
+    rating: smallint('rating'),
+    /** Tenths of an hour, stored as an integer so no float ever touches a total. 235 = 23.5h. */
+    hoursTenths: integer('hours_tenths'),
+    firstPlayedYear: smallint('first_played_year'),
+    achievementsUnlocked: smallint('achievements_unlocked'),
+    achievementsTotal: smallint('achievements_total'),
+    coverUrl: text('cover_url'),
+    genre: text('genre'),
+    notes: text('notes'),
+    /**
+     * Whether the owner earned the platinum trophy. Stored as a flag, NOT
+     * derived from `achievementsUnlocked === achievementsTotal`, for two
+     * reasons: the source spreadsheet only ever recorded trophies EARNED,
+     * never the total, so it cannot be derived for any of the 160 imported
+     * games; and on Steam, 100% achievements is not a platinum at all — the
+     * concept is PlayStation-specific and has no Steam equivalent to derive.
+     */
+    platinum: boolean('platinum').notNull().default(false),
+    /** Metacritic-style critic score 0-100, from IGDB's `aggregated_rating`. Nullable — not every game has one. */
+    metacritic: smallint('metacritic'),
+    /**
+     * IGDB's `game_time_to_beats.normally`, converted from seconds to whole
+     * hours. Deliberately NOT stored in tenths unlike `hoursTenths`: this is
+     * a coarse third-party estimate, not the owner's own measured time, so
+     * it doesn't carry the same precision contract — don't "fix" this
+     * inconsistency by converting it to tenths.
+     */
+    averagePlaytimeHours: smallint('average_playtime_hours'),
+    esrbRating: text('esrb_rating'),
+    /**
+     * Steam's stable numeric app id (e.g. 1091500 for Cyberpunk 2077).
+     * Nullable — most rows predate the Steam sync and PS/PSP rows never get
+     * one at all.
+     *
+     * Once a library row is matched to a Steam app, THIS is what the sync
+     * script (`scripts/sync-steam-library.mjs`) looks up on every later run,
+     * never the title again. Title matching is the risky part of the whole
+     * feature — the owner's titles carry edition/store noise ("[Launch
+     * Edition]", "(itch)") that already defeated IGDB's matcher (see
+     * docs/GAMES.md) — so it happens at most once per game, with the result
+     * persisted here, exactly like the "resolve the match once, persist the
+     * external id" approach `psn-integration-research.md` recommends for any
+     * third-party library sync.
+     */
+    steamAppid: integer('steam_appid'),
+    /**
+     * PSN's stable per-title id (e.g. `CUSA12345_00`), TEXT not numeric —
+     * unlike Steam's `steamAppid`. Played-game data (hours, first played,
+     * platform) is keyed by this id.
+     *
+     * `psnTitleId` and `psnNpCommunicationId` below are TWO SEPARATE
+     * identifier spaces with no join key between them except the game's
+     * name: trophy data (counts, platinum) is keyed by
+     * `npCommunicationId`, not `titleId`. Both are stored because the sync
+     * engine resolves each independently against the owner's library, the
+     * same "resolve the match once, persist the external id" precedent
+     * `steamAppid` already set.
+     */
+    psnTitleId: text('psn_title_id'),
+    /** See `psnTitleId` above — a separate id space, used only for trophy data. */
+    psnNpCommunicationId: text('psn_np_communication_id'),
+    /** Most recent play activity PSN reported for this title, if any. */
+    lastPlayedAt: timestamp('last_played_at', { withTimezone: true }),
+    /**
+     * A calendar fact, not an instant — same `date`-string convention as
+     * finance transaction dates (see this file's header comment). Populated
+     * for a `wanted` row from IGDB's upcoming query, and read by the
+     * auto-flip (`wanted` -> `backlog` once this date has passed).
+     */
+    releaseDate: date('release_date', { mode: 'string' }),
+    /**
+     * Whether `release_date` names a REAL DAY or only a month.
+     *
+     * IGDB tags every release date with a `date_format`: `0` means it knows
+     * the exact day, `1` means it genuinely only knows the month (GTA VI is
+     * "November 2026", full stop). A month-precision row is stored as
+     * `YYYY-MM-01`, so the day component is a placeholder — and without this
+     * column there is no way to tell that `2026-11-01` from a game that
+     * really does launch on 1 November.
+     *
+     * Deliberately NOT inferred from `day === 1`: roughly one real release
+     * date in thirty lands on the 1st, and those would silently render as
+     * "November 2026" instead of counting down. Nullable because most rows
+     * have no release date at all to be precise about.
+     */
+    releasePrecision: text('release_precision', { enum: ['day', 'month'] }),
+    /**
+     * IGDB's numeric game id, stamped only on rows created from the
+     * "Upcoming games" wishlist flow. Exact-dedup key: is this IGDB game
+     * already wishlisted? Nullable — every pre-existing row and every
+     * manually-added game has no IGDB id at all.
+     */
+    igdbId: integer('igdb_id'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Case-insensitive uniqueness per platform: the same title legitimately
+    // exists twice when replayed on a different platform (PS4 then PS5), but
+    // twice on ONE platform is always a duplicate entry.
+    uniqueIndex('games_owner_title_platform_idx').on(t.ownerId, sql`lower(${t.title})`, t.platform),
+    index('games_owner_idx').on(t.ownerId),
+    index('games_owner_status_idx').on(t.ownerId, t.status),
+    index('games_owner_year_idx').on(t.ownerId, t.firstPlayedYear),
+    // Partial: only rows that have actually been matched to a Steam app
+    // carry a value here, and one Steam app maps to at most one library row
+    // per owner. Mirrors `finance_categories_owner_name_live_idx`'s partial-
+    // uniqueness shape (there: live categories only; here: matched rows only).
+    uniqueIndex('games_owner_steam_appid_idx')
+      .on(t.ownerId, t.steamAppid)
+      .where(sql`${t.steamAppid} is not null`),
+    // Same partial-uniqueness shape as the Steam index above, for the same
+    // reason: only rows matched to a PSN title carry a value here, and one
+    // PSN title maps to at most one library row per owner. `psnNpCommunicationId`
+    // deliberately gets NO uniqueness constraint — see the field comment.
+    uniqueIndex('games_owner_psn_title_id_idx')
+      .on(t.ownerId, t.psnTitleId)
+      .where(sql`${t.psnTitleId} is not null`),
+    // Same partial-uniqueness shape as the Steam/PSN indexes above: only
+    // rows created from the upcoming-games wishlist flow carry a value
+    // here, and one IGDB game maps to at most one library row per owner.
+    // Makes a double-add a clean isUniqueViolation(), not a duplicate row.
+    uniqueIndex('games_owner_igdb_id_idx')
+      .on(t.ownerId, t.igdbId)
+      .where(sql`${t.igdbId} is not null`),
+  ],
+);
+
+/**
+ * Optional per-year attribution of a game's play time.
+ *
+ * A game with NO rows here attributes all of `games.hours_tenths` to
+ * `games.first_played_year` — the behaviour every game had before this table
+ * existed, which is why ~157 of 160 rows needed no backfill.
+ *
+ * `games.hours_tenths` stays the authoritative total; these rows only say
+ * WHICH YEARS it happened in. See src/server/games/play-years.ts.
+ */
+export const gamePlayYears = pgTable(
+  'game_play_years',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    year: smallint('year').notNull(),
+    hoursTenths: integer('hours_tenths').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One row per game per year — two rows for the same year would be an
+    // ambiguous split, not extra detail.
+    uniqueIndex('game_play_years_game_year_idx').on(t.gameId, t.year),
+    index('game_play_years_owner_idx').on(t.ownerId),
+  ],
+);
+
+/**
+ * Every individual trophy/achievement defined for a game the owner owns, both
+ * PlayStation and Steam, earned or not.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS TABLE EXISTS AT ALL.
+ *
+ * Trophies used to be fetched from PSN live on every game-page visit and thrown
+ * away — measured at ~1.0s on first view and ~1.5s on reload, every time, with
+ * no caching. Worse than the wait: nothing about trophies was queryable across
+ * games, so "what am I close to platinuming", "what did I earn this month" and
+ * "what is the rarest thing I own" were all unanswerable, in an app whose owner
+ * uses it primarily to track trophies. PSN was already returning the earned
+ * timestamp and the rarity percentage; both were parsed and then discarded.
+ *
+ * ONE TABLE FOR BOTH SOURCES. Steam has no notion of a tier or a trophy group,
+ * so `tier` and `group_id` are nullable and PSN-only — the alternative, two
+ * near-identical tables, would fork every query that wants a combined answer
+ * ("earned recently" across everything the owner plays) for the sake of two
+ * columns.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const gameTrophySourceEnum = pgEnum('game_trophy_source', ['psn', 'steam']);
+export const gameTrophyTierEnum = pgEnum('game_trophy_tier', ['bronze', 'silver', 'gold', 'platinum']);
+
+export const gameTrophies = pgTable(
+  'game_trophies',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    source: gameTrophySourceEnum('source').notNull(),
+    /** PSN `trophyId` (unique within a title only) or Steam `apiname`. Never globally unique — see the index below. */
+    externalId: text('external_id').notNull(),
+    name: text('name'),
+    description: text('description'),
+    iconUrl: text('icon_url'),
+    /** PSN only. Steam has no tiers, and inventing one would misrepresent its data. */
+    tier: gameTrophyTierEnum('tier'),
+    /** PSN `trophyGroupId` — `default` for the base game, `001`/`002`… for DLC. PSN only. */
+    groupId: text('group_id'),
+    hidden: boolean('hidden').notNull().default(false),
+    earned: boolean('earned').notNull().default(false),
+    /** Null whenever `earned` is false. PSN reports this directly; Steam's `unlocktime` is converted. */
+    earnedAt: timestamp('earned_at', { withTimezone: true }),
+    /**
+     * Percentage of players who earned this, in TENTHS of a percent — `225`
+     * means 22.5%.
+     *
+     * An integer, deliberately, not `NUMERIC`. Both APIs report exactly one
+     * decimal place (PSN `trophyEarnedRate: "22.5"`, Steam `percent: "76.8"`),
+     * and CLAUDE.md forbids `NUMERIC` outright because the `pg` driver hands it
+     * back as a STRING — the resulting `parseFloat` is the precise bug this
+     * project is built to avoid. Games already stores `hours_tenths` this way;
+     * rarity follows the same rule, with conversion contained in
+     * `src/server/games/trophies.ts` and nowhere else.
+     *
+     * Null when the API did not report a rate, which is a real state — never
+     * coerced to 0, which would claim "nobody has this."
+     */
+    rarityTenths: integer('rarity_tenths'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // What makes a re-sync an UPSERT rather than a duplicate. `external_id` is
+    // only unique within a title (PSN restarts `trophyId` at 0 for every game),
+    // so the game and the source both have to be part of the key.
+    uniqueIndex('game_trophies_owner_game_source_external_idx').on(t.ownerId, t.gameId, t.source, t.externalId),
+    index('game_trophies_owner_game_idx').on(t.ownerId, t.gameId),
+    // Partial, because both ordered views only ever look at earned rows — an
+    // index covering the ~40% that are unearned would be that much dead weight
+    // in a scan that can never return them.
+    index('game_trophies_owner_earned_at_idx')
+      .on(t.ownerId, t.earnedAt.desc())
+      .where(sql`${t.earned}`),
+    index('game_trophies_owner_rarity_idx')
+      .on(t.ownerId, t.rarityTenths)
+      .where(sql`${t.earned}`),
+  ],
+);
+
+export const gameSyncSourceEnum = pgEnum('game_sync_source', ['steam', 'psn']);
+export const gameSyncRunStatusEnum = pgEnum('game_sync_run_status', [
+  'running',
+  'ready',
+  'committed',
+  'failed',
+  'cancelled',
+]);
+
+/**
+ * One Steam (later: PSN) sync run.
+ *
+ * Processed in small client-driven chunks rather than one long request, so no
+ * single call approaches a serverless timeout and progress is real rather than
+ * a spinner. `cursor` is how many library games have been processed; `total` is
+ * how many there are. A run persists, so closing the tab mid-sync leaves a
+ * resumable run rather than a lost one.
+ */
+export const gameSyncRuns = pgTable(
+  'game_sync_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    source: gameSyncSourceEnum('source').notNull(),
+    status: gameSyncRunStatusEnum('status').notNull().default('running'),
+    /**
+     * `cursor`/`total` are for PROGRESS DISPLAY only ("7 of 47") — `total` is
+     * a snapshot of the owner's Steam-platform game count taken when the run
+     * was created, and a game deleted or inserted mid-run can make it an
+     * estimate the cursor never exactly reaches. `lastGameId` below, not
+     * this pair, is what the engine uses to decide what to process next and
+     * when the run is actually done.
+     */
+    cursor: integer('cursor').notNull().default(0),
+    total: integer('total').notNull().default(0),
+    /**
+     * Keyset pagination bookmark: the `id` of the last Steam-platform game
+     * this run has processed, in `id` order. `null` means no chunk has run
+     * yet. The next chunk queries `id > lastGameId ORDER BY id LIMIT
+     * CHUNK_SIZE`, and the run is done once that query returns nothing —
+     * not once `cursor` reaches `total`. That is what makes a game deleted
+     * mid-run harmless (the cursor simply never has to "arrive" anywhere)
+     * instead of stranding the run in `running` forever.
+     *
+     * Deliberately NOT a foreign key. An `ON DELETE SET NULL` would silently
+     * rewind an in-progress run to the very beginning the moment its
+     * last-processed game was deleted, restaging every change before it —
+     * worse than the bug this column exists to fix. This is a pagination
+     * bookmark, not a reference, so a deleted game's id can safely keep
+     * living here as an opaque marker forever.
+     */
+    lastGameId: uuid('last_game_id'),
+    /**
+     * The owner's Steam library as fetched ONCE at the start of the run —
+     * appid, name and playtime only. Held here so each chunk does not re-fetch
+     * the whole list, and so a resumed run matches against exactly the same
+     * snapshot it started with rather than a library that moved underneath it.
+     * Transient run state, discarded with the run.
+     */
+    steamLibrary: jsonb('steam_library'),
+    errorMessage: text('error_message'),
+    /**
+     * A SHA-256 fingerprint of the `PSN_NPSSO` value that made THIS run
+     * possible — hex, truncated to 16 chars, computed by
+     * `currentPsnTokenFingerprint()` in `src/server/db/games/psn-client.ts`.
+     * One-way: this is a hash, not the token, so it never lets anyone
+     * recover the secret from the database, and it never leaves the
+     * database — no Server Action returns it to the client. It exists
+     * purely so the app can tell "the owner is still using the same PSN
+     * token" apart from "a new one was just pasted," without storing the
+     * token itself or a raw "issued at" date: pasting a new token changes
+     * its fingerprint, which is what lets "in use since" naturally restart
+     * from the token that is actually active now. Set only on a
+     * SUCCESSFULLY created `source: 'psn'` run — never for Steam, and never
+     * merely because `PSN_NPSSO` was configured. `null` for every run that
+     * predates this column, and for every Steam run.
+     */
+    psnTokenFingerprint: text('psn_token_fingerprint'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('game_sync_runs_owner_status_idx').on(t.ownerId, t.status)],
+);
+
+/**
+ * One proposed change staged by a run. Nothing here has been written to
+ * `games` — that happens only when the owner approves the run.
+ *
+ * `payload` carries both the proposed value and the value it would replace, so
+ * the review screen shows a real before/after rather than just a target.
+ */
+export const gameSyncChanges = pgTable(
+  'game_sync_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => gameSyncRuns.id, { onDelete: 'cascade' }),
+    /** Null for `new_game` — that change has no library row yet, by definition. */
+    gameId: uuid('game_id').references(() => games.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    selected: boolean('selected').notNull().default(true),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('game_sync_changes_run_idx').on(t.runId)],
 );
