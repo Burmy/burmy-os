@@ -38,6 +38,13 @@ import { cn } from '@/lib/utils';
  * appears on, which is what stops Finance and Games looking like two apps.
  *
  * `gap-4` is 16px, in both axes, and is the app's one card gap.
+ *
+ * `auto-rows-fr` makes EVERY ROW THE SAME HEIGHT. Without it a grid row sizes
+ * to its own tallest card, so on Finance the first row (cards carrying two
+ * comparison lines) came out 150px while the second row (a hint at most) came
+ * out 128px — same component, same width, visibly different boxes one under
+ * the other. `h-full` on the card was already there and does nothing about
+ * this: it fills the row, and the ROW was the thing that varied.
  */
 export function StatCardGrid({
   children,
@@ -47,6 +54,6 @@ export function StatCardGrid({
   readonly className?: string;
 }): React.ReactElement {
   return (
-    <div className={cn('grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4', className)}>{children}</div>
+    <div className={cn('grid auto-rows-fr grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4', className)}>{children}</div>
   );
 }

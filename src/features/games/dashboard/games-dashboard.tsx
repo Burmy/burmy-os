@@ -26,6 +26,18 @@ import { TopGames } from './top-games';
 import { YearlyBreakdownTable } from './yearly-breakdown-table';
 
 /**
+ * Sections inside a dashboard sit 16px apart — the same distance as the gap
+ * BETWEEN cards in a `StatCardGrid`, so the whole page runs on one spacing
+ * value instead of switching to 32px at every section boundary.
+ *
+ * The page-level rhythm ABOVE this (title -> filter row -> content) stays 32px.
+ * That belongs to the shared page contract (`PageHeader`/`FilterBar`), not to
+ * either dashboard, and separating a page's chrome from its content is a
+ * different job from separating two blocks of that content.
+ */
+const SECTION_STACK = 'space-y-4';
+
+/**
  * Regrouped from an earlier 14-card, 7-chart, one-column layout that read as
  * an unsegmented wall of numbers. Every card carries a headline number a
  * reader can name at a glance; a number that only qualifies another (average
@@ -94,7 +106,7 @@ export function GamesDashboard({
     financial.averagePriceCents === null ? undefined : `${formatPriceCents(financial.averagePriceCents)} avg per game`;
 
   return (
-    <div className="space-y-8">
+    <div className={SECTION_STACK}>
       {/* Bare stat-card row, no Section/heading wrapper — matches Finance's
           own top-row convention exactly (`finance-dashboard.tsx`'s 6-card
           Income/Expenses/Net/... row has no enclosing box or heading
