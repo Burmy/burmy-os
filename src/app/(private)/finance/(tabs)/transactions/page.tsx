@@ -100,7 +100,10 @@ export default async function TransactionsPage({
       <PageHeader
         title="Transactions"
         actions={
-          <Button asChild variant="outline">
+          // Default (solid) variant, matching Add game and Import statement
+          // — it's this page's one primary action, so it gets the same
+          // weight theirs do rather than the quieter `outline` fill.
+          <Button asChild>
             <a href={exportHref}>
               <Download className="size-4" />
               Export

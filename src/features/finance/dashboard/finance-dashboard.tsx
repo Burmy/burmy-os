@@ -101,27 +101,26 @@ export function FinanceDashboard({
           by what a control does, not by which page it happens to be on;
           this used to be the app's most visible inconsistency (Monthly's
           period picker top-right, Transactions' identical one underneath). */}
-      <PageHeader
-        title="Finance"
-        actions={
-          <>
-            <SegmentedToggle
-              value={view}
-              onChange={setView}
-              options={[
-                { value: 'month', label: 'Month' },
-                { value: 'year', label: 'This Year' },
-              ]}
-            />
-            {actions}
-          </>
-        }
-      />
+      <PageHeader title="Finance" actions={actions} />
 
-      <FilterBar>
+      {/* Every CONTROL lives on this one row; the header keeps only the
+          page's primary action. Filters sit left, the display-mode toggle
+          right — it isn't a filter (it changes how the same data is shown,
+          not which data), so it reads as distinct while still living with
+          the other controls instead of floating up beside the title. */}
+      <FilterBar className="justify-between">
         <FilterField label={view === 'year' ? 'Year' : 'Period'}>
           <MonthNavigator year={year} month={month} years={years} mode={view} />
         </FilterField>
+
+        <SegmentedToggle
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'month', label: 'Month' },
+            { value: 'year', label: 'This Year' },
+          ]}
+        />
       </FilterBar>
 
       {view === 'month' ? (

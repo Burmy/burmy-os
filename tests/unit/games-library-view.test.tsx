@@ -73,7 +73,7 @@ describe('LibraryView', () => {
   it('switches to a table view without losing any games', async () => {
     render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' })]} />);
 
-    await userEvent.click(screen.getByRole('button', { name: /table view/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^table$/i }));
 
     expect(screen.getByRole('table')).toBeInTheDocument();
     expect(screen.getByText('Elden Ring')).toBeInTheDocument();
@@ -83,7 +83,7 @@ describe('LibraryView', () => {
     push.mockClear();
     render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' })]} />);
 
-    await userEvent.click(screen.getByRole('button', { name: /table view/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^table$/i }));
 
     // The row itself is not a focusable control — a real button inside the
     // title cell is, so this is what tab order actually lands on.
@@ -379,7 +379,7 @@ describe('LibraryView', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /table view/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^table$/i }));
 
     const rows = screen.getAllByRole('row').slice(1); // drop the header row
     expect(rows[0]).toHaveTextContent('Alpha');

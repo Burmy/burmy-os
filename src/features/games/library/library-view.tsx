@@ -1,6 +1,6 @@
 'use client';
 
-import { LayoutGrid, Plus, Rows3 } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
@@ -98,21 +98,10 @@ export function LibraryView({
       <PageHeader
         title="Library"
         actions={
-          <>
-            <SegmentedToggle
-              value={view}
-              onChange={setView}
-              options={[
-                { value: 'gallery', label: 'Gallery view', icon: <LayoutGrid className="size-4" /> },
-                { value: 'table', label: 'Table view', icon: <Rows3 className="size-4" /> },
-              ]}
-            />
-
-            <Button onClick={() => setCreating(true)}>
-              <Plus className="size-4" />
-              Add game
-            </Button>
-          </>
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="size-4" />
+            Add game
+          </Button>
         }
       />
 
@@ -128,17 +117,32 @@ export function LibraryView({
           have a handful of known options and a count worth seeing without
           opening anything — that's the app's rule for which filters are
           chips and which are dropdowns (see `filter-bar.tsx`). */}
-      <FilterBar className="flex-col items-stretch gap-3 sm:items-start">
-        <FilterField label="Search">
-          <Input
-            type="search"
-            aria-label="Search games"
-            placeholder="Search title, developer, publisher…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="w-full sm:w-72"
+      <FilterBar className="flex-col items-stretch gap-3 sm:items-stretch">
+        {/* Search left, display-mode toggle right — the same row shape
+            Finance's Period + Month/This Year row uses. The toggle used to
+            sit up in the header beside Add game; it belongs with the other
+            controls, and words beat the two bare glyphs it used to be. */}
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <FilterField label="Search">
+            <Input
+              type="search"
+              aria-label="Search games"
+              placeholder="Search title, developer, publisher…"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              className="w-full sm:w-72"
+            />
+          </FilterField>
+
+          <SegmentedToggle
+            value={view}
+            onChange={setView}
+            options={[
+              { value: 'gallery', label: 'Gallery' },
+              { value: 'table', label: 'Table' },
+            ]}
           />
-        </FilterField>
+        </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
           <div className="flex flex-wrap gap-1">
