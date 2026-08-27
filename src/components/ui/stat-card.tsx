@@ -39,11 +39,11 @@ export function StatCard({
   // not a layout. Stacking from the top keeps a value under its label whatever
   // its neighbours contain.
   return (
-    <div className="flex h-full flex-col gap-2 rounded-md bg-card p-6">
+    <div className="flex h-full flex-col gap-3 rounded-md bg-card p-8">
       <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
       <div>
         <div
-          className={cn('tabular truncate text-[1.75rem] leading-none font-semibold', valueClassName)}
+          className={cn('tabular truncate text-[2rem] leading-none font-semibold', valueClassName)}
           title={value}
         >
           {value}

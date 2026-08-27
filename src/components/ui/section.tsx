@@ -10,9 +10,10 @@
  * borderless `bg-card` box was literally invisible — see that token's own
  * comment in `globals.css`).
  *
- * Padding (24px = `p-6`) matches `StatCard`'s exactly. These two are the
- * app's only shared "card" primitives and they used to disagree (`p-6` vs
- * `p-5`), which is what made Finance and Games look inconsistent.
+ * Padding (32px = `p-8`) matches `StatCard`'s exactly. These two are the app's
+ * only shared "card" primitives and they used to disagree (`p-6` vs `p-5`),
+ * which is what made Finance and Games look inconsistent. They moved from 24px
+ * to 32px together, and must keep moving together.
  */
 export function Section({
   title,
@@ -24,7 +25,7 @@ export function Section({
   readonly children: React.ReactNode;
 }): React.ReactElement {
   return (
-    <section className="rounded-md bg-card p-6">
+    <section className="rounded-md bg-card p-8">
       <h2 className="font-display text-base font-medium">{title}</h2>
       {description ? <p className="text-muted-foreground text-xs">{description}</p> : null}
       <div className="mt-3">{children}</div>
