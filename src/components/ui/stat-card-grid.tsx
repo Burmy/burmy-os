@@ -27,11 +27,17 @@ import { cn } from '@/lib/utils';
  * permits Finance and Games to have in common.
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * FOUR across from `lg`, FIVE from `2xl`. Card counts in play are 5, 6 and 7,
- * so no column count avoids stranding one card alone on a row somewhere — that
- * is accepted rather than designed around. What matters is that a card is the
- * same width on every screen it appears on, which is what stops Finance and
- * Games looking like two different apps.
+ * FOUR across at every size from `lg` up, and never five. Going to five on a
+ * wide screen shrank every card to buy a column nobody asked for; capping at
+ * four lets them grow with the window instead (~340px at 1700px rather than
+ * 270px).
+ *
+ * Card counts in play are 2, 5, 6 and 7, so no column count avoids stranding
+ * one card alone on a row somewhere — that is accepted rather than designed
+ * around. What matters is that a card is the same width on every screen it
+ * appears on, which is what stops Finance and Games looking like two apps.
+ *
+ * `gap-4` is 16px, in both axes, and is the app's one card gap.
  */
 export function StatCardGrid({
   children,
@@ -41,6 +47,6 @@ export function StatCardGrid({
   readonly className?: string;
 }): React.ReactElement {
   return (
-    <div className={cn('grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5', className)}>{children}</div>
+    <div className={cn('grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4', className)}>{children}</div>
   );
 }
