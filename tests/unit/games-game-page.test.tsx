@@ -301,6 +301,9 @@ describe('GamePage — collection picker', () => {
             platform: 'ps4',
             rating: null,
             firstPlayedYear: null,
+            achievementsUnlocked: null,
+            achievementsTotal: null,
+            platinum: false,
           },
         ]}
         collectionOptions={[NDC]}

@@ -71,6 +71,7 @@ export function InlineEditField({
   multiline = false,
   disabled = false,
   disabledHint,
+  hint,
   onSave,
 }: {
   readonly label: string;
@@ -81,6 +82,12 @@ export function InlineEditField({
   readonly multiline?: boolean;
   readonly disabled?: boolean;
   readonly disabledHint?: string;
+  /**
+   * A note shown under an EDITABLE value — `disabledHint` only renders when
+   * the field is read-only, which is the wrong shape for "this number is real
+   * but means something narrower than the label suggests".
+   */
+  readonly hint?: string;
   readonly onSave: (value: string) => Promise<ActionResult>;
 }): React.ReactElement {
   const [editing, setEditing] = useState(false);
@@ -122,22 +129,27 @@ export function InlineEditField({
           }}
         />
       ) : (
-        <button
-          type="button"
-          aria-label={label}
-          onClick={() => setEditing(true)}
-          disabled={pending}
-          className={cn(
-            'hover:text-foreground -mx-1 -my-1 max-w-full truncate rounded-md px-1 py-1 text-left transition-colors',
-            value ? '' : 'text-muted-foreground italic',
+        <span>
+          <button
+            type="button"
+            aria-label={label}
+            onClick={() => setEditing(true)}
+            disabled={pending}
+            className={cn(
+              'hover:text-foreground -mx-1 -my-1 max-w-full truncate rounded-md px-1 py-1 text-left transition-colors',
+              value ? '' : 'text-muted-foreground italic',
+            )}
+          >
+            {pending ? (
+              <Loader2 className="size-3.5 animate-spin" aria-hidden />
+            ) : (
+              (displayValue ?? (value || placeholder))
+            )}
+          </button>
+          {hint === undefined ? null : (
+            <span className="text-muted-foreground block text-xs">{hint}</span>
           )}
-        >
-          {pending ? (
-            <Loader2 className="size-3.5 animate-spin" aria-hidden />
-          ) : (
-            (displayValue ?? (value || placeholder))
-          )}
-        </button>
+        </span>
       )}
     </div>
   );

@@ -415,6 +415,15 @@ These are verified, not folklore. Do not "fix" them back.
   all-or-nothing branch (`MonthNotReady`/`YearNotReady`) needs a render test per BRANCH, asserting
   which block is on screen — see `tests/unit/finance-dashboard-view.test.tsx`, whose two regression
   cases fail against the shipped code.
+- **A conditional SPREAD into JSX bypasses TypeScript's excess-property check, so a prop that does
+  not exist is silently dropped.** `{...(cond ? { hint: 'x' } : {})}` on a component with no `hint`
+  prop compiles clean, lints clean, and renders nothing — excess-property checking only applies to
+  direct object literals, never to a spread. The M12 collections work used it to label a collection's
+  unsplit trophy figure and the label simply never appeared; `InlineEditField` only had
+  `disabledHint`, which renders exclusively in the read-only branch. Caught by looking at the running
+  page, not by any check. The same pattern is used ALL OVER this codebase for
+  `exactOptionalPropertyTypes` (and is correct for that), so the risk is specific: when a conditional
+  spread introduces a prop name you have not used on that component before, confirm the prop exists.
 - **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
   `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
   renders and reads correctly on screen, and `textContent` is right, but the computed name comes out

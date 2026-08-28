@@ -14,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
 import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import type { CollectionMember, Game } from '@/server/db/games/games';
+import { rollUpTrophies } from '@/server/games/collections';
 import type { Trophy } from '@/server/games/trophies';
 import type { GameSuggestion } from '@/server/games/metadata';
 import {
@@ -167,6 +168,7 @@ export function GamePage({
             firstPlayedYear={game.firstPlayedYear}
             achievementsUnlocked={game.achievementsUnlocked}
             achievementsTotal={game.achievementsTotal}
+            {...(isCollection ? { trophyRollup: rollUpTrophies(game, members) } : {})}
             steamOwned={steamOwned}
             notes={game.notes}
             hoursTenths={game.hoursTenths}
