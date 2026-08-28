@@ -38,16 +38,22 @@ import { MonthNavigator } from './month-navigator';
  * Whether the selected month's statements have all arrived — see
  * `AccountCoverage` in `server/finance/dashboard.ts` for the rule.
  *
- * `accounts` carries every active account, not just the ones holding the month
- * up, because "checking runs to Aug 15, card to Aug 27" is the whole
- * explanation; naming only the laggard would leave the owner wondering about
- * the other one.
+ * `accounts` carries every account the rule is judged against, not just the ones
+ * holding the month up, because "checking runs to Aug 15, card to Aug 27" is the
+ * whole explanation; naming only the laggard would leave the owner wondering
+ * about the other one.
+ *
+ * `dormant` carries the accounts `partitionCoverage` has written off. They are
+ * listed too, and labelled — an account quietly dropped from the rule that
+ * decides whether the dashboard renders is exactly the kind of thing that makes
+ * the app unexplainable to the person who owns it.
  */
 export interface MonthCoverage {
   readonly covered: boolean;
   /** ISO date every account has to reach for this month to be reportable. */
   readonly monthEnd: string;
   readonly accounts: readonly { readonly name: string; readonly latestDate: string }[];
+  readonly dormant: readonly { readonly name: string; readonly latestDate: string }[];
 }
 
 export interface FinanceDashboardProps {
@@ -222,6 +228,13 @@ export function FinanceDashboard({
             </>
           ) : null}
         </div>
+      ) : ytd.summary.monthsElapsed === 0 ? (
+        // NOT A ROW OF $0.00 CARDS. No month of this year is covered yet, so
+        // every annual figure would be a sum over nothing — and it would render
+        // directly above a Full year grid showing real imported numbers, which
+        // is precisely the contradiction this shipped with. Same decision as the
+        // month view above: say what is missing instead of printing a zero.
+        <YearNotReady year={ytd.summary.year} coverage={coverage} />
       ) : (
         <div className={SECTION_STACK}>
           <StatCardGrid>
@@ -361,6 +374,49 @@ function MonthStats({
 }
 
 /**
+ * The Year Overview's counterpart to `MonthNotReady` — shown when not one month
+ * of the selected year has all its statements in.
+ *
+ * It reuses the same account list for the same reason: the answer to "why is
+ * 2027 empty?" is "because December 2026 hasn't finished arriving", and the
+ * dates say that directly.
+ */
+function YearNotReady({
+  year,
+  coverage,
+}: {
+  readonly year: number;
+  readonly coverage: MonthCoverage;
+}): React.ReactElement {
+  return (
+    <div role="status" className="bg-muted/40 rounded-md border p-6">
+      <h2 className="text-sm font-semibold">No fully imported months in {year} yet</h2>
+      <p className="text-muted-foreground mt-1 max-w-prose text-sm">
+        Annual totals cover whole months only, so there is nothing to add up yet. They appear as soon
+        as {year}&apos;s first month has data from every account.
+      </p>
+
+      {coverage.accounts.length > 0 ? (
+        <dl className="mt-4 max-w-sm space-y-1 text-sm">
+          {coverage.accounts.map((account) => (
+            <div key={account.name} className="flex items-baseline justify-between gap-4">
+              <dt className="text-muted-foreground">{account.name}</dt>
+              <dd className="text-muted-foreground">through {formatHumanDate(account.latestDate)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-muted-foreground mt-4 text-sm">Nothing imported yet.</p>
+      )}
+
+      <p className="text-muted-foreground mt-4 text-xs">
+        The full year grid below still shows everything that has been imported.
+      </p>
+    </div>
+  );
+}
+
+/**
  * What the owner sees instead of numbers, for a month whose statements have
  * not all landed.
  *
@@ -408,6 +464,27 @@ function MonthNotReady({
       ) : (
         <p className="text-muted-foreground mt-4 text-sm">Nothing imported yet.</p>
       )}
+
+      {coverage.dormant.length > 0 ? (
+        <div className="mt-4 max-w-sm">
+          {/* No "go and deactivate it" instruction: there is no Accounts screen
+              to send anyone to, and the whole point of `partitionCoverage` is
+              that this now resolves itself. This says what the app decided and
+              why — nothing here is waiting on the owner. */}
+          <p className="text-muted-foreground text-xs">
+            {coverage.dormant.length === 1 ? 'Not waiting on this account' : 'Not waiting on these accounts'} — no
+            statements in over two months, so {coverage.dormant.length === 1 ? 'it is' : 'they are'} treated as closed.
+          </p>
+          <dl className="text-muted-foreground mt-1 space-y-1 text-sm">
+            {coverage.dormant.map((account) => (
+              <div key={account.name} className="flex items-baseline justify-between gap-4">
+                <dt>{account.name}</dt>
+                <dd>through {formatHumanDate(account.latestDate)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
 
       <p className="text-muted-foreground mt-4 text-xs">
         The full year grid below still shows everything that has been imported.

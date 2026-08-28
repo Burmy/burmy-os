@@ -29,6 +29,7 @@ import {
   isMonthCovered,
   lastDayOfMonth,
   latestCoveredMonth,
+  partitionCoverage,
   compareToPreviousMonth,
   computeAverageDailySpending,
   computeSavingsRate,
@@ -215,6 +216,10 @@ export default async function MonthlyPage({
   // why it is derived from the transactions rather than configured.
   const monthIsCovered = isMonthCovered(coverage, year, month);
   const lastCovered = latestCoveredMonth(coverage);
+  // Split here rather than inside the component so the "isn't ready" panel can
+  // say which accounts it is actually waiting on and which it has written off —
+  // the split is a domain decision, not a presentation one.
+  const { reporting: reportingAccounts, dormant: dormantAccounts } = partitionCoverage(coverage);
 
   // The trend is anchored at the last COVERED month, not the last month with
   // any data at all. Anchoring at the latter put a half-imported month at the
@@ -261,6 +266,13 @@ export default async function MonthlyPage({
   // month view does — "year to date" that silently includes half of the
   // current month is not a figure anything can be compared against. A past
   // year fully behind the coverage line reads as all 12.
+  //
+  // The final `: 0` is a year entirely AHEAD of the coverage line (browsing to
+  // 2027 in January 2027, before the December statements land). Zero covered
+  // months is the honest answer, but a row of $0.00 stat cards is not the way
+  // to say it — `YearNotReady` renders instead, exactly like the month view's
+  // own gate. This is what put an empty Year Overview above a grid full of real
+  // 2026 numbers in production: the arithmetic was right and the screen lied.
   const ytdMonthsElapsed =
     lastCovered === null ? 0 : lastCovered.year > year ? 12 : lastCovered.year === year ? lastCovered.month : 0;
   // Both annual views read from this rather than the raw year, so the donut
@@ -342,7 +354,11 @@ export default async function MonthlyPage({
             coverage={{
               covered: monthIsCovered,
               monthEnd: lastDayOfMonth(year, month),
-              accounts: coverage.map((account) => ({
+              accounts: reportingAccounts.map((account) => ({
+                name: account.accountName,
+                latestDate: account.latestDate,
+              })),
+              dormant: dormantAccounts.map((account) => ({
                 name: account.accountName,
                 latestDate: account.latestDate,
               })),

@@ -396,9 +396,25 @@ These are verified, not folklore. Do not "fix" them back.
   (`isMonthCovered`, `src/server/finance/dashboard.ts`) — derived from the transactions, never from a
   configured statement-close day, because a configured day lies exactly when a statement is late. The
   page defaults to `month − 1`, an uncovered month shows no stat cards at all, and trend charts drop
-  the uncovered tail. Two accepted costs, both documented in `docs/FINANCE.md`: it is conservative, and
-  a DORMANT `is_active = true` account freezes every month after its last transaction (deactivate it —
-  that is what the flag already means).
+  the uncovered tail. It is conservative by design, and that cost is accepted.
+- **"The owner can just go change the setting" is not a fix — especially when there is no screen to
+  change it on.** The rule above originally judged every `is_active = true` account, and its own doc
+  comment named the consequence (a dormant account freezes every later month) while calling the remedy
+  `is_active = false`. Shipped that way, a retired "Historical (2024–2025)" account ending 1 Dec 2025
+  made EVERY month of 2026 read "not fully imported", stopped the trend charts eight months short, and
+  zeroed the Year Overview above a grid showing a full year of real numbers — and there is no Accounts
+  UI in this app, so the documented remedy was unreachable. `partitionCoverage()` now derives dormancy
+  from the data (`DORMANT_AFTER_DAYS = 75`, measured against the newest transaction in the LEDGER, not
+  against today — see `docs/FINANCE.md`). When a rule's failure mode is written down as "the owner
+  should notice and reconfigure," check first whether the data already answers it and whether the
+  configuration surface even exists.
+- **A pure-function test suite does not tell you the page renders.** Both bugs above were correct
+  functions producing correct values that composed into a screen contradicting itself — 1,267 unit
+  tests, a clean typecheck, a clean lint, and no test anywhere rendered `FinanceDashboard`. Same class
+  as the `formatInflow` double-flip, which also reached the running app. A screen with an
+  all-or-nothing branch (`MonthNotReady`/`YearNotReady`) needs a render test per BRANCH, asserting
+  which block is on screen — see `tests/unit/finance-dashboard-view.test.tsx`, whose two regression
+  cases fail against the shipped code.
 - **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
   `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
   renders and reads correctly on screen, and `textContent` is right, but the computed name comes out

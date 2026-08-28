@@ -22,12 +22,16 @@ const updateGamePlayYearsAction = vi.fn(
   async (_id: string, _drafts: unknown): Promise<ActionResult> => ({ ok: true }),
 );
 const deleteGameAction = vi.fn(async (_id: string): Promise<ActionResult> => ({ ok: true }));
+const updateGameCollectionAction = vi.fn(
+  async (_id: string, _collectionId: string | null): Promise<ActionResult> => ({ ok: true }),
+);
 
 vi.mock('@/features/games/game-actions', () => ({
   updateGameFieldAction: (...args: [string, string, string]) => updateGameFieldAction(...args),
   applyMetadataSuggestionAction: (...args: [string, unknown]) => applyMetadataSuggestionAction(...args),
   updateGamePlayYearsAction: (...args: [string, unknown]) => updateGamePlayYearsAction(...args),
   deleteGameAction: (...args: [string]) => deleteGameAction(...args),
+  updateGameCollectionAction: (...args: [string, string | null]) => updateGameCollectionAction(...args),
 }));
 
 
@@ -82,9 +86,15 @@ afterEach(() => {
 });
 
 /**
- * Collections are their own concern — exercised in `games-collections.test.tsx`
- * and the integration suite, not here. Spread FIRST at every call site below so
- * a test that does care can still override any of the three explicitly.
+ * Spread FIRST at every call site below so a test that does care can override
+ * any of the three explicitly — see "GamePage — collection picker".
+ *
+ * This once said collections were "exercised in `games-collections.test.tsx`",
+ * which is a file that does not exist. `games-collections.test.ts` covers the
+ * pure grouping functions and `games-game-table.test.tsx` covers the nested
+ * rows, but the picker below — the only way to put a game INTO a collection —
+ * had no test at all, and `updateGameCollectionAction` was missing from the
+ * module mock above, so calling it would have thrown.
  */
 const collectionDefaults = { members: [], collection: null, collectionOptions: [] } as const;
 
@@ -202,6 +212,91 @@ describe('GamePage — select field inline editing', () => {
     await waitFor(() => {
       expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'ownership', '');
     });
+  });
+});
+
+/**
+ * The "Part of" picker — the only route in the app from a flat library to a
+ * nested one, and until now completely untested. The owner's 185 rows all have
+ * `collection_id = NULL`, so this control is the whole difference between seven
+ * loose Uncharted cards and one that expands.
+ */
+describe('GamePage — collection picker', () => {
+  const NDC = { id: 'ndc', title: 'Uncharted: The Nathan Drake Collection' };
+
+  it('files a standalone game into a collection', async () => {
+    const user = userEvent.setup();
+    render(
+      <GamePage
+        {...collectionDefaults}
+        collectionOptions={[NDC]}
+        game={game({ id: 'uc1', title: "Uncharted: Drake's Fortune Remastered" })}
+        trophies={[]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Part of' }));
+    await user.click(screen.getByRole('option', { name: NDC.title }));
+
+    await waitFor(() => {
+      expect(updateGameCollectionAction).toHaveBeenCalledWith('uc1', 'ndc');
+    });
+  });
+
+  it('takes a game back out of its collection, passing null rather than an empty string', async () => {
+    // The action's own signature distinguishes them; the picker's "no
+    // collection" option has value `''`, so the component has to translate.
+    const user = userEvent.setup();
+    render(
+      <GamePage
+        {...collectionDefaults}
+        collection={NDC}
+        collectionOptions={[NDC]}
+        game={game({ id: 'uc1', collectionId: 'ndc' })}
+        trophies={[]}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Part of' }));
+    await user.click(screen.getByRole('option', { name: 'Not in a collection' }));
+
+    await waitFor(() => {
+      expect(updateGameCollectionAction).toHaveBeenCalledWith('uc1', null);
+    });
+  });
+
+  it('shows the current collection as the field value', () => {
+    render(
+      <GamePage {...collectionDefaults} collection={NDC} collectionOptions={[NDC]} game={game()} trophies={[]} />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Part of' })).toHaveTextContent(NDC.title);
+  });
+
+  it('offers no picker at all on a row that HOLDS games', () => {
+    // The one-level rule. A disabled control would imply it might one day be
+    // allowed; there is no such future.
+    render(
+      <GamePage
+        {...collectionDefaults}
+        members={[
+          {
+            id: 'uc1',
+            title: "Uncharted: Drake's Fortune Remastered",
+            status: 'played',
+            coverUrl: null,
+            platform: 'ps4',
+            rating: null,
+            firstPlayedYear: null,
+          },
+        ]}
+        collectionOptions={[NDC]}
+        game={game({ id: 'ndc', title: NDC.title })}
+        trophies={[]}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Part of' })).not.toBeInTheDocument();
   });
 });
 

@@ -16,12 +16,14 @@ import {
   computeYtdSummary,
   daysInMonth,
   dropUncoveredTail,
+  DORMANT_AFTER_DAYS,
   findBiggestSpendingDay,
   findExtremeMonth,
   isMonthCovered,
   lastDayOfMonth,
   latestCoveredMonth,
   monthRange,
+  partitionCoverage,
   previousMonth,
   toMonthSummary,
 } from '@/server/finance/dashboard';
@@ -550,19 +552,17 @@ describe('statement coverage', () => {
       expect(latestCoveredMonth([])).toBeNull();
     });
 
-    it('is dragged back to the dormant account, which is the documented cost', () => {
-      // An account left active whose last transaction is ancient holds the
-      // coverage line at ITS last month — every month after that fails the
-      // "every account has run past this" test, forever. Dec 2019 really is
-      // the newest covered month here, so this asserts the rule rather than
-      // an exception to it.
+    it('is NOT dragged back by a long-retired account', () => {
+      // THE PRODUCTION BUG. The first version of this rule let any account left
+      // `is_active = true` hold the coverage line at its own final month
+      // forever, and documented "set is_active = false" as the fix. The owner
+      // had a retired "Historical (2024-2025)" account ending 1 Dec 2025, so
+      // every month of 2026 reported as not-yet-imported.
       //
-      // Deliberately not engineered around: the fix is `is_active = false`,
-      // a mechanism that already exists and already means exactly this. The
-      // symptom is also self-explaining — `MonthNotReady` names the account
-      // and prints its stale date, so the cause is on screen.
-      const stale = [card('2026-08-26'), checking('2020-01-01')];
-      expect(latestCoveredMonth(stale)).toEqual({ year: 2019, month: 12 });
+      // An account 6+ years behind the newest data in the ledger is closed, not
+      // late. July is the answer the live accounts alone give.
+      const retired = [card('2026-08-26'), checking('2020-01-01')];
+      expect(latestCoveredMonth(retired)).toEqual({ year: 2026, month: 7 });
     });
 
     it('terminates instead of spinning when nothing within a year is covered', () => {
@@ -570,6 +570,77 @@ describe('statement coverage', () => {
       // never satisfy the check for its own month, and without the bound the
       // walk back would have no floor.
       expect(latestCoveredMonth([card('2026-08-26')])).toEqual({ year: 2026, month: 7 });
+    });
+  });
+
+  /**
+   * The dormancy split — what separates "this statement hasn't been imported
+   * yet" from "this account is closed". Getting the line wrong in EITHER
+   * direction is a real failure, so both sides are pinned here: too tight and a
+   * live account gets written off and its missing month reads as covered; too
+   * loose and a retired account freezes the dashboard, which is the bug that
+   * shipped.
+   */
+  describe('partitionCoverage', () => {
+    const names = (accounts: readonly AccountCoverage[]): string[] => accounts.map((a) => a.accountName);
+
+    it('keeps both accounts on the owner’s real offset cycle', () => {
+      // ~6 weeks apart at the extreme, well inside the grace period. This is
+      // the case that must never be misread as dormancy.
+      const { reporting, dormant } = partitionCoverage(septemberFifth);
+      expect(names(reporting)).toEqual(['BoA Credit Card', 'BoA Checking']);
+      expect(dormant).toEqual([]);
+    });
+
+    it('writes off an account that has missed more than two cycles', () => {
+      const { reporting, dormant } = partitionCoverage([card('2026-08-26'), checking('2025-12-01')]);
+      expect(names(reporting)).toEqual(['BoA Credit Card']);
+      expect(names(dormant)).toEqual(['BoA Checking']);
+    });
+
+    it('is measured in whole days, inclusive at the boundary', () => {
+      // Exactly DORMANT_AFTER_DAYS behind still counts; one day further does not.
+      const atLimit = new Date(Date.UTC(2026, 7, 26) - DORMANT_AFTER_DAYS * 86_400_000).toISOString().slice(0, 10);
+      const pastLimit = new Date(Date.UTC(2026, 7, 26) - (DORMANT_AFTER_DAYS + 1) * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      expect(partitionCoverage([card('2026-08-26'), checking(atLimit)]).dormant).toEqual([]);
+      expect(names(partitionCoverage([card('2026-08-26'), checking(pastLimit)]).dormant)).toEqual(['BoA Checking']);
+    });
+
+    it('measures against the newest transaction, not against today', () => {
+      // An owner who has imported nothing for a year: every account is equally
+      // stale, so NONE is dormant and coverage still stops where the data does.
+      // Measuring against the wall clock would declare them all closed at once
+      // and quietly mark old months covered.
+      const abandoned = [card('2024-03-20'), checking('2024-03-10')];
+      expect(partitionCoverage(abandoned).dormant).toEqual([]);
+      expect(latestCoveredMonth(abandoned)).toEqual({ year: 2024, month: 2 });
+    });
+
+    it('never empties the reporting set — the newest account is 0 days behind itself', () => {
+      const { reporting } = partitionCoverage([card('2026-08-26'), checking('2019-01-01')]);
+      expect(reporting).toHaveLength(1);
+    });
+
+    it('keeps an unparsable date in the reporting set rather than excusing it', () => {
+      // Fails toward holding coverage: a row this function cannot read must not
+      // be the reason a month silently becomes reportable.
+      const { reporting, dormant } = partitionCoverage([card('2026-08-26'), checking('not-a-date')]);
+      expect(names(reporting)).toEqual(['BoA Credit Card', 'BoA Checking']);
+      expect(dormant).toEqual([]);
+    });
+
+    it('returns two empty lists for no accounts at all', () => {
+      expect(partitionCoverage([])).toEqual({ reporting: [], dormant: [] });
+    });
+
+    it('lets isMonthCovered report a month the retired account never reaches', () => {
+      const retired = [card('2026-08-26'), checking('2025-12-01')];
+      expect(isMonthCovered(retired, 2026, 7)).toBe(true);
+      // And still refuses the unfinished one — dormancy relaxes WHICH accounts
+      // are judged, never the bar itself.
+      expect(isMonthCovered(retired, 2026, 8)).toBe(false);
     });
   });
 

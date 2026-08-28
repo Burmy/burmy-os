@@ -1109,12 +1109,18 @@ and completely misleading. The month wasn't bad; it wasn't over.
 
 **The rule, in one sentence:**
 
-> A month is COVERED when every active account has at least one transaction dated on or after that
-> month's last day.
+> A month is COVERED when every still-reporting account has at least one transaction dated on or after
+> that month's last day.
 
 Read it as *"we have imported data that runs past the end of this month."* It lives in
-`src/server/finance/dashboard.ts` (`isMonthCovered`, `latestCoveredMonth`, `dropUncoveredTail`) and is
-fed by one query, `getAccountCoverage` — the max `transaction_date` per active account.
+`src/server/finance/dashboard.ts` (`partitionCoverage`, `isMonthCovered`, `latestCoveredMonth`,
+`dropUncoveredTail`) and is fed by one query, `getAccountCoverage` — the max `transaction_date` per
+active account.
+
+**"Still-reporting" is `partitionCoverage`, and it is not optional.** An account more than
+`DORMANT_AFTER_DAYS` (75) behind the newest transaction *in the ledger* is treated as closed and drops
+out of the rule. See "The dormant-account bug" below for why the number is 75 and why it is measured
+against the ledger rather than against today.
 
 **Derived from the transactions, not configured.** No statement-close-day setting, no "mark month
 complete" checkbox. A configured close day *lies* when a statement is late or an import is skipped,
@@ -1150,17 +1156,56 @@ July is correctly whole even though no single statement is aligned to it — the
   label the result "So far this month" — a partial figure dressed as an average. With no partial case
   left, there is no divisor that changes meaning depending on the date.
 - **Year Overview counts covered months only**, so YTD figures and the annual donut agree with the
-  monthly cards above them.
+  monthly cards above them. A year with **zero** covered months renders `YearNotReady` — the same
+  treatment the month view gets — rather than a row of `$0.00` cards. Zero covered months is an honest
+  result; `$0.00` presented as a total is not a way to say it.
 - **The full year grid is untouched** and still shows everything imported, partial months included. It
   is a ledger view, not a set of derived headline figures, and the owner asked for it to stay as it is.
 
-**Two properties, stated rather than engineered around:**
+**One property, stated rather than engineered around:** it is **conservative**. A month with genuinely
+no activity in its final days reads as uncovered until the next statement arrives. The cost is a short
+wait for unremarkable numbers; the cost of the opposite error is a confident wrong one.
 
-1. **It is conservative.** A month with genuinely no activity in its final days reads as uncovered
-   until the next statement arrives. The cost is a short wait for unremarkable numbers; the cost of the
-   opposite error is a confident wrong one.
-2. **A dormant active account freezes every later month.** An account left `is_active = true` whose
-   last transaction was in March holds every month after March at "not covered", because it never
-   reaches their last day. The fix is the mechanism that already exists and already means this:
-   `is_active = false`. The symptom is self-explaining — `MonthNotReady` prints that account's stale
-   date right next to the others.
+### The dormant-account bug — why `partitionCoverage` exists
+
+The first version of this rule judged every account the caller considered active, and documented the
+consequence as an accepted cost: *"a dormant active account freezes every later month; the fix is
+`is_active = false`."* That was written into the code, the docs and a passing test, and shipped.
+
+In production the owner had a retired **"Historical (2024–2025)"** account whose last transaction was
+1 Dec 2025. The result, on real data:
+
+- every month of 2026 rendered `MonthNotReady` — no stat cards, ever;
+- trend charts stopped eight months short, at Nov 2025;
+- the Year Overview showed `$0.00` for YTD income, expenses, net and average — sitting directly above a
+  Full year grid listing $6,774.60 of mortgage payments and $6,646.94 of car payments for that same
+  year.
+
+Nothing was arithmetically wrong. The design was: it made a person's own dashboard depend on their
+noticing an account flag and going to change it — and there is no Accounts screen in the app to change
+it on. **Dormancy is derivable from the data, so it is derived.**
+
+**The threshold: 75 days.** It has to separate two things that look identical from one account's latest
+date — a *late statement* (still in use, file not imported yet; must keep holding coverage) from a
+*retired account* (nothing will ever release it; must stop). A cycle is ~1 month and the two accounts'
+cycles are offset by half of one, so a live account sitting ~45 days behind the newest data is routine.
+75 days is past two full cycles: two missed statements in a row, which ordinary lateness does not
+produce.
+
+**Measured against the newest transaction in the ledger, not against today.** Coverage is a statement
+about imported data. An owner who hasn't imported anything for three months should see every account
+still counting — their data is simply old — not every account declared dormant at once, which would
+silently mark stale months "covered". Tested directly (`partitionCoverage` › "measures against the
+newest transaction, not against today").
+
+**A written-off account is still shown.** `MonthNotReady` lists it under *"Not waiting on this account —
+no statements in over two months, so it is treated as closed."* An account silently dropped from the
+rule that decides whether the dashboard renders is exactly what makes an app unexplainable to the person
+who owns it. There is deliberately no "go and deactivate it" instruction: nothing here is waiting on the
+owner any more.
+
+**Why no test caught it.** `finance-dashboard.test.ts` covers the arithmetic, and the arithmetic was
+right. Nothing rendered `FinanceDashboard` at all, so neither the frozen month view nor the zeroed Year
+Overview was ever on a screen — real or simulated — before the owner saw it in production.
+`tests/unit/finance-dashboard-view.test.tsx` now renders the component in each of those states; both
+regression cases fail against the code as shipped.
