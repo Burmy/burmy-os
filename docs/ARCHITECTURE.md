@@ -235,3 +235,69 @@ The architecture buys "no host to patch, no inbound ports of our own, an identit
 exchange for trusting Cloudflare in transit, Netlify to run the app honestly, and Supabase with the
 data at rest. This should be an informed trade, not an assumption — see git history for the earlier
 self-hosted VPS design, which traded these platform trusts for operational burden instead.
+
+---
+
+## Perceived performance — why navigation felt slow, and what was done
+
+Real usage: *"the transitions between pages and everything is very laggy or slow, also there is no
+indication."* Measured rather than guessed, and the measurement moved the answer.
+
+**The database is not the bottleneck and cannot become one at this size.** 18 MB, ~1,100 transactions,
+185 games, 6,137 trophies. Supabase's performance advisors report nothing above INFO. Of the app's own
+queries, the two slowest are trophy aggregates on `/games/stats` at ~109ms and ~66ms mean; **everything
+else is under 20ms.** Adding indexes to a table Postgres can scan in a millisecond would be theatre.
+
+What actually costs time is the **serverless round trip** — a Netlify function invocation, cold most of
+the time for a single-user app that scales to zero — and what made that time feel worse than it is was
+the app saying nothing while it elapsed.
+
+### The prefetch rule that was being missed
+
+From Next.js 16's own docs: *without Cache Components, a static route is prefetched in full, while a
+**dynamic route is skipped unless it has a `loading.js` boundary**.* Every route in this app is dynamic
+(`ƒ` in the build output). Only two segments had a `loading.tsx`, so for the rest the nearest boundary
+was `(private)/loading.tsx` — above the sub-nav.
+
+Two consequences, both visible:
+
+- **Switching Games tabs blanked the tabs themselves.** The fallback lived above the `(tabs)` layout, so
+  Library → Stats replaced the sub-nav along with the content. Finance did not have this problem,
+  because it alone had a segment-scoped fallback.
+- **The fallback looked like no page in the app** — a title bar and a grey block — so every navigation
+  flashed to something unrelated and then flashed again to real content: two layout shifts where there
+  should be none.
+
+Every segment now has its own fallback, shaped like the route it stands in for
+(`src/components/ui/page-skeleton.tsx`). A fallback that matches the page reads as the page arriving,
+not as a different screen interrupting — the same latency, a different experience.
+
+### The silence `loading.tsx` cannot fix
+
+A route-level fallback only appears when a navigation crosses a **segment** boundary. Most interaction
+in Finance does not: changing the month, the year, a category filter or a status chip pushes a new query
+string on the **same** route. No boundary, no fallback, and the previous month's numbers stay on screen
+until the server answers.
+
+`src/lib/use-navigate.ts` wraps those pushes in `startTransition` so React reports them as pending for
+exactly as long as the server takes. Callers render that locally: a spinner beside the month navigator,
+a thin indeterminate line under `FilterBar`, a spinner on the game card or table row that was clicked.
+
+**Local, not one global progress bar** — that was the first design and it is worse: a bar at the top of
+the viewport is further from the control than the control is from the pointer, so on a wide screen the
+feedback appears where the eye is not, and it cannot say *which* of several controls is working.
+
+And because even a transition takes a moment to begin, the two navs use `useLinkStatus` (Next's own hook
+for exactly this) to acknowledge a click inside the `<Link>` itself, before the router has done anything.
+
+### What was deliberately NOT done
+
+- **No Suspense streaming of the page shells.** Tempting, and it would help a cold full page load. But
+  each page's queries already run through one `Promise.all` against a pool of 10, so a render waits
+  roughly one round trip, not the sum of its queries — and on a client-side navigation the shell is
+  already on screen, so there is nothing for streaming to reveal earlier. The win would be small and the
+  refactor is not.
+- **No caching of query results.** Every number in this app is computed at read time, on purpose
+  (CLAUDE.md invariant 1). Caching totals to make a page feel faster is the exact trade this project
+  exists to refuse.
+- **No index tuning.** See above — there is nothing to tune at 18 MB.

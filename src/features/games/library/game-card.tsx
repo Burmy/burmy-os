@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { Gamepad2, Heart, Trophy } from 'lucide-react';
+import { Gamepad2, Heart, Loader2, Trophy } from 'lucide-react';
 
 import { FoilCard } from '@/components/games/foil-card';
 import { cn } from '@/lib/utils';
@@ -71,11 +71,24 @@ import { STATUS_LABELS } from '@/server/games/taxonomy';
 export function GameCard({
   game,
   memberCount = 0,
+  opening = false,
   onOpen,
 }: {
   readonly game: Game;
   /** How many titles this row wraps. Non-zero exactly when it is a collection. */
   readonly memberCount?: number;
+  /**
+   * This card's navigation is in flight.
+   *
+   * The one piece of chrome allowed onto the art beyond the two documented
+   * above, and it earns it for the opposite reason they do: it is not
+   * information ABOUT the game, it is the card answering the click. Without it
+   * a tap on a cover produced no change whatsoever until the next page
+   * rendered, which in a wall of identical-looking tiles reads as a missed tap
+   * — so the owner taps again. It is also strictly temporary, unlike the
+   * countdown and the collection marker.
+   */
+  readonly opening?: boolean;
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   const wishlisted = game.status === 'wanted';
@@ -99,6 +112,7 @@ export function GameCard({
       aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}${collectionLabel === null ? '' : ` — collection of ${collectionLabel}`}`}
       title={game.title}
       onClick={() => onOpen(game)}
+      aria-busy={opening || undefined}
       className="group relative aspect-3/4 w-full rounded-md text-left focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none"
     >
       <FoilCard tone={game.platinum ? 'platinum' : wishlisted ? 'wishlist' : null}>
@@ -169,6 +183,13 @@ export function GameCard({
             className="absolute right-2 bottom-2 z-20 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)]"
           >
             <Heart className="size-5" fill="currentColor" strokeWidth={1.5} />
+          </span>
+        ) : null}
+        {/* Above every foil layer (z-11/z-12) and both corner marks (z-20),
+            because while it is showing it is the only thing that matters. */}
+        {opening ? (
+          <span className="absolute inset-0 z-30 flex items-center justify-center bg-black/40" aria-hidden>
+            <Loader2 className="size-6 animate-spin text-white" />
           </span>
         ) : null}
       </FoilCard>

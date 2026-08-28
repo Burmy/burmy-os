@@ -1,5 +1,6 @@
 'use client';
 
+import { Loader2 } from 'lucide-react';
 import { Fragment } from 'react';
 
 import { PlatinumBadge } from '@/components/games/platinum-badge';
@@ -52,9 +53,12 @@ import { formatHours, hours } from '@/server/games/hours';
  */
 export function GameTable({
   groups,
+  openingId,
   onOpen,
 }: {
   readonly groups: readonly CollectionGroup<Game>[];
+  /** The row whose navigation is in flight — see `GameCard`'s `opening` for why this exists. */
+  readonly openingId: string | null;
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   return (
@@ -74,12 +78,18 @@ export function GameTable({
       <TableBody>
         {groups.map((group) => (
           <Fragment key={group.game.id}>
-            <GameRow game={group.game} memberCount={group.members.length} onOpen={onOpen} />
+            <GameRow
+              game={group.game}
+              memberCount={group.members.length}
+              opening={group.game.id === openingId}
+              onOpen={onOpen}
+            />
             {group.members.map((member) => (
               <GameRow
                 key={member.id}
                 game={member}
                 collectionTitle={group.game.title}
+                opening={member.id === openingId}
                 onOpen={onOpen}
               />
             ))}
@@ -94,6 +104,7 @@ function GameRow({
   game,
   memberCount = 0,
   collectionTitle,
+  opening = false,
   onOpen,
 }: {
   readonly game: Game;
@@ -101,12 +112,13 @@ function GameRow({
   readonly memberCount?: number;
   /** Set when this row sits INSIDE a collection — indents it and names its parent for screen readers. */
   readonly collectionTitle?: string;
+  readonly opening?: boolean;
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   const nested = collectionTitle !== undefined;
 
   return (
-    <TableRow className="cursor-pointer" onClick={() => onOpen(game)}>
+    <TableRow className="cursor-pointer" aria-busy={opening || undefined} onClick={() => onOpen(game)}>
       <TableCell className={cn('font-medium', nested && 'pl-8 font-normal')}>
         <button
           type="button"
@@ -129,6 +141,9 @@ function GameRow({
         >
           {game.title}
         </button>
+        {opening ? (
+          <Loader2 className="text-muted-foreground ml-2 inline size-3.5 animate-spin align-middle" aria-hidden />
+        ) : null}
         {memberCount === 0 ? null : (
           <span className="text-muted-foreground ml-2 text-xs">
             {memberCount} game{memberCount === 1 ? '' : 's'}

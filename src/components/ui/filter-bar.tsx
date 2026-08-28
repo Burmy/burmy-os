@@ -22,11 +22,31 @@ import { cn } from '@/lib/utils';
 export function FilterBar({
   children,
   className,
+  pending = false,
 }: {
   readonly children: React.ReactNode;
   readonly className?: string;
+  /**
+   * A filter change is navigating. Renders a thin indeterminate line along the
+   * bar's bottom edge — see `useNavigate` for why this feedback is local to the
+   * controls rather than a bar at the top of the viewport.
+   *
+   * The line is absolutely positioned so its appearance cannot reflow the row
+   * it belongs to; a filter bar that grows 2px taller the instant you use it
+   * would be a worse jank than the silence it replaces.
+   */
+  readonly pending?: boolean;
 }): React.ReactElement {
-  return <div className={cn('flex flex-wrap items-end gap-3', className)}>{children}</div>;
+  return (
+    <div className={cn('relative flex flex-wrap items-end gap-3', className)} aria-busy={pending || undefined}>
+      {children}
+      {pending ? (
+        <span aria-hidden className="bg-muted absolute inset-x-0 -bottom-2 h-0.5 overflow-hidden rounded-full">
+          <span className="bg-foreground/40 block h-full w-1/3 animate-[filter-bar-progress_1.1s_ease-in-out_infinite] rounded-full" />
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 /**

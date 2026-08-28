@@ -26,6 +26,7 @@ import {
 import { toast } from '@/components/ui/toast';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
+import { useNavigate } from '@/lib/use-navigate';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type { ReviewFilters, ReviewTransaction, StatusFacetCounts } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, type ManualTransactionType } from '@/server/finance/classify/manual';
@@ -89,6 +90,9 @@ export function ReviewQueue({
   readonly statusCounts: StatusFacetCounts;
 }): React.ReactElement {
   const router = useRouter();
+  // Same reason as the ledger's: a filter change here never crosses a segment
+  // boundary, so `loading.tsx` cannot help. See `useNavigate`.
+  const { navigate, pending: navigating } = useNavigate();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -117,7 +121,7 @@ export function ReviewQueue({
     const params = new URLSearchParams(searchParams.toString());
     if (!value || value === 'all') params.delete(key);
     else params.set(key, value);
-    router.push(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
+    navigate(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
   }
 
   function changeCategory(row: ReviewTransaction, categoryId: string | null): void {
@@ -202,7 +206,7 @@ export function ReviewQueue({
           disclosure — a click to reveal three controls that fit on one line
           and that the owner is here to use. Nothing on this row is worth
           concealing, and every other filter row in the app is open. */}
-      <FilterBar>
+      <FilterBar pending={navigating}>
         <FilterSelect
           label="Category"
           value={filters.categoryId ?? 'all'}

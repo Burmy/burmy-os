@@ -1,7 +1,6 @@
 'use client';
 
 import { Plus } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -10,6 +9,7 @@ import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedToggle } from '@/components/ui/segmented-toggle';
+import { useNavigate } from '@/lib/use-navigate';
 import type { Game } from '@/server/db/games/games';
 import { countableGames, groupByCollection } from '@/server/games/collections';
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
@@ -43,7 +43,19 @@ export function LibraryView({
 }: {
   readonly games: readonly Game[];
 }): React.ReactElement {
-  const router = useRouter();
+  // Opening a game is a full cross-segment navigation with a database read at
+  // the other end, and the card gave no sign it had been clicked — the wall of
+  // covers just sat there. `openingId` is what the clicked card/row renders a
+  // spinner from; it is cleared implicitly when `pending` goes false, so there
+  // is no stale id to reset. See `useNavigate`.
+  const { navigate, pending: opening } = useNavigate();
+  const [openingId, setOpeningId] = useState<string | null>(null);
+
+  function open(game: Game): void {
+    setOpeningId(game.id);
+    navigate(`/games/${game.id}`);
+  }
+
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [platform, setPlatform] = useState<PlatformFilter>('all');
@@ -262,9 +274,9 @@ export function LibraryView({
           No games match this filter.
         </p>
       ) : view === 'gallery' ? (
-        <GameGrid groups={groups} onOpen={(game) => router.push(`/games/${game.id}`)} />
+        <GameGrid groups={groups} openingId={opening ? openingId : null} onOpen={open} />
       ) : (
-        <GameTable groups={groups} onOpen={(game) => router.push(`/games/${game.id}`)} />
+        <GameTable groups={groups} openingId={opening ? openingId : null} onOpen={open} />
       )}
 
       <GameDialog open={creating} onOpenChange={setCreating} />

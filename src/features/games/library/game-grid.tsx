@@ -20,9 +20,12 @@ import { GameCard } from './game-card';
  */
 export function GameGrid({
   groups,
+  openingId,
   onOpen,
 }: {
   readonly groups: readonly CollectionGroup<Game>[];
+  /** The card whose navigation is in flight, if any. */
+  readonly openingId: string | null;
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   return (
@@ -39,6 +42,7 @@ export function GameGrid({
           key={group.game.id}
           game={group.game}
           memberCount={group.members.length}
+          opening={group.game.id === openingId}
           onOpen={onOpen}
         />
       ))}

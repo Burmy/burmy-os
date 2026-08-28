@@ -57,12 +57,12 @@ function game(overrides: Partial<Game> = {}): Game {
  */
 describe('GameTable Steam provenance', () => {
   it('shows a Steam mark for a linked game', () => {
-    render(<GameTable groups={[solo({ steamAppid: 367520 })]} onOpen={vi.fn()} />);
+    render(<GameTable openingId={null} groups={[solo({ steamAppid: 367520 })]} onOpen={vi.fn()} />);
     expect(screen.getByText(/steam/i)).toBeInTheDocument();
   });
 
   it('shows no Steam mark for an unlinked game', () => {
-    render(<GameTable groups={[solo({ steamAppid: null })]} onOpen={vi.fn()} />);
+    render(<GameTable openingId={null} groups={[solo({ steamAppid: null })]} onOpen={vi.fn()} />);
     expect(screen.queryByText(/steam/i)).not.toBeInTheDocument();
   });
 });
@@ -82,12 +82,12 @@ describe('GameTable collections', () => {
   ];
 
   it('marks the collection row with its title count', () => {
-    render(<GameTable groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+    render(<GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
     expect(screen.getByText('3 games')).toBeInTheDocument();
   });
 
   it('renders every title inside the collection as its own row', () => {
-    render(<GameTable groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+    render(<GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
     for (const member of members) {
       expect(
         screen.getByRole('button', {
@@ -100,7 +100,7 @@ describe('GameTable collections', () => {
   it('opens the member, not the collection, when a nested title is activated', async () => {
     const onOpen = vi.fn();
     const user = userEvent.setup();
-    render(<GameTable groups={[{ game: collection, members }]} onOpen={onOpen} />);
+    render(<GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={onOpen} />);
 
     await user.click(
       screen.getByRole('button', {
@@ -115,7 +115,53 @@ describe('GameTable collections', () => {
   });
 
   it('shows no count marker on a standalone game', () => {
-    render(<GameTable groups={[solo()]} onOpen={vi.fn()} />);
+    render(<GameTable openingId={null} groups={[solo()]} onOpen={vi.fn()} />);
     expect(screen.queryByText(/\d+ games?$/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Clicking a cover or a row starts a cross-segment navigation with a database
+ * read at the other end, and nothing on screen used to acknowledge it — in a
+ * wall of near-identical tiles that reads as a missed click, so the owner
+ * clicks again. `openingId` is the acknowledgement.
+ */
+describe('GameTable open feedback', () => {
+  it('marks only the row being opened as busy', () => {
+    const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
+    const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
+
+    render(
+      <GameTable
+        openingId="uc1"
+        groups={[{ game: collection, members }]}
+        onOpen={vi.fn()}
+      />,
+    );
+
+    const busy = screen.getAllByRole('row').filter((row) => row.getAttribute('aria-busy') === 'true');
+    expect(busy).toHaveLength(1);
+    expect(busy[0]?.textContent).toContain('Drake 1');
+  });
+
+  it('marks the COLLECTION row busy when it is the one being opened', () => {
+    // The wrapper row and the nested rows are wired separately, so a test that
+    // only ever opens a member leaves half the wiring unproven — verified by
+    // mutation: breaking the collection row's own binding kept that test green.
+    const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
+    const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
+
+    render(
+      <GameTable openingId="ndc" groups={[{ game: collection, members }]} onOpen={vi.fn()} />,
+    );
+
+    const busy = screen.getAllByRole('row').filter((row) => row.getAttribute('aria-busy') === 'true');
+    expect(busy).toHaveLength(1);
+    expect(busy[0]?.textContent).toContain('Nathan Drake Collection');
+  });
+
+  it('marks nothing busy when no navigation is in flight', () => {
+    render(<GameTable openingId={null} groups={[solo()]} onOpen={vi.fn()} />);
+    expect(screen.queryByRole('row', { busy: true })).not.toBeInTheDocument();
   });
 });

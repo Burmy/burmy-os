@@ -1,10 +1,48 @@
 'use client';
 
-import { Gamepad2, Settings, Table2 } from 'lucide-react';
-import Link from 'next/link';
+import { Gamepad2, Loader2, Settings, Table2 } from 'lucide-react';
+import Link, { useLinkStatus } from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { cn } from '@/lib/utils';
+
+/**
+ * The spinner that replaces a nav item's own icon while its navigation is in
+ * flight.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS EVEN THOUGH EVERY ROUTE NOW HAS A `loading.tsx`
+ *
+ * A route-level fallback cannot render until the router has begun the
+ * transition, which on a cold serverless function is not instant. In that gap
+ * the old page is still fully on screen and nothing has acknowledged the
+ * click — the single most common reading of which is that the click missed.
+ * Real usage reported exactly that: "there is no indication as well."
+ *
+ * `useLinkStatus` closes the gap at its only possible source, inside the
+ * `<Link>` itself. It must be a DESCENDANT of the Link (Next's own
+ * requirement), which is why this is a component rather than a hook call in
+ * the map below.
+ *
+ * It swaps the icon rather than adding a spinner beside it, deliberately:
+ * appending anything shifts the label sideways mid-click, which is a layout
+ * shift on the element the eye is already fixed on. Same box, different glyph.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+function NavIcon({ Icon }: { readonly Icon: typeof Gamepad2 }): React.ReactElement {
+  const { pending } = useLinkStatus();
+  return pending ? (
+    <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+  ) : (
+    <Icon className="size-4 shrink-0" aria-hidden />
+  );
+}
+
+/** SubNav's equivalent — a tab has no icon, so the spinner follows the label instead of replacing anything. */
+function TabPending(): React.ReactElement | null {
+  const { pending } = useLinkStatus();
+  return pending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null;
+}
 
 /**
  * Three destinations: Finance, Games, Settings.
@@ -65,7 +103,7 @@ export function Nav({
                   : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
               )}
             >
-              <Icon className="size-4" />
+              <NavIcon Icon={Icon} />
               {iconOnly ? null : label}
             </Link>
           </div>
@@ -107,6 +145,7 @@ export function SubNav({
             )}
           >
             {label}
+            <TabPending />
             {badge ? (
               <span className="bg-secondary text-secondary-foreground tabular rounded-md px-1.5 py-0.5 text-xs">
                 {badge}

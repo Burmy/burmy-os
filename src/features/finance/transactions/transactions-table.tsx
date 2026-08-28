@@ -29,6 +29,7 @@ import { InlineEditText } from '@/components/finance/inline-edit-text';
 import { Money } from '@/components/finance/money';
 import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
 import { formatHumanDate } from '@/lib/format-date';
+import { useNavigate } from '@/lib/use-navigate';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type {
   LedgerFilters,
@@ -89,6 +90,10 @@ export function TransactionsTable({
   readonly summary: LedgerSummary;
 }): React.ReactElement {
   const router = useRouter();
+  // Every filter and page change here pushes a new query string on the SAME
+  // route, so no `loading.tsx` boundary is crossed and nothing would otherwise
+  // acknowledge the click — see `useNavigate`.
+  const { navigate, pending: navigating } = useNavigate();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
@@ -112,14 +117,14 @@ export function TransactionsTable({
     if (!value || value === 'all') params.delete(key);
     else params.set(key, value);
     params.delete('page'); // any filter change starts back at page 1
-    router.push(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
+    navigate(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
   }
 
   function setPage(nextPage: number): void {
     const params = new URLSearchParams(searchParams.toString());
     if (nextPage <= 1) params.delete('page');
     else params.set('page', String(nextPage));
-    router.push(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
+    navigate(params.size > 0 ? `${pathname}?${params.toString()}` : pathname);
   }
 
   function submitSearch(): void {
@@ -229,7 +234,7 @@ export function TransactionsTable({
 
   return (
     <div className="space-y-8">
-      <FilterBar>
+      <FilterBar pending={navigating}>
         <FilterSelect
           label="Year"
           value={String(filters.year)}

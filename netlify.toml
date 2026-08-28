@@ -20,3 +20,31 @@
 
 [build.environment]
   NODE_VERSION = "24"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RUN THE FUNCTIONS WHERE THE DATABASE IS.
+#
+# The Supabase project lives in `us-east-2`; Netlify's default function region
+# is `us-east-1`. Pinning them together removes a cross-region hop from every
+# database round trip a page makes.
+#
+# HONEST SIZING, so nobody expects more from this than it can give. The queries
+# on a page run through `Promise.all` against a pool of 10 connections, so a
+# render pays roughly one or two round trips, not one per query — this saves
+# tens of milliseconds, not hundreds. It is worth doing because it is free and
+# permanent, not because it is the fix. The database is not the bottleneck
+# either way: 18 MB, ~1,100 transactions, and the slowest read in the app is a
+# ~100ms trophy aggregate with everything else under 20ms. What actually costs
+# time is the serverless round trip itself, and a cold start most of all.
+#
+# Region pinning may be plan-gated on Netlify; if this deployment's plan does
+# not support it, Netlify falls back to the default region rather than failing
+# the build. Confirm in the deploy log which region the functions actually ran
+# in rather than assuming this took effect.
+#
+# Change this if the Supabase project ever moves. The two values must match —
+# a region pinned to the wrong place is worse than no pin, because it looks
+# deliberate.
+# ─────────────────────────────────────────────────────────────────────────────
+[functions]
+  region = "us-east-2"
