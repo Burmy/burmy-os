@@ -1079,3 +1079,70 @@ DB boundary. Calling `formatInflow()` on an already-flipped aggregate
 double-flips it and renders a real paycheck as `-$6,400.00`. `formatInflow` is
 only correct on a raw, still-negative stored value — a single transaction row,
 never a pre-summed total.
+
+### Statement coverage — the dashboard reports on finished months only
+
+**The problem.** A calendar month and a statement cycle are not the same thing. The owner's credit
+card statement closes around the 27th and the checking statement around the 15th, so on 28 August the
+database holds card data through ~the 27th and checking data through ~the 15th. The August stat cards
+reported income of $3,813.88 against expenses of $6,497.68 — a −70.4% savings rate and a "↓56% vs Jul"
+that measured two weeks of one month against all of another. Every figure was arithmetically correct
+and completely misleading. The month wasn't bad; it wasn't over.
+
+**The rule, in one sentence:**
+
+> A month is COVERED when every active account has at least one transaction dated on or after that
+> month's last day.
+
+Read it as *"we have imported data that runs past the end of this month."* It lives in
+`src/server/finance/dashboard.ts` (`isMonthCovered`, `latestCoveredMonth`, `dropUncoveredTail`) and is
+fed by one query, `getAccountCoverage` — the max `transaction_date` per active account.
+
+**Derived from the transactions, not configured.** No statement-close-day setting, no "mark month
+complete" checkbox. A configured close day *lies* when a statement is late or an import is skipped,
+which are precisely the situations where a wrong answer does damage; the derived rule self-corrects
+the moment the next file lands.
+
+**Worked through the real cycle, on 5 September** — card latest `Aug 26`, checking latest `Aug 14`:
+
+| Month | Covered? | Why |
+| --- | --- | --- |
+| July | **Yes** | Both accounts run past Jul 31. The card statement closing 27 Aug contains Jul 28–31; the checking one closing 15 Aug contains Jul 16–31 |
+| August | **No** | Neither reaches Aug 31 |
+
+July is correctly whole even though no single statement is aligned to it — the month is complete
+*across* the two files even though neither file is a month.
+
+**What changes on screen:**
+
+- **`/finance/monthly` lands on last month, not this one.** A plain `month − 1` (`previousMonth`, so
+  January rolls the year back), deliberately *not* "the newest covered month" — the default is where
+  you land and should be the same every time you open the app. Whether that month is whole is a
+  separate question, answered below it.
+- **An uncovered month shows no numbers at all.** The six stat cards, the category breakdown, the
+  insights and the largest-expenses list are replaced by `MonthNotReady`, which names every account and
+  the date its data reaches: *"BoA Checking — through Aug 15."* That is the answer to "why is my August
+  empty?", on screen, without going to look. It is `role="status"` and muted, not an error — this is the
+  normal state of the current month for most of every month.
+- **Trend charts end at the last covered month.** A partial month at the right-hand end of a line reads
+  as a collapse in income and spending; a chart cannot carry a footnote. Only the TAIL is trimmed — a
+  gap mid-history is a month that was never imported, and hiding it would misrepresent the series far
+  more than showing it does.
+- **`Avg. daily spending` always divides by the whole month.** It used to divide by the elapsed day and
+  label the result "So far this month" — a partial figure dressed as an average. With no partial case
+  left, there is no divisor that changes meaning depending on the date.
+- **Year Overview counts covered months only**, so YTD figures and the annual donut agree with the
+  monthly cards above them.
+- **The full year grid is untouched** and still shows everything imported, partial months included. It
+  is a ledger view, not a set of derived headline figures, and the owner asked for it to stay as it is.
+
+**Two properties, stated rather than engineered around:**
+
+1. **It is conservative.** A month with genuinely no activity in its final days reads as uncovered
+   until the next statement arrives. The cost is a short wait for unremarkable numbers; the cost of the
+   opposite error is a confident wrong one.
+2. **A dormant active account freezes every later month.** An account left `is_active = true` whose
+   last transaction was in March holds every month after March at "not covered", because it never
+   reaches their last day. The fix is the mechanism that already exists and already means this:
+   `is_active = false`. The symptom is self-explaining — `MonthNotReady` prints that account's stale
+   date right next to the others.

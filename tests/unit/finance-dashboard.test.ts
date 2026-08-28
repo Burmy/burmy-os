@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type AccountCoverage,
+  type CategoryMeta,
+  type MonthSummary,
   buildAnnualCategoryBreakdown,
   buildCategoryBreakdown,
   buildCategoryTrend,
@@ -8,17 +11,19 @@ import {
   buildYearlyBreakdown,
   compareToBaseline,
   compareToPreviousMonth,
-  type MonthSummary,
   computeAverageDailySpending,
   computeSavingsRate,
   computeYtdSummary,
   daysInMonth,
+  dropUncoveredTail,
   findBiggestSpendingDay,
   findExtremeMonth,
+  isMonthCovered,
+  lastDayOfMonth,
+  latestCoveredMonth,
   monthRange,
   previousMonth,
   toMonthSummary,
-  type CategoryMeta,
 } from '@/server/finance/dashboard';
 import type { CategoryMonthlyTotal, MonthlyTotal } from '@/server/db/finance/grid';
 
@@ -456,5 +461,152 @@ describe('compareToBaseline', () => {
 
     // The 2024 outlier is outside the window; only March counts.
     expect(result?.expense.deltaCents).toBe(0);
+  });
+});
+
+/**
+ * Statement coverage — the rule that decides whether a month's numbers are
+ * shown at all.
+ *
+ * The scenario throughout is the owner's real one: a credit card statement
+ * closing around the 27th and a checking statement closing around the 15th,
+ * which means a calendar month is only whole once the NEXT month's statements
+ * have partly arrived.
+ */
+describe('statement coverage', () => {
+  const card = (latestDate: string): AccountCoverage => ({
+    accountId: 'card',
+    accountName: 'BoA Credit Card',
+    latestDate,
+  });
+  const checking = (latestDate: string): AccountCoverage => ({
+    accountId: 'checking',
+    accountName: 'BoA Checking',
+    latestDate,
+  });
+
+  /** 5 September: card imported through Aug 26, checking through Aug 14. */
+  const septemberFifth = [card('2026-08-26'), checking('2026-08-14')];
+
+  describe('lastDayOfMonth', () => {
+    it('pads a single-digit month and knows month lengths', () => {
+      expect(lastDayOfMonth(2026, 2)).toBe('2026-02-28');
+      expect(lastDayOfMonth(2026, 4)).toBe('2026-04-30');
+      expect(lastDayOfMonth(2026, 8)).toBe('2026-08-31');
+    });
+
+    it('handles a leap February', () => {
+      expect(lastDayOfMonth(2028, 2)).toBe('2028-02-29');
+    });
+  });
+
+  describe('isMonthCovered', () => {
+    it('covers July even though no statement is aligned to it', () => {
+      // The card statement closing 27 Aug carries Jul 28-31; the checking one
+      // closing 15 Aug carries Jul 16-31. July is whole ACROSS the two files
+      // even though neither file is a month.
+      expect(isMonthCovered(septemberFifth, 2026, 7)).toBe(true);
+    });
+
+    it('does not cover August, because neither account reaches Aug 31', () => {
+      expect(isMonthCovered(septemberFifth, 2026, 8)).toBe(false);
+    });
+
+    it('is held back by the SLOWEST account, not the fastest', () => {
+      // Card has run past Aug 31; checking has not. One account being ahead
+      // must not open the month — that is exactly the half-a-month-of-spending
+      // -against-a-full-month-of-income error this prevents.
+      const mixed = [card('2026-09-20'), checking('2026-08-14')];
+      expect(isMonthCovered(mixed, 2026, 8)).toBe(false);
+    });
+
+    it('covers a month when an account lands exactly on its last day', () => {
+      expect(isMonthCovered([card('2026-08-31'), checking('2026-08-31')], 2026, 8)).toBe(true);
+    });
+
+    it('reports nothing covered when there are no accounts with transactions', () => {
+      // A fresh install. "Not covered" is the correct answer — the dashboard's
+      // own empty state is what belongs on screen, not a row of zeroes.
+      expect(isMonthCovered([], 2026, 7)).toBe(false);
+    });
+
+    it('does not cover a month in the future', () => {
+      expect(isMonthCovered(septemberFifth, 2026, 12)).toBe(false);
+    });
+  });
+
+  describe('latestCoveredMonth', () => {
+    it('finds July from the real September-5th position', () => {
+      expect(latestCoveredMonth(septemberFifth)).toEqual({ year: 2026, month: 7 });
+    });
+
+    it('walks back across a year boundary', () => {
+      // Mid-January: both statements still only reach December.
+      const midJanuary = [card('2026-01-05'), checking('2026-01-03')];
+      expect(latestCoveredMonth(midJanuary)).toEqual({ year: 2025, month: 12 });
+    });
+
+    it('returns null when nothing is covered at all', () => {
+      expect(latestCoveredMonth([])).toBeNull();
+    });
+
+    it('is dragged back to the dormant account, which is the documented cost', () => {
+      // An account left active whose last transaction is ancient holds the
+      // coverage line at ITS last month — every month after that fails the
+      // "every account has run past this" test, forever. Dec 2019 really is
+      // the newest covered month here, so this asserts the rule rather than
+      // an exception to it.
+      //
+      // Deliberately not engineered around: the fix is `is_active = false`,
+      // a mechanism that already exists and already means exactly this. The
+      // symptom is also self-explaining — `MonthNotReady` names the account
+      // and prints its stale date, so the cause is on screen.
+      const stale = [card('2026-08-26'), checking('2020-01-01')];
+      expect(latestCoveredMonth(stale)).toEqual({ year: 2019, month: 12 });
+    });
+
+    it('terminates instead of spinning when nothing within a year is covered', () => {
+      // The 12-step bound. A single account whose data stops mid-month can
+      // never satisfy the check for its own month, and without the bound the
+      // walk back would have no floor.
+      expect(latestCoveredMonth([card('2026-08-26')])).toEqual({ year: 2026, month: 7 });
+    });
+  });
+
+  describe('dropUncoveredTail', () => {
+    const points = [
+      { year: 2026, month: 5 },
+      { year: 2026, month: 6 },
+      { year: 2026, month: 7 },
+      { year: 2026, month: 8 },
+    ];
+
+    it('trims the partial month off the end of a series', () => {
+      expect(dropUncoveredTail(points, septemberFifth)).toEqual([
+        { year: 2026, month: 5 },
+        { year: 2026, month: 6 },
+        { year: 2026, month: 7 },
+      ]);
+    });
+
+    it('leaves a fully covered series untouched', () => {
+      const covered = [card('2026-09-05'), checking('2026-09-05')];
+      expect(dropUncoveredTail(points, covered)).toHaveLength(4);
+    });
+
+    it('keeps a GAP in the middle of history rather than closing it', () => {
+      // A month that was never imported is a different thing from a month
+      // that has not happened yet, and silently dropping it would misrepresent
+      // the shape of the line far more than showing it does.
+      const gapped = [
+        { year: 2026, month: 5 },
+        { year: 2026, month: 7 },
+      ];
+      expect(dropUncoveredTail(gapped, septemberFifth)).toEqual(gapped);
+    });
+
+    it('empties the series when nothing is covered', () => {
+      expect(dropUncoveredTail(points, [])).toEqual([]);
+    });
   });
 });

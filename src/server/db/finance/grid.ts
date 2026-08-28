@@ -12,8 +12,8 @@
 import { and, asc, desc, eq, gte, inArray, lt, lte, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
-import { financeCategories, financeTransactions } from '@/server/db/schema';
-import { monthRange } from '@/server/finance/dashboard';
+import { financeAccounts, financeCategories, financeTransactions } from '@/server/db/schema';
+import { monthRange, type AccountCoverage } from '@/server/finance/dashboard';
 import type { GridAggregateRow } from '@/server/finance/grid';
 
 /**
@@ -342,4 +342,49 @@ export async function getTopExpensesForMonth(
     .limit(limit);
 
   return rows;
+}
+
+/**
+ * The most recent transaction date on each ACTIVE account — what
+ * `isMonthCovered` needs to decide whether a month is finished.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DELIBERATELY NOT `dashboardBaseConditions()`, AND THIS IS THE POINT.
+ *
+ * Every other query on this page filters to `confirmed`/`auto` and drops
+ * transfers and card payments, because those rules decide what COUNTS toward a
+ * total. This query answers a different question — "how far does the imported
+ * data reach?" — and for that, a transfer is evidence exactly like a coffee is.
+ * A statement whose only late-month rows were card payments would otherwise
+ * report as not reaching month end, and the month would never open up.
+ *
+ * `needs_review` rows count here for the same reason: they are imported data.
+ * They are excluded from the NUMBERS by the other queries, and the page already
+ * shows a separate banner counting them, so nothing is hidden by admitting them
+ * to this one.
+ *
+ * `is_active` is the only filter, and it is doing real work — see
+ * `AccountCoverage`'s doc comment for why a dormant active account freezes
+ * every later month, and why deactivating it is the intended fix rather than
+ * something this query should try to guess at.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function getAccountCoverage(ownerId: string): Promise<AccountCoverage[]> {
+  const rows = await getDb()
+    .select({
+      accountId: financeAccounts.id,
+      accountName: financeAccounts.name,
+      latestDate: sql<string | null>`max(${financeTransactions.transactionDate})`,
+    })
+    .from(financeAccounts)
+    .innerJoin(financeTransactions, eq(financeTransactions.accountId, financeAccounts.id))
+    .where(and(eq(financeAccounts.ownerId, ownerId), eq(financeAccounts.isActive, true)))
+    .groupBy(financeAccounts.id, financeAccounts.name)
+    .orderBy(asc(financeAccounts.name));
+
+  // An INNER JOIN already drops accounts with no transactions, so `max` cannot
+  // actually be null here — narrowed rather than asserted, because a future
+  // switch to a LEFT JOIN would otherwise put a `null` into a string field and
+  // make every comparison in `isMonthCovered` quietly false.
+  return rows.filter((row): row is AccountCoverage => row.latestDate !== null);
 }

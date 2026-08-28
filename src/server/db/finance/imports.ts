@@ -898,3 +898,41 @@ export async function discardImport(ownerId: string, importId: string): Promise<
     .set({ status: 'discarded', updatedAt: new Date() })
     .where(and(eq(financeImports.ownerId, ownerId), eq(financeImports.id, importId)));
 }
+
+/**
+ * The statements already committed, newest first — the Import sheet's "so I
+ * don't upload the same one twice" list.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THE FILENAME IS THE POINT
+ *
+ * The upload panel already lists STAGED imports under "Resume". It listed
+ * nothing at all for finished ones, so the only way to answer "did I already do
+ * August's card statement?" was to go and look at the transactions. Two BoA
+ * exports downloaded a month apart have near-identical names, and the owner's
+ * own report was simply "so i dont get confused."
+ *
+ * Storing the name is not in tension with CLAUDE.md's rule that raw uploads are
+ * deleted immediately after parsing — `finance_import_files.original_filename`
+ * has always been recorded, and a filename is not statement content. Nothing
+ * new is retained to make this list possible.
+ *
+ * Bounded rather than paginated: this is a reference list inside a side panel,
+ * not a history page. A year of monthly imports across two accounts is ~24
+ * rows, so the limit is a guard against an unbounded query, not a feature.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function listCommittedImports(
+  ownerId: string,
+  limit = 12,
+): Promise<FinanceImportSummary[]> {
+  const rows = await getDb()
+    .select(SUMMARY_COLUMNS)
+    .from(financeImports)
+    .innerJoin(financeImportFiles, eq(financeImportFiles.importId, financeImports.id))
+    .where(and(eq(financeImports.ownerId, ownerId), eq(financeImports.status, 'committed')))
+    .orderBy(desc(financeImports.committedAt))
+    .limit(limit);
+
+  return rows.filter((row): row is FinanceImportSummary => row.accountId !== null);
+}
