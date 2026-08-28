@@ -279,8 +279,14 @@ test.describe('transactions ledger', () => {
     await page.getByRole('option', { name: 'Groceries' }).click();
     await expect(page.getByText('1 transaction', { exact: true })).toBeVisible();
 
+    // The control is named just "Export" now. It used to be a link in the meta
+    // row labelled "Export N transactions", whose name did double duty — it
+    // located the control AND asserted the filtered count. That link was
+    // replaced by a header action (see the page's own comment: "not the 23px
+    // underlined link buried in the meta row it used to be"), so the name no
+    // longer carries a count. The count assertion above already covers it.
     const downloadPromise = page.waitForEvent('download');
-    await page.getByRole('link', { name: /Export 1 transaction/ }).click();
+    await page.getByRole('link', { name: 'Export', exact: true }).click();
     const download = await downloadPromise;
 
     expect(download.suggestedFilename()).toBe('burmy-transactions-2026.csv');
