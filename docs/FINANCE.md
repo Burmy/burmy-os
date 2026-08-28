@@ -610,6 +610,22 @@ the preview commits with `review_status = 'confirmed'`; a blank one commits with
 pick up. This is what lets the monthly import be fast even when a few rows need
 more thought than the moment allows.
 
+### The import sheet lists what has already been imported
+
+The upload panel showed only STAGED imports, under "Resume". Finished ones appeared nowhere, so "did I
+already do August's card statement?" could only be answered by leaving the panel and going to look at
+the transactions — and two BoA exports downloaded a month apart have near-identical filenames.
+
+`listCommittedImports` (`db/finance/imports.ts`) now feeds an "Already imported" list, newest first,
+showing each file's name and its **date range**. The range rather than the row count, because a row
+count does not distinguish two statements and a date range always does.
+
+Nothing new is retained to make this possible: `finance_import_files.original_filename` has always been
+recorded, and a filename is not statement content — this does not touch CLAUDE.md's rule that raw
+uploads are deleted immediately after parsing.
+
+---
+
 ## Categorization & classification (M6)
 
 Two mechanisms, both narrow and deterministic. Investment auto-classification
@@ -1080,7 +1096,9 @@ double-flips it and renders a real paycheck as `-$6,400.00`. `formatInflow` is
 only correct on a raw, still-negative stored value — a single transaction row,
 never a pre-summed total.
 
-### Statement coverage — the dashboard reports on finished months only
+---
+
+## Statement coverage — the dashboard reports on finished months only
 
 **The problem.** A calendar month and a statement cycle are not the same thing. The owner's credit
 card statement closes around the 27th and the checking statement around the 15th, so on 28 August the

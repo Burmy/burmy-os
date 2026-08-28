@@ -1021,6 +1021,31 @@ involved — nothing is deployed yet, so a cron would have nowhere to run.
 
 ---
 
+## Loading and click feedback
+
+Two things the module gained in the 2026-08-28 perceived-performance pass, recorded here because both
+are easy to undo by accident.
+
+**Every Games segment has its own `loading.tsx`** — `(tabs)`, `[id]`, and `sync/[runId]`. This is not
+cosmetic: Next.js does not prefetch a dynamic route at all unless it has a `loading` boundary, and
+every route in this app is dynamic. Games had none, so its routes were both un-prefetched and silent
+on click, while Finance — which had a segment-scoped fallback — felt noticeably better. The `(tabs)`
+one is scoped to that segment deliberately: the previous nearest boundary sat *above* the
+Library/Upcoming/Stats bar, so switching tabs blanked the tabs being clicked.
+
+**A clicked cover or row shows a spinner while its page loads.** `LibraryView` tracks `openingId` and
+passes it to `GameGrid`/`GameTable`; the card renders an overlay above every foil layer, the row an
+inline spinner beside the title. This is the ONE piece of chrome allowed onto the box art beyond the
+countdown and the collection marker, and it earns its place for the opposite reason they do — it is
+not information about the game, it is the card answering the click. In a wall of near-identical tiles,
+no response reads as a missed tap, so the owner taps again.
+
+See `docs/ARCHITECTURE.md`, "Perceived performance", for the full diagnosis, including why the two
+trophy aggregates on `/games/stats` (~109ms and ~66ms mean, against under 20ms for every other query
+in the app) were left alone rather than indexed.
+
+---
+
 ## What's deliberately out of scope for v1
 
 Each of these was considered and cut, not overlooked:

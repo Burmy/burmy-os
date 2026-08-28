@@ -1189,13 +1189,69 @@ doing nothing.
 
 ---
 
+## Post-launch rounds (2026-08-28)
+
+Same shape as the post-M11 rounds above — real use, specific complaints, fixed in rounds. Recorded
+because the reasoning is the reusable part.
+
+### Round A — three URL/cache bugs
+
+- **`?category=<non-uuid>` returned a 500** on both `/finance/transactions` and `/finance/review`: the
+  raw param reached a `uuid` column comparison, and Postgres answers a bad one by raising `22P02`.
+  `/finance/review` had a worse version — `type` was a bare `as TransactionType` cast, so
+  `?type=garbage` reached an *enum* comparison. `readStatus` sitting beside them had always validated;
+  these two never did. `src/lib/uuid.ts` now holds the shape check, deliberately a regex rather than
+  `z.string().uuid()` because `filters.ts` is imported by a client component.
+- **Cache invalidation was wrong in both directions.** Review revalidated only `/finance/review`; the
+  ledger's actions revalidated transactions and monthly but never review — even though assigning a
+  category is what removes a row from the queue. Each file was right about its own page and wrong
+  about the others, which is what a per-feature list does. One shared
+  `revalidateTransactionSurfaces()` now covers all three.
+- **`Page NaN of 3`** — the client re-read `?page` with `Number()`, and `NaN` survives
+  `Math.floor`/`max`/`min`. Fixing it surfaced a fourth thing: importing `LEDGER_PAGE_SIZE` from the
+  DAL into that client component pulls `postgres` into the browser bundle and fails the build with
+  `Can't resolve 'fs'` — which is exactly why the page size had been a hardcoded `100` there.
+
+### Round B — statement coverage
+
+The dashboard was confidently wrong about the current month, every month: statements arrive mid-cycle
+(card ~27th, checking ~15th), so August reported a −70.4% savings rate from two weeks of data.
+
+A month is now reportable only when every active account has a transaction on or after its last day.
+Derived from the transactions, never configured — a stored close-day lies exactly when a statement is
+late. `/finance/monthly` defaults to `month − 1`, an uncovered month shows no stat cards at all, and
+trend charts drop the uncovered tail. Full rule and its two accepted costs in `docs/FINANCE.md`,
+"Statement coverage".
+
+The import sheet also gained an "Already imported" list — it showed only STAGED imports, so "did I
+already do August's card statement?" could only be answered by leaving the page.
+
+### Round C — perceived performance
+
+*"The transitions between pages are very laggy, and there is no indication."* Measured first, and the
+measurement moved the answer: the database is not the bottleneck and cannot become one at this size
+(18 MB; the two slowest queries in the app are trophy aggregates at ~109ms and ~66ms, everything else
+under 20ms). What costs time is the serverless round trip; what made it *feel* worse was silence.
+
+Two findings, both in `docs/ARCHITECTURE.md`, "Perceived performance":
+
+1. **A dynamic route with no `loading.tsx` is not prefetched at all** — Next 16's documented behavior,
+   and every route here is dynamic. Only two segments had one, and the shared fallback sat above the
+   sub-nav, so switching Games tabs blanked the tabs. Every segment now has its own, shaped like the
+   route it stands in for.
+2. **`loading.tsx` does nothing for a same-route navigation**, which is most of them — every filter
+   and period change pushes a query string on the route you are already on. `useNavigate` wraps those
+   in `startTransition` and the pending flag is rendered locally, next to the control that caused it.
+
+---
+
 ## ▶ RESUME HERE
 
 **State as of 2026-08-28:** deployed, live, and in daily use on real data. Both product modules —
-Finance and Games — are built. There is no next milestone; work is now driven by what real use turns
-up, in the round-based shape "Post-M11" above established.
+Finance and Games — are built. There is no next milestone; work is driven by what real use turns up,
+in the round-based shape established above.
 
-**The three things actually outstanding, in priority order:**
+**The four things actually outstanding, in priority order:**
 
 1. **No backup exists of the live database.** See `docs/DEPLOYMENT.md`, "Backup strategy". The restore
    procedure has only ever been verified against local dev, on a different Postgres major version, with
@@ -1203,6 +1259,9 @@ up, in the round-based shape "Post-M11" above established.
 2. **Migration `0016` is committed but not applied to production.** Take a backup first — that is
    exactly the trigger item 1 exists for.
 3. **The collections backfill needs its map**, per the section above.
+4. **Confirm the Netlify function region actually took effect.** `netlify.toml` now pins `us-east-2`
+   to match Supabase, but region pinning may be plan-gated — read the deploy log rather than assuming.
+   Worth tens of milliseconds, not hundreds; see that file's own comment for the honest sizing.
 
 ---
 

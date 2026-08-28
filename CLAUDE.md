@@ -57,7 +57,7 @@ Violating any of these is a correctness or security bug, not a style preference.
 | --- | --- |
 | Framework | Next.js 16.3 (App Router), React 19, TypeScript strict |
 | Runtime | Node 24 LTS, pnpm 11 (corepack, pinned in `packageManager`) |
-| Database | PostgreSQL 18 + Drizzle ORM 0.45 |
+| Database | PostgreSQL + Drizzle ORM 0.45. **Local dev and CI pin `postgres:18-alpine`; production (Supabase) runs 17.x** — Supabase picks its own version, so every migration is written and tested one major ahead of where it lands. Nothing in the schema depends on the difference today; see `docs/DEPLOYMENT.md`. |
 | Auth | Cloudflare Access with Google is the **sole** authentication mechanism. No in-app auth library, no session of Burmy's own, no second factor. |
 | UI | Tailwind, shadcn/ui, Lucide |
 | Grids | Hand-rolled on the shadcn `Table` primitive, with a thin shared presentation layer in `src/components/finance/`. TanStack Table was originally approved but was never actually installed — the tables in this app are small (dozens of rows, no sort/virtualization need), so it was dropped from the plan during the M8-era UX pass rather than added just because it was once on the list. **Not AG Grid** — its row grouping and pivoting are Enterprise. |
@@ -370,6 +370,35 @@ These are verified, not folklore. Do not "fix" them back.
   `src/lib/`), never in the DAL. Same reason `src/lib/uuid.ts` uses a regex rather than
   `z.string().uuid()`: `filters.ts` is imported by a client component, so a runtime `zod` import there
   would ship zod to the browser to check a string shape.
+- **A dynamic route with no `loading.tsx` is NOT PREFETCHED AT ALL — and every route in this app is
+  dynamic.** Next 16's own docs (`node_modules/next/dist/docs/01-app/02-guides/prefetching.md`): "a
+  static route is prefetched in full, while a dynamic route is skipped unless it has a `loading.js`
+  boundary." The build output is the check — every route printing `ƒ` is dynamic. A missing
+  `loading.tsx` therefore costs BOTH the skeleton and the prefetch, and the second loss is invisible:
+  the page still works, it is just never warmed. Put one in every route SEGMENT, not just at the top of
+  a subtree — a fallback one level too high replaces the sub-nav along with the content, so switching
+  tabs blanks the very tabs being clicked. `src/components/ui/page-skeleton.tsx` holds the shared
+  shapes; a route whose layout is genuinely unique builds its own from `Skeleton`.
+- **`loading.tsx` does nothing for a navigation that stays on the SAME route, which is most of them.**
+  Changing the month, the year, a category filter or a status chip pushes a new query string on the
+  route you are already on. No segment boundary is crossed, so no fallback renders, and the page shows
+  the PREVIOUS month's numbers until the server answers — with nothing on screen acknowledging the
+  click. That is the majority of interaction in Finance and it was completely silent. Route those
+  pushes through `useNavigate()` (`src/lib/use-navigate.ts`), which wraps them in `startTransition` so
+  React reports a real pending flag, and render it locally: a spinner on the control, `FilterBar`'s
+  `pending` line, a spinner on the row that was clicked. Local rather than one global top bar, which
+  was tried and is worse — on a 1600px layout it puts the feedback where the eye is not, and it cannot
+  say WHICH control is working.
+- **A partial month produces arithmetically correct numbers that are completely wrong.** Statements
+  arrive mid-cycle (card ~27th, checking ~15th), so the current month is never finished, and the
+  dashboard happily reported a −70.4% savings rate and "↓56% vs Jul" from two weeks of data. A month is
+  reportable only when EVERY active account has a transaction on or after its last day
+  (`isMonthCovered`, `src/server/finance/dashboard.ts`) — derived from the transactions, never from a
+  configured statement-close day, because a configured day lies exactly when a statement is late. The
+  page defaults to `month − 1`, an uncovered month shows no stat cards at all, and trend charts drop
+  the uncovered tail. Two accepted costs, both documented in `docs/FINANCE.md`: it is conservative, and
+  a DORMANT `is_active = true` account freezes every month after its last transaction (deactivate it —
+  that is what the flag already means).
 - **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
   `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
   renders and reads correctly on screen, and `textContent` is right, but the computed name comes out
@@ -389,6 +418,8 @@ src/proxy.ts              Access JWT verification, security headers, CSP nonce
 src/app/                  routes; / redirects to /finance/monthly (the landing view)
 src/features/finance/     Finance UI
 src/features/games/       Games UI
+src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks)
+src/lib/                  framework-free helpers usable from BOTH server and client (uuid, use-navigate)
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/db/games/      owner-scoped data access + the one HTTP boundary (igdb.ts)

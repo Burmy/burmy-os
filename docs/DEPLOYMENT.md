@@ -7,9 +7,11 @@
 > rebuild, or a second environment would follow the same order.
 >
 > Read this document as describing a running system, not an intended one. Where something is still
-> outstanding it says so explicitly, in bold, rather than being left implied — there are two such
-> items, both in "Backup strategy": the restore-verification procedure has never been run against the
-> live Supabase project (only against local dev), and no backup cadence has been established.
+> outstanding it says so explicitly, in bold, rather than being left implied. Three such items: two in
+> "Backup strategy" — the restore-verification procedure has never been run against the live Supabase
+> project (only against local dev), and no backup cadence has been established — plus one smaller,
+> under "Netlify environment-variable policy": the function region pin has not been confirmed to have
+> taken effect.
 >
 > **Not a VPS, not Docker, not a Cloudflare Tunnel.** See "Why the VPS was dropped" for the reasoning.
 > The VPS/Docker Compose self-hosting design this repo carried through M10's first pass has been
@@ -284,6 +286,24 @@ imports every route module to analyze it) never requires `DATABASE_URL` to be li
 Scoping all four to Functions/Runtime only, Production context only, means: a Deploy Preview or Branch
 deploy build succeeds with **zero** of these variables set, and none of the four ever appear in a build
 log.
+
+### `netlify.toml` pins the function region to `us-east-2`
+
+The Supabase project is in `us-east-2`; Netlify's default function region is `us-east-1`. Pinning them
+together removes a cross-region hop from every database round trip a page makes.
+
+**Sized honestly, so nobody expects more from it than it can give.** A page's queries run through one
+`Promise.all` against a pool of 10 connections, so a render pays roughly one or two round trips, not
+one per query — this saves tens of milliseconds, not hundreds. It is worth doing because it is free and
+permanent, not because it is the fix. The database is not the bottleneck either way (18 MB, ~1,100
+transactions, slowest read ~100ms and everything else under 20ms); what costs time is the serverless
+round trip itself, and a cold start most of all.
+
+**Two things to verify rather than assume.** Region pinning may be plan-gated — if this deployment's
+plan does not support it, Netlify falls back to the default region rather than failing the build, so
+read the deploy log for the region the functions actually ran in. And if the Supabase project ever
+moves, this value must move with it: a region pinned to the wrong place is worse than no pin, because
+it looks deliberate.
 
 **Never set any of the four in `netlify.toml`.** `netlify.toml` is committed to git; the four variables
 above go in Netlify's dashboard (Site configuration → Environment variables) or the Netlify CLI/API,

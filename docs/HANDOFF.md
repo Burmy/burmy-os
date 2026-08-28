@@ -18,7 +18,7 @@ describing the module's design rather than a moment in time.
 | --- | --- |
 | Branch | Merged to `main` (`674af16`) and pushed. The `feat/game-tracker` branch is history |
 | Migrations | 17 on disk (`0000`–`0016`). **`0016` is NOT yet applied to production** |
-| Gate | typecheck, lint, 1239 unit tests, build — all green. Integration tests need Docker and are CI-verified |
+| Gate | typecheck, lint, 1259 unit tests, build — all green. Integration tests need Docker and are CI-verified |
 | Deployed | **Live** at `https://app.burmy.me`, Games included, against real data in Supabase |
 
 Credentials in `.env` locally and in Netlify for production:
@@ -55,6 +55,15 @@ Collection" counts as its three titles instead of flattening into four
 unrelated rows. Two report-by-default scripts came with it:
 `link-game-collections.mjs` (the backfill, which still needs its map) and
 `merge-duplicate-games.mjs` (synced-copy-wins duplicate merge).
+
+**Then three post-launch rounds** (see `docs/ROADMAP.md`, "Post-launch
+rounds"): URL-param and cache-invalidation bugs; Finance statement coverage,
+so the dashboard reports only on finished months; and a perceived-performance
+pass. The last one touched Games directly — every segment now has its own
+route-shaped `loading.tsx` (without one, a dynamic route is not prefetched at
+all, and the shared fallback sat above the sub-nav, so switching Games tabs
+blanked the tabs), and clicking a cover or a row now shows a spinner on the
+card or row that was clicked.
 
 ---
 
