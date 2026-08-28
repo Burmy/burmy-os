@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, gt, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -21,6 +21,7 @@ import {
   DuplicateGameError,
   DuplicateWishlistGameError,
   GameNotFoundError,
+  InvalidCollectionError,
   isUniqueViolation,
 } from './errors';
 import { listPlayYears, listPlayYearsForGame } from './play-years';
@@ -54,6 +55,8 @@ export interface Game {
   readonly releaseDate: string | null;
   /** Whether `releaseDate`'s day is real or a `-01` placeholder — see `schema.ts`. */
   readonly releasePrecision: 'day' | 'month' | null;
+  /** The collection this title belongs to, or `null` for a standalone game or a collection row itself. See `schema.ts`. */
+  readonly collectionId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
@@ -84,6 +87,7 @@ export interface GameInput {
   readonly psnTitleId?: string | null;
   readonly psnNpCommunicationId?: string | null;
   readonly lastPlayedAt?: Date | null;
+  readonly collectionId?: string | null;
 }
 
 function rowToGame(
@@ -117,6 +121,7 @@ function rowToGame(
     lastPlayedAt: row.lastPlayedAt,
     releaseDate: row.releaseDate,
     releasePrecision: row.releasePrecision,
+    collectionId: row.collectionId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     playYears,
@@ -299,6 +304,13 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
       platinum: gamesTable.platinum,
       metacritic: gamesTable.metacritic,
       priceCents: gamesTable.priceCents,
+      // Carried through so the pure stats layer can tell a COLLECTION row
+      // apart from the titles inside it — see `playableRows` in
+      // `src/server/games/stats.ts`. Deliberately not resolved to an
+      // `isCollection` boolean here: that derivation is one line over the
+      // rows this query already returns, and keeping it in `stats.ts` keeps
+      // it unit-testable without a database, per that module's own charter.
+      collectionId: gamesTable.collectionId,
     })
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), ne(gamesTable.status, 'wanted')));
@@ -479,6 +491,170 @@ export async function updateWantedReleaseDate(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Collections
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One title inside a collection, as the collection's own page lists them. */
+export interface CollectionMember {
+  readonly id: string;
+  readonly title: string;
+  readonly coverUrl: string | null;
+  readonly platform: GamePlatform;
+  readonly status: GameStatus;
+  readonly rating: number | null;
+  readonly firstPlayedYear: number | null;
+}
+
+/** The games inside one collection, alphabetical — a boxed set has a running order, but the database does not know it. */
+export async function listCollectionMembers(
+  ownerId: string,
+  collectionId: string,
+): Promise<CollectionMember[]> {
+  const rows = await getDb()
+    .select({
+      id: gamesTable.id,
+      title: gamesTable.title,
+      coverUrl: gamesTable.coverUrl,
+      platform: gamesTable.platform,
+      status: gamesTable.status,
+      rating: gamesTable.rating,
+      firstPlayedYear: gamesTable.firstPlayedYear,
+    })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.collectionId, collectionId)))
+    .orderBy(asc(gamesTable.title));
+
+  return rows.map((row) => ({
+    ...row,
+    platform: row.platform as GamePlatform,
+    status: row.status as GameStatus,
+  }));
+}
+
+/**
+ * The rows a game may be filed INTO, for the editor's picker.
+ *
+ * Anything that is not itself already inside a collection, minus the game
+ * being edited — i.e. exactly the set `assertCollectionTargetValid` below
+ * will accept, so the picker can never offer a choice the server refuses.
+ * Deliberately includes ordinary standalone games, not just rows that
+ * already have members: a collection comes into existence the moment the
+ * first game is filed into one, and requiring a separate "make this a
+ * collection" step first would be a mode for no reason.
+ */
+export async function listCollectionOptions(
+  ownerId: string,
+  excludeGameId: string,
+): Promise<{ readonly id: string; readonly title: string }[]> {
+  return getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title })
+    .from(gamesTable)
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        isNull(gamesTable.collectionId),
+        ne(gamesTable.id, excludeGameId),
+      ),
+    )
+    .orderBy(asc(gamesTable.title));
+}
+
+/**
+ * Refuses a `collection_id` that would break the one-level rule — see
+ * `InvalidCollectionError` for the three cases. Owner-scoped throughout: a
+ * target belonging to someone else is simply not found, and reads as an
+ * ordinary not-found rather than confirming it exists.
+ */
+async function assertCollectionTargetValid(
+  ownerId: string,
+  gameId: string,
+  collectionId: string,
+): Promise<void> {
+  if (collectionId === gameId) throw new InvalidCollectionError('self');
+
+  const [target] = await getDb()
+    .select({ id: gamesTable.id, collectionId: gamesTable.collectionId })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.id, collectionId)))
+    .limit(1);
+
+  if (!target) throw new GameNotFoundError();
+  if (target.collectionId !== null) throw new InvalidCollectionError('target-is-member');
+
+  // Moving a row that already holds games INTO another collection would bury
+  // its own members two levels deep, where no view renders them.
+  const [ownMember] = await getDb()
+    .select({ id: gamesTable.id })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.collectionId, gameId)))
+    .limit(1);
+
+  if (ownMember) throw new InvalidCollectionError('already-a-collection');
+}
+
+/**
+ * Files a game into a collection, or takes it out of one (`null`).
+ *
+ * Removing a game from its collection does NOT give it back the hours, price
+ * or trophies that live on the collection — those were never its own. It
+ * simply becomes an ordinary standalone entry again, which is the same thing
+ * `ON DELETE SET NULL` does when a collection is deleted outright.
+ */
+export async function setGameCollection(
+  ownerId: string,
+  gameId: string,
+  collectionId: string | null,
+): Promise<void> {
+  if (collectionId !== null) await assertCollectionTargetValid(ownerId, gameId, collectionId);
+
+  const updated = await getDb()
+    .update(gamesTable)
+    .set({ collectionId, updatedAt: new Date() })
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.id, gameId)))
+    .returning({ id: gamesTable.id });
+
+  if (!updated[0]) throw new GameNotFoundError();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sync — shared scoping
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A title INSIDE a collection is INVISIBLE to both sync engines.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY, AND WHAT BREAKS WITHOUT IT
+ *
+ * A collection ("Uncharted: The Nathan Drake Collection") is the row that
+ * carries the Steam/PSN identity, the hours and the trophy list — it is the
+ * only thing either API actually knows about. The individual titles inside
+ * it ("Uncharted 2: Among Thieves Remastered") exist so the owner can count,
+ * rate and illustrate them separately; no API will ever return one.
+ *
+ * Left visible to a sync, a child is matched BY NAME against the provider's
+ * library like any other unlinked row — and `bestTitleMatchAmong` would
+ * happily score "Uncharted 2: Among Thieves Remastered" against the
+ * collection's own PSN played title. That stages a `link` change pointing a
+ * child at its parent's `psnTitleId`, then `field_update`s flipping the
+ * child's platform and overwriting its (deliberately empty) hours with the
+ * collection's. The collection's real 44h would then exist twice, and the
+ * counting rule in `stats.ts` would be summing it twice with it.
+ *
+ * This is the same failure mode — and the same fix — as the unlinked-PSP
+ * guard in `resolvePlayedTitle` (`src/features/games/sync/psn-actions.ts`):
+ * a row that can never have a genuine provider match must never reach the
+ * name matcher at all. Declared ONCE here and applied at all four sync read
+ * sites below rather than spelled out per query, because four is exactly the
+ * number of places that is easy to update three of.
+ *
+ * A COLLECTION row itself is not excluded — `collection_id` is null on it,
+ * so it syncs normally and is where every linked field belongs.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+const NOT_A_COLLECTION_MEMBER = isNull(gamesTable.collectionId);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Steam sync (src/features/games/sync/sync-actions.ts)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -498,7 +674,7 @@ export async function countSteamGames(ownerId: string): Promise<number> {
   const rows = await getDb()
     .select({ n: sql<number>`count(*)::int` })
     .from(gamesTable)
-    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')));
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam'), NOT_A_COLLECTION_MEMBER));
 
   return rows[0]?.n ?? 0;
 }
@@ -525,7 +701,7 @@ export async function listSteamGamesChunk(
   afterId: string | null,
   limit: number,
 ): Promise<SteamSyncGame[]> {
-  const filters = [eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')];
+  const filters = [eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam'), NOT_A_COLLECTION_MEMBER];
   if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
 
   return getDb()
@@ -558,7 +734,7 @@ export async function listSteamGamesForMatching(
   return getDb()
     .select({ id: gamesTable.id, title: gamesTable.title, steamAppid: gamesTable.steamAppid })
     .from(gamesTable)
-    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam')));
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.platform, 'steam'), NOT_A_COLLECTION_MEMBER));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -626,7 +802,9 @@ export async function countPsnGames(ownerId: string): Promise<number> {
   const rows = await getDb()
     .select({ n: sql<number>`count(*)::int` })
     .from(gamesTable)
-    .where(and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)));
+    .where(
+      and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS), NOT_A_COLLECTION_MEMBER),
+    );
 
   return rows[0]?.n ?? 0;
 }
@@ -643,7 +821,11 @@ export async function listPsnGamesChunk(
   afterId: string | null,
   limit: number,
 ): Promise<PsnSyncGame[]> {
-  const filters = [eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)];
+  const filters = [
+    eq(gamesTable.ownerId, ownerId),
+    inArray(gamesTable.platform, PSN_PLATFORMS),
+    NOT_A_COLLECTION_MEMBER,
+  ];
   if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
 
   const rows = await getDb()
@@ -698,7 +880,9 @@ export async function listPsnGamesForMatching(
       psnTitleId: gamesTable.psnTitleId,
     })
     .from(gamesTable)
-    .where(and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS)));
+    .where(
+      and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS), NOT_A_COLLECTION_MEMBER),
+    );
 
   return rows.map((row) => ({ ...row, platform: row.platform as GamePlatform }));
 }

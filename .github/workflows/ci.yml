@@ -43,10 +43,32 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # `NODE_ENV` IS DELIBERATELY NOT SET HERE. It used to be, as
+    # `NODE_ENV: development` at job level, and it broke two steps at once —
+    # which is why this workflow had never once gone green.
+    #
+    #   · `pnpm test` — vitest sets `NODE_ENV=test` unless something already
+    #     set it. With `development` forced on, `next/image` runs its
+    #     development-mode host validation against a config the bundler never
+    #     injects under vitest, so `remotePatterns` is empty and EVERY remote
+    #     `src` throws. Two component tests failed on it; one of them then
+    #     rendered an empty tree, which read as a second, unrelated failure.
+    #   · `pnpm build` — the exact footgun CLAUDE.md documents: `next build`
+    #     resolves the DEVELOPMENT React build during prerender and dies with
+    #     `TypeError: Cannot read properties of null (reading 'useContext')`
+    #     on `/_global-error`, a page nobody wrote. Reproduced directly before
+    #     this change.
+    #
+    # Nothing needed it. `tests/integration/harness.ts` sets `NODE_ENV`
+    # itself (see its own comment); the unit tests pass an env object straight
+    # into `resolveAccessMode()`; and `next dev` sets it for the e2e server's
+    # own process. It is kept below on the one step that historically carried
+    # it, so that suite's behavior is unchanged rather than merely assumed.
+    # ─────────────────────────────────────────────────────────────────────────
     env:
       DATABASE_URL: postgres://burmy:ci_only_not_a_real_secret@localhost:5432/burmy
       OWNER_EMAIL: ci@example.invalid
-      NODE_ENV: development
 
     steps:
       - uses: actions/checkout@v4
@@ -81,6 +103,12 @@ jobs:
 
       - name: E2E tests
         run: pnpm test:e2e
+        # The one step that keeps it — see the note on the job `env` block
+        # above. `next dev` would set this for its own process anyway, so this
+        # is belt-and-braces for the suite that used to rely on the job-level
+        # value, not a new requirement.
+        env:
+          NODE_ENV: development
 
       - name: Build
         run: pnpm build

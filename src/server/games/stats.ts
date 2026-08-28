@@ -16,6 +16,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { collectionIdsIn, countableGames } from './collections';
 import { type PlayYearRow, attributeHours } from './play-years';
 import type { GameOwnership, GamePlatform, GameStatus } from './taxonomy';
 
@@ -40,6 +41,8 @@ export interface GameStatRow {
   readonly platinum: boolean;
   readonly metacritic: number | null;
   readonly priceCents: number | null;
+  /** The collection this title belongs to. See `collections.ts` for the counting rule this feeds. */
+  readonly collectionId: string | null;
 }
 
 export interface YearlyBreakdownRow {
@@ -50,6 +53,11 @@ export interface YearlyBreakdownRow {
    * Distinct games with hours attributed to this year. Deliberately does NOT
    * sum to the library total: a game played across two years is genuinely
    * played in both, and counting it once would hide that.
+   *
+   * A collection counts ONCE here, not once per title inside it — hours are
+   * attributed to the row that carries them. `startedCount` above is the
+   * figure that reflects the owner's own game count; this one answers "what
+   * did I have on the go," where the collection is the honest unit.
    */
   readonly playedCount: number;
   readonly hoursTenths: number;
@@ -74,7 +82,19 @@ export interface LibrarySummary {
   readonly averageRating: number | null;
   /** Count of games with the owner's own `platinum` flag set. */
   readonly platinumCount: number;
-  /** Mean `hoursTenths` over games that HAVE logged hours. Null when nothing has any hours logged — an unplayed backlog entry is excluded, not counted as a zero. */
+  /**
+   * Mean `hoursTenths` over games that HAVE logged hours. Null when nothing
+   * has any hours logged — an unplayed backlog entry is excluded, not counted
+   * as a zero.
+   *
+   * APPROXIMATE FOR COLLECTIONS, deliberately: a collection's hours are one
+   * figure covering several titles, so its 44h divides by one row here, not
+   * three. Reporting it exactly would mean per-title hours, which neither
+   * PSN nor Steam can supply and the owner does not record — the same limit
+   * `game_play_years` documents for per-year splits. This is the identical
+   * approximation the source spreadsheet made, named here rather than
+   * silently inherited.
+   */
   readonly averageHoursTenthsPerGame: number | null;
   /** Mean `metacritic` over games that have one. Null when none do. */
   readonly averageMetacritic: number | null;
@@ -146,12 +166,18 @@ export function buildYearlyBreakdown(
     target.playedGames.add(attribution.gameId);
   }
 
+  // A collection is not itself a game that was started, but its achievements
+  // ARE the real ones (its titles carry none) — so this loop walks every row
+  // and applies the counting rule to `startedCount` alone. See
+  // `countableGames`.
+  const collections = collectionIdsIn(rows);
+
   for (const row of rows) {
     // A retro entry with no year is not year zero — it has no place in a
     // year-by-year comparison and is excluded rather than bucketed.
     if (row.firstPlayedYear === null) continue;
     const target = bucket(row.firstPlayedYear);
-    target.startedCount += 1;
+    if (!collections.has(row.id)) target.startedCount += 1;
     target.achievements += row.achievementsUnlocked ?? 0;
   }
 
@@ -175,6 +201,16 @@ export function buildYearlyBreakdown(
 }
 
 export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummary {
+  // COUNTS only — see `countableGames`. Every sum and average below stays on
+  // the full `rows`, because a collection is where the hours, price and
+  // trophies actually live.
+  const games = countableGames(rows);
+
+  // Both a collection and its titles may carry a rating (the collection's is
+  // often the only one, imported from the spreadsheet; a title's is the
+  // owner's opinion of that specific game). Averaged over the full set on
+  // purpose: every rating here is a real opinion the owner recorded, and
+  // silently discarding one class of them would be the wrong kind of tidy.
   const rated = rows.filter((row) => row.rating !== null);
 
   // Excluded from their averages entirely, not counted as a zero — the same
@@ -184,11 +220,11 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
   const withMetacritic = rows.filter((row) => row.metacritic !== null);
 
   return {
-    totalGames: rows.length,
+    totalGames: games.length,
     totalHoursTenths: rows.reduce((total, row) => total + (row.hoursTenths ?? 0), 0),
-    backlogCount: rows.filter((row) => row.status === 'backlog').length,
-    playingCount: rows.filter((row) => row.status === 'playing').length,
-    playedCount: rows.filter((row) => row.status === 'played').length,
+    backlogCount: games.filter((row) => row.status === 'backlog').length,
+    playingCount: games.filter((row) => row.status === 'playing').length,
+    playedCount: games.filter((row) => row.status === 'played').length,
     averageRating:
       rated.length === 0 ? null : rated.reduce((sum, row) => sum + (row.rating ?? 0), 0) / rated.length,
     platinumCount: rows.filter((row) => row.platinum).length,
@@ -219,14 +255,19 @@ export function buildFinancialSummary(rows: readonly GameStatRow[]): FinancialSu
   // too small.
   const totalHours = rows.reduce((sum, row) => sum + (row.hoursTenths ?? 0), 0) / 10;
 
+  // Two different backlog questions, two different row sets — see
+  // `countableGames`. "How many games are waiting" counts titles (a
+  // collection is not itself something you play); "how much money is sitting
+  // in the backlog" sums prices, which only ever live on the collection.
   const backlog = rows.filter((row) => row.status === 'backlog');
   const backlogValueCents = backlog.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+  const backlogCount = countableGames(rows).filter((row) => row.status === 'backlog').length;
 
   return {
     totalSpendCents,
     averagePriceCents: priced.length === 0 ? null : totalSpendCents / priced.length,
     costPerHourCents: totalHours === 0 ? null : totalSpendCents / totalHours,
-    backlogCount: backlog.length,
+    backlogCount,
     backlogValueCents,
   };
 }

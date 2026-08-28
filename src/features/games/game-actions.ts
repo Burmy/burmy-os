@@ -4,8 +4,16 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
-import { DuplicateGameError, GameNotFoundError } from '@/server/db/games/errors';
-import { type Game, type GameInput, createGame, deleteGame, getGame, updateGame } from '@/server/db/games/games';
+import { DuplicateGameError, GameNotFoundError, InvalidCollectionError } from '@/server/db/games/errors';
+import {
+  type Game,
+  type GameInput,
+  createGame,
+  deleteGame,
+  getGame,
+  setGameCollection,
+  updateGame,
+} from '@/server/db/games/games';
 import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
 import { findDuplicateYear, validateSplit } from '@/server/games/play-years';
@@ -102,6 +110,8 @@ function toResult(error: unknown): ActionResult {
     );
   }
   if (error instanceof GameNotFoundError) return fail(error.message);
+  // Carries its own owner-facing sentence per `reason` — see the class.
+  if (error instanceof InvalidCollectionError) return fail(error.message);
   if (error instanceof z.ZodError) {
     const issue = error.issues[0];
     const path = issue?.path[0];
@@ -638,6 +648,36 @@ export async function updateGamePlayYearsAction(
 
   try {
     await replacePlayYears(owner.userId, gameId, playYears);
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/**
+ * Files a game into a collection, or takes it out of one.
+ *
+ * Its own action rather than a `GAME_FIELD_SCHEMAS` entry, for the same
+ * reason `updateGamePlayYearsAction` is: this is not a scalar the owner
+ * types, it is a REFERENCE whose validity depends on the target row's own
+ * state (the one-level rule — see `InvalidCollectionError`). Routing it
+ * through the generic field action would mean that check living inside a
+ * switch case that otherwise only parses strings.
+ */
+export async function updateGameCollectionAction(
+  id: string,
+  collectionId: string | null,
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await setGameCollection(
+      owner.userId,
+      idSchema.parse(id),
+      collectionId === null || collectionId === '' ? null : idSchema.parse(collectionId),
+    );
   } catch (error) {
     return toResult(error);
   }

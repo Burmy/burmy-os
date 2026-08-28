@@ -7,6 +7,7 @@ import { MonthlyGridTable } from '@/features/finance/monthly/monthly-grid-table'
 import { requireOwner } from '@/server/auth/owner';
 import { listCategories } from '@/server/db/finance/categories';
 import {
+  getAccountCoverage,
   getCategoryTotalsForWindow,
   getDailyTotalsForMonth,
   getMonthlyGridAggregates,
@@ -14,7 +15,7 @@ import {
   getTopExpensesForMonth,
   listTransactionYears,
 } from '@/server/db/finance/grid';
-import { listInProgressImports } from '@/server/db/finance/imports';
+import { listCommittedImports, listInProgressImports } from '@/server/db/finance/imports';
 import { getNeedsReviewCount } from '@/server/db/finance/transactions';
 import { readHiddenGridColumns } from '@/server/security/grid-columns';
 import {
@@ -24,6 +25,10 @@ import {
   buildTrend,
   buildYearlyBreakdown,
   compareToBaseline,
+  dropUncoveredTail,
+  isMonthCovered,
+  lastDayOfMonth,
+  latestCoveredMonth,
   compareToPreviousMonth,
   computeAverageDailySpending,
   computeSavingsRate,
@@ -97,10 +102,32 @@ export default async function MonthlyPage({
   const currentYear = now.getUTCFullYear();
   const currentMonth = now.getUTCMonth() + 1;
 
-  const year = readYear(params.year, currentYear);
-  const isCurrentYearSelected = year === currentYear;
-  const month = readMonth(params.month, isCurrentYearSelected ? currentMonth : 12);
-  const isCurrentMonth = isCurrentYearSelected && month === currentMonth;
+  // ───────────────────────────────────────────────────────────────────────────
+  // THE PAGE LANDS ON LAST MONTH, NOT THIS ONE.
+  //
+  // The current month is never finished — the owner's card statement closes
+  // around the 27th and checking around the 15th — so opening Finance used to
+  // mean looking at two weeks of data presented as a month, complete with a
+  // savings rate and a "vs last month" comparison. Last month is the most
+  // recent month that can be whole, so it is where the page starts.
+  //
+  // A plain month − 1, deliberately, rather than "the newest month the data
+  // actually covers": the default is where you LAND, and it should be
+  // predictable and the same every time you open the app. Whether the month
+  // has everything in it is a separate question, answered by `isMonthCovered`
+  // below, which can say so on screen. Rolling the default around based on
+  // import state would move the page under the owner for reasons invisible
+  // from the URL.
+  //
+  // January rolls the year back with it — hence `previousMonth` rather than
+  // arithmetic on `currentMonth` alone.
+  // ───────────────────────────────────────────────────────────────────────────
+  const defaultPeriod = previousMonth(currentYear, currentMonth);
+
+  const year = readYear(params.year, defaultPeriod.year);
+  // A year picked WITHOUT a month still lands on December, as it always has —
+  // browsing to 2024 means the whole of 2024, not whichever month today is.
+  const month = readMonth(params.month, year === defaultPeriod.year ? defaultPeriod.month : 12);
 
   const recentMonths = trailingMonths(year, month, 6);
   const categoryWindowStart = monthRange(recentMonths[0]!.year, recentMonths[0]!.month).start;
@@ -112,7 +139,9 @@ export default async function MonthlyPage({
     aggregateRows,
     needsReviewCount,
     inProgressImports,
+    committedImports,
     monthlyTotals,
+    coverage,
     categoryTotals,
     dailyTotals,
     topExpenses,
@@ -124,7 +153,9 @@ export default async function MonthlyPage({
     getMonthlyGridAggregates(owner.userId, year),
     getNeedsReviewCount(owner.userId),
     listInProgressImports(owner.userId),
+    listCommittedImports(owner.userId),
     getMonthlyTotalsAllTime(owner.userId),
+    getAccountCoverage(owner.userId),
     getCategoryTotalsForWindow(owner.userId, categoryWindowStart, categoryWindowEnd),
     getDailyTotalsForMonth(owner.userId, year, month),
     getTopExpensesForMonth(owner.userId, year, month, 8),
@@ -168,16 +199,31 @@ export default async function MonthlyPage({
   const baseline = compareToBaseline(summary, monthlyTotals.map(toMonthSummary), year, month);
 
   const savingsRatePercent = computeSavingsRate(summary.incomeCents, summary.expenseCents);
-  const dailyDivisor = isCurrentMonth ? now.getUTCDate() : daysInMonth(year, month);
-  const avgDailySpendingCents = computeAverageDailySpending(summary.expenseCents, dailyDivisor);
+  // Always the WHOLE month. This used to divide by the elapsed day for the
+  // current month and label the result "So far this month" — a partial figure
+  // dressed up as an average. The stat cards now render only for a covered
+  // month (see `monthIsCovered` below), so there is no partial case left to
+  // special-case, and no divisor that changes meaning depending on the date.
+  const avgDailySpendingCents = computeAverageDailySpending(summary.expenseCents, daysInMonth(year, month));
 
   const selectedGridRow = grid.rows[month - 1];
   const expenseTxnCount = selectedGridRow?.totalExpenditureTxnCount ?? 0;
   const avgTransactionCents = expenseTxnCount > 0 ? summary.expenseCents / expenseTxnCount : null;
 
-  const latestMonthWithData = monthlyTotals.at(-1);
-  const trend: TrendPoint[] = latestMonthWithData
-    ? buildTrend(monthlyTotals, latestMonthWithData.year, latestMonthWithData.month, 12)
+  // ── Statement coverage ──────────────────────────────────────────────────
+  // See `AccountCoverage` in `server/finance/dashboard.ts` for the rule and
+  // why it is derived from the transactions rather than configured.
+  const monthIsCovered = isMonthCovered(coverage, year, month);
+  const lastCovered = latestCoveredMonth(coverage);
+
+  // The trend is anchored at the last COVERED month, not the last month with
+  // any data at all. Anchoring at the latter put a half-imported month at the
+  // right-hand end of every line, where it read as a collapse in income and
+  // spending rather than as an artifact of the statement cycle. Anchoring
+  // rather than filtering afterwards keeps a full 12 points on the chart.
+  const trendAnchor = lastCovered ?? monthlyTotals.at(-1) ?? null;
+  const trend: TrendPoint[] = trendAnchor
+    ? buildTrend(monthlyTotals, trendAnchor.year, trendAnchor.month, 12)
     : [];
 
   const categoryMetaForBreakdown: CategoryMeta[] = [
@@ -191,7 +237,15 @@ export default async function MonthlyPage({
     month: m.month,
     label: `${MONTH_ABBREVIATIONS[m.month - 1] ?? ''} ${m.year}`,
   }));
-  const categoryTrend = buildCategoryTrend(categoryTotals, categoryMetaForBreakdown, recentMonthLabels, 5);
+  // Same reason as `trend` above — the trailing window is anchored on the
+  // SELECTED month, so browsing to an uncovered month would otherwise end
+  // every category line on a partial column.
+  const categoryTrend = buildCategoryTrend(
+    categoryTotals,
+    categoryMetaForBreakdown,
+    dropUncoveredTail(recentMonthLabels, coverage),
+    5,
+  );
   const biggestSpendingDay = findBiggestSpendingDay(dailyTotals);
 
   const insights = {
@@ -203,7 +257,15 @@ export default async function MonthlyPage({
     bestNetMonth: findExtremeMonth(monthlyTotals, 'net'),
   };
 
-  const ytdMonthsElapsed = isCurrentYearSelected ? currentMonth : 12;
+  // Year Overview reports on COVERED months only, for the same reason the
+  // month view does — "year to date" that silently includes half of the
+  // current month is not a figure anything can be compared against. A past
+  // year fully behind the coverage line reads as all 12.
+  const ytdMonthsElapsed =
+    lastCovered === null ? 0 : lastCovered.year > year ? 12 : lastCovered.year === year ? lastCovered.month : 0;
+  // Both annual views read from this rather than the raw year, so the donut
+  // and the stacked bars agree with the YTD cards above them.
+  const coveredYearCategoryTotals = yearCategoryTotals.filter((row) => row.month <= ytdMonthsElapsed);
   const ytdRows = grid.rows.map((row) => ({
     month: row.month,
     incomeCents: row.incomeCents,
@@ -219,13 +281,13 @@ export default async function MonthlyPage({
     netCents: row.grossSavingsCents,
   }));
 
-  const annualCategories = buildAnnualCategoryBreakdown(yearCategoryTotals, year, categoryMetaForBreakdown);
+  const annualCategories = buildAnnualCategoryBreakdown(coveredYearCategoryTotals, year, categoryMetaForBreakdown);
   // Every real category gets its own series — `+ 2` covers an uncategorized
   // bucket too, so the "Other categories" catch-all never actually triggers
   // for a normal category list. The 16-color chart palette is sized to
   // match; past that many simultaneous categories, colors start repeating.
   const yearlyBreakdown = buildYearlyBreakdown(
-    yearCategoryTotals,
+    coveredYearCategoryTotals,
     year,
     categoryMetaForBreakdown,
     categoryMetaForBreakdown.length + 2,
@@ -234,7 +296,9 @@ export default async function MonthlyPage({
   // The "Transactions" toolbar button was removed once Transactions became
   // a SubNav tab (see the (tabs) route group's layout) — a second way to
   // reach the same page would be redundant, not extra convenience.
-  const actions = <ImportSheet inProgressImports={inProgressImports} />;
+  const actions = (
+    <ImportSheet inProgressImports={inProgressImports} committedImports={committedImports} />
+  );
 
   return (
     <div>
@@ -275,7 +339,14 @@ export default async function MonthlyPage({
             year={year}
             month={month}
             years={years}
-            isCurrentMonth={isCurrentMonth}
+            coverage={{
+              covered: monthIsCovered,
+              monthEnd: lastDayOfMonth(year, month),
+              accounts: coverage.map((account) => ({
+                name: account.accountName,
+                latestDate: account.latestDate,
+              })),
+            }}
             previousMonthLabel={previousMonthLabel}
             actions={actions}
             summary={summary}

@@ -74,10 +74,19 @@ No VPS, no restic, no infrastructure. This happens on day one.
 > text is still in git history (`git log -p -- docs/BACKUP_RESTORE.md`) if it's ever useful again.
 >
 > The current backup and restore procedure — manual `pg_dump`/`pg_restore` (or the Supabase CLI's
-> `supabase db dump`) against Supabase's direct connection string, when to run it, and the restore
-> verification already proven locally — lives in **`docs/DEPLOYMENT.md`, "Backup strategy"**. The
-> rollback procedure for a bad deploy or a bad migration lives in **`docs/DEPLOYMENT.md`, "Rollback
-> procedure"**. This file no longer duplicates either.
+> `supabase db dump`) against Supabase's direct connection string, and when to run it — lives in
+> **`docs/DEPLOYMENT.md`, "Backup strategy"**. The rollback procedure for a bad deploy or a bad
+> migration lives in **`docs/DEPLOYMENT.md`, "Rollback procedure"**. This file no longer duplicates
+> either.
+>
+> **Status (2026-08-28): NOT DONE, and this is the sentence that matters in this file.** The app is
+> live and Supabase holds the only copy of the Games data and 32 months of hand-categorized Finance
+> history. No backup of it has ever been taken. The restore procedure has been verified exactly once,
+> against the local dev container, on a different Postgres major version, with five rows in it — which
+> proves the *commands* work and proves nothing about the real database.
+>
+> Per the opening line of this document: a backup that has never been restored is not a backup, it is
+> a hope. Right now there is not even that.
 >
 > Supabase's own managed backups/PITR are Pro-tier only — Free has none — so the manual procedure in
 > `docs/DEPLOYMENT.md` is not a stopgap; it is the actual plan until/unless the project upgrades tiers.

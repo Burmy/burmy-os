@@ -79,8 +79,13 @@ export function GameDetailsContent({
   notes,
   hoursTenths,
   playYears,
+  collection,
+  collectionOptions,
+  isCollection,
+  isCollectionMember,
   onSaveField,
   onSavePlayYears,
+  onSaveCollection,
 }: {
   readonly ownership: GameOwnership | null;
   readonly priceCents: number | null;
@@ -94,12 +99,44 @@ export function GameDetailsContent({
   readonly notes: string | null;
   readonly hoursTenths: number | null;
   readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
+  readonly collection: { readonly id: string; readonly title: string } | null;
+  readonly collectionOptions: readonly { readonly id: string; readonly title: string }[];
+  /** This row HOLDS other games, so it cannot also sit inside one — the picker is hidden entirely. */
+  readonly isCollection: boolean;
+  /** This row sits inside a collection, which owns its money, hours and trophies. */
+  readonly isCollectionMember: boolean;
   readonly onSaveField: (field: GameFieldKey, value: string) => Promise<ActionResult>;
   readonly onSavePlayYears: (drafts: readonly PlayYearDraft[]) => Promise<ActionResult>;
+  readonly onSaveCollection: (collectionId: string) => Promise<ActionResult>;
 }): React.ReactElement {
+  /**
+   * A title inside a collection has no money or trophies of its own — both
+   * live on the collection and cover the whole set. Shown read-only rather
+   * than hidden: "£— , from the collection" is information, where an absent
+   * row just reads as a field this app forgot to offer. Exactly the
+   * treatment `steamOwned` already gets for a Steam-linked game.
+   */
+  const ownedByCollection = isCollectionMember;
+  const collectionHint = 'From the collection';
+
   return (
     <div className="space-y-4">
       <Section>
+        {/* A collection cannot be filed into another one (the one-level
+            rule), so a row that holds games gets no picker at all rather
+            than a disabled control implying it might one day be allowed. */}
+        {isCollection ? null : (
+          <InlineEditSelect
+            label="Part of"
+            value={collection?.id ?? ''}
+            displayValue={collection?.title ?? ''}
+            options={[
+              { value: '', label: 'Not in a collection' },
+              ...collectionOptions.map((option) => ({ value: option.id, label: option.title })),
+            ]}
+            onSave={onSaveCollection}
+          />
+        )}
         <InlineEditSelect
           label="Ownership"
           value={ownership ?? ''}
@@ -108,12 +145,16 @@ export function GameDetailsContent({
             { value: '', label: 'Not set' },
             ...GAME_OWNERSHIPS.map((value) => ({ value, label: OWNERSHIP_LABELS[value] })),
           ]}
+          disabled={ownedByCollection}
+          disabledHint={collectionHint}
           onSave={(value) => onSaveField('ownership', value)}
         />
         <InlineEditField
           label="Price paid"
           value={priceCents === null ? '' : (priceCents / 100).toFixed(2)}
           displayValue={priceCents === null ? undefined : `$${(priceCents / 100).toFixed(2)}`}
+          disabled={ownedByCollection}
+          disabledHint={collectionHint}
           onSave={(value) => onSaveField('priceDollars', value)}
         />
         <InlineEditField
@@ -140,25 +181,36 @@ export function GameDetailsContent({
           placeholder="Not set"
           onSave={(value) => onSaveField('firstPlayedYear', value)}
         />
+        {/* Two ways a count can be owned elsewhere, and the hint has to say
+            WHICH — "From Steam" on a game inside a boxed set would send the
+            owner looking for a Steam link that does not exist. Steam wins
+            when somehow both apply, since that is the one that actually
+            rewrites the value on every sync. */}
         <InlineEditField
           label="Achievements earned"
           value={achievementsUnlocked === null ? '' : String(achievementsUnlocked)}
           placeholder="Not tracked"
-          disabled={steamOwned}
-          disabledHint="From Steam"
+          disabled={steamOwned || ownedByCollection}
+          disabledHint={steamOwned ? 'From Steam' : collectionHint}
           onSave={(value) => onSaveField('achievementsUnlocked', value)}
         />
         <InlineEditField
           label="Achievements total"
           value={achievementsTotal === null ? '' : String(achievementsTotal)}
           placeholder="Not tracked"
-          disabled={steamOwned}
-          disabledHint="From Steam"
+          disabled={steamOwned || ownedByCollection}
+          disabledHint={steamOwned ? 'From Steam' : collectionHint}
           onSave={(value) => onSaveField('achievementsTotal', value)}
         />
-        <FullWidthRow>
-          <PlayYearsRow hoursTenths={hoursTenths} playYears={playYears} onSave={onSavePlayYears} />
-        </FullWidthRow>
+        {/* A play-year split apportions a game's OWN total across years. A
+            title inside a collection has no total of its own to apportion —
+            the set's hours are one figure on the collection, and only it can
+            carry a split. */}
+        {ownedByCollection ? null : (
+          <FullWidthRow>
+            <PlayYearsRow hoursTenths={hoursTenths} playYears={playYears} onSave={onSavePlayYears} />
+          </FullWidthRow>
+        )}
       </Section>
 
       <Section>

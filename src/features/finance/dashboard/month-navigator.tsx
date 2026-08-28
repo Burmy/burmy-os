@@ -1,10 +1,10 @@
 'use client';
 
-import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useNavigate } from '@/lib/use-navigate';
 import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
 
 /**
@@ -32,10 +32,14 @@ export function MonthNavigator({
   readonly years: readonly number[];
   readonly mode?: 'month' | 'year';
 }): React.ReactElement {
-  const router = useRouter();
+  // The most-used control in Finance, and the one whose latency was most
+  // invisible: stepping a month re-runs every query on the page but crosses no
+  // segment boundary, so no `loading.tsx` fallback appears and the previous
+  // month's numbers simply stay on screen. See `useNavigate`.
+  const { navigate, pending } = useNavigate();
 
   function go(nextYear: number, nextMonth: number): void {
-    router.push(`/finance/monthly?year=${nextYear}&month=${nextMonth}`);
+    navigate(`/finance/monthly?year=${nextYear}&month=${nextMonth}`);
   }
 
   function goPrevious(): void {
@@ -103,6 +107,13 @@ export function MonthNavigator({
       >
         <ChevronRight className="size-4" />
       </Button>
+
+      {/* Occupies a fixed slot whether or not it is spinning, so the row does
+          not jump sideways the moment you step a month — the control you are
+          about to click again must not move under the pointer. */}
+      <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+        {pending ? <Loader2 className="text-muted-foreground size-4 animate-spin" /> : null}
+      </span>
     </div>
   );
 }

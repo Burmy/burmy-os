@@ -1,7 +1,8 @@
 # Architecture
 
-Explains how the pieces fit and where the boundaries are. `docs/FINANCE.md` explains the domain rules
-in depth; `docs/ROADMAP.md` explains what decided and why, milestone by milestone.
+Explains how the pieces fit and where the boundaries are. `docs/FINANCE.md` and `docs/GAMES.md` explain
+the two domains' rules in depth; `docs/ROADMAP.md` explains what was decided and why, milestone by
+milestone; `docs/DEPLOYMENT.md` is canonical for the running production system.
 
 ---
 
@@ -23,8 +24,13 @@ Browser ──HTTPS──▶ Cloudflare (TLS terminates here, Access gates on Go
                         │
                         │ TLS — pooled connection (runtime) / direct connection (migrations)
                         ▼
-                   Supabase (managed Postgres 18, Supavisor pooler)
+                   Supabase (managed Postgres 17.x, Supavisor pooler)
 ```
+
+**Postgres 17, not 18** — Supabase picks its own version. Local dev and CI both pin `postgres:18-alpine`,
+so every migration is written and tested one major version ahead of where it lands. Nothing in the
+schema depends on the difference today; see `docs/DEPLOYMENT.md`, "Production runs a different Postgres
+MAJOR version", for why that is recorded rather than fixed.
 
 Netlify is the only hop between Cloudflare and the database. There is no VPS, no Docker host, and no
 network of our own to segment — the trust boundary that used to be an `internal: true` Docker network
@@ -37,10 +43,13 @@ neither ever reaches the browser.
 
 ```
 src/server/finance/     ← pure TypeScript. No React. No Next.js. No HTTP. No I/O beyond the repo layer.
+src/server/games/       ← the same rule, held to just as strictly.
 ```
 
 Money arithmetic, merchant normalization, deduplication, categorization and transfer classification
-all live here. They take plain data and return plain data.
+live in the first. Hours conversion, taxonomy, play-year attribution, stats aggregation, the collection
+counting rule, and the pure request/response shaping for IGDB, Steam and PSN live in the second. All of
+them take plain data and return plain data.
 
 This is not architectural taste. It is what makes financial correctness *verifiable*: the logic that
 decides whether $200 is counted once or twice can be exercised in a unit test that runs in
@@ -54,13 +63,26 @@ Everything else is arranged around it:
 | --- | --- | --- |
 | `src/server/finance/` | Domain logic and arithmetic. **No Drizzle, no database, no I/O.** | Nothing framework-related |
 | `src/server/db/` | Drizzle schema and connection | Domain types |
+| `src/server/games/` | Games domain logic — hours, taxonomy, stats, collections, sync planning. **Same rule: no Drizzle, no database, no HTTP.** | Nothing framework-related |
 | `src/server/db/finance/` | **Owner-scoped data access.** Every function takes an `ownerId` and injects it into the `WHERE`; mutations match on `(ownerId, id)`, never `id` alone. Routes and actions never build queries. | Drizzle, domain types |
-| `src/server/{auth,security}/` | Sessions, owner guard, CSP, headers, audit | Next.js request APIs |
+| `src/server/db/games/` | The same, for Games — **plus the module's only outbound HTTP** (`igdb.ts`, `steam-client.ts`, `psn-client.ts`) | Drizzle, domain types, `fetch` |
+| `src/server/{auth,security}/` | Owner guard, CSP, headers, audit | Next.js request APIs |
 | `src/features/finance/` | Finance UI — components, grids, review flow | Domain types, server actions |
+| `src/features/games/` | Games UI — library, game page, stats, sync review | Domain types, server actions |
 | `src/app/` | Routing, layouts, Server Actions, Route Handlers | Everything above |
 | `src/proxy.ts` | Access JWT verification, headers, CSP nonce | Next.js only |
 
 Dependencies point inward. The domain core knows nothing about what is above it.
+
+**Outbound HTTP is confined to `db/games/`, and only there.** Finance makes no external calls at all —
+CLAUDE.md's "no bank connections, ever" is absolute. Games talks to three third-party APIs, and each
+client is a leaf that fails soft: a missing credential, a timeout, a non-200 or malformed JSON all
+produce `[]`/`null`, never a throw, so no page can break because IGDB was slow. The pure URL-building
+and response-shaping for each lives in `server/games/` where it can be tested without a network; only
+the `fetch` itself lives in `db/games/`.
+
+**The two feature modules share nothing but generic UI primitives and the auth boundary**, deliberately
+— see "Extensibility" below.
 
 **Why data access is `db/finance/` and not `finance/queries/`** (settled in M3): the domain core's
 value is that it can be exercised without a database. Putting queries inside it would mean the money
@@ -159,16 +181,33 @@ the benefit.
 
 ---
 
-## Extensibility, deliberately unbuilt
+## Extensibility — the prediction, and what actually happened
 
-Burmy may one day gain other modules. The only architectural commitment made for that possibility is
-*placement*: Finance lives in `features/finance/` and `server/finance/` rather than smeared across
-generic directories, and genuinely shared concerns (auth, layout, db connection, security, audit) sit
-at application level because they are shared *today*.
+This section used to say: *"Burmy may one day gain other modules. The only architectural commitment
+made for that possibility is placement… Adding a second module means adding a directory and a nav
+entry. When a real second module exists and its real requirements are known, we refactor with knowledge
+instead of guessing now."*
 
-There is no module registry, no plugin system, no generic repository, no `UniversalModuleEngine`.
-Adding a second module means adding a directory and a nav entry. When a real second module exists and
-its real requirements are known, we refactor with knowledge instead of guessing now.
+**A second module now exists, and the prediction held.** Games was added as `features/games/`,
+`server/games/` and `server/db/games/` plus a nav entry. Nothing generic had to be built for it, and
+nothing generic was.
+
+**What the two modules actually share, in full:** the `src/components/ui/` primitives (button, table,
+dialog, chip, stat card), the `(private)` layout and sidebar, `src/server/db/index.ts`'s connection,
+`requireOwner()`, and the CSP/header work in `src/proxy.ts`. That is the complete list.
+
+**What they deliberately do NOT share, despite the surface similarity:** both count things, both
+aggregate, both have a stats page, both have a filterable table, both have a "sync/import then review
+then commit" flow. None of that is abstracted. Games has its own `hours.ts` mirroring `money.ts`'s
+containment rule rather than a shared `QuantityKit`; its own stats module rather than a shared
+aggregation engine; its own sync review screens rather than a shared staging framework. Each pair looks
+like duplication and is not — the constraints differ (money is signed cents where positive means
+outflow; hours are unsigned tenths), and a shared abstraction would have to model both, which means
+modelling neither well.
+
+**There is still no module registry, no plugin system, no generic repository.** CLAUDE.md now makes
+this a rule rather than a preference: do not build a shared module framework for the two that exist,
+and do not build a third module. Finance and Games are the product.
 
 ---
 
@@ -185,8 +224,80 @@ Stated plainly, because the reassuring version would be false:
 - **Supabase hosts the database** with the same category of at-rest/in-memory access any managed
   Postgres provider has to the data it stores.
 - **Google** sees an identity assertion at the Access layer and no financial data.
+- **IGDB (via Twitch OAuth), Steam and Sony** each receive game titles and identifiers from the Games
+  module, and Steam and Sony additionally tie those requests to the owner's real account on their
+  platform. Every one of these is **optional** — the module works fully with no credentials set — and
+  none of them ever receives Finance data, because Finance makes no outbound calls at all. Sony's is an
+  *unofficial* API accessed with a browser token; it can change or break without notice, which is why
+  its failure path is a visible message rather than an exception.
 
 The architecture buys "no host to patch, no inbound ports of our own, an identity gate, low cost" in
 exchange for trusting Cloudflare in transit, Netlify to run the app honestly, and Supabase with the
 data at rest. This should be an informed trade, not an assumption — see git history for the earlier
 self-hosted VPS design, which traded these platform trusts for operational burden instead.
+
+---
+
+## Perceived performance — why navigation felt slow, and what was done
+
+Real usage: *"the transitions between pages and everything is very laggy or slow, also there is no
+indication."* Measured rather than guessed, and the measurement moved the answer.
+
+**The database is not the bottleneck and cannot become one at this size.** 18 MB, ~1,100 transactions,
+185 games, 6,137 trophies. Supabase's performance advisors report nothing above INFO. Of the app's own
+queries, the two slowest are trophy aggregates on `/games/stats` at ~109ms and ~66ms mean; **everything
+else is under 20ms.** Adding indexes to a table Postgres can scan in a millisecond would be theatre.
+
+What actually costs time is the **serverless round trip** — a Netlify function invocation, cold most of
+the time for a single-user app that scales to zero — and what made that time feel worse than it is was
+the app saying nothing while it elapsed.
+
+### The prefetch rule that was being missed
+
+From Next.js 16's own docs: *without Cache Components, a static route is prefetched in full, while a
+**dynamic route is skipped unless it has a `loading.js` boundary**.* Every route in this app is dynamic
+(`ƒ` in the build output). Only two segments had a `loading.tsx`, so for the rest the nearest boundary
+was `(private)/loading.tsx` — above the sub-nav.
+
+Two consequences, both visible:
+
+- **Switching Games tabs blanked the tabs themselves.** The fallback lived above the `(tabs)` layout, so
+  Library → Stats replaced the sub-nav along with the content. Finance did not have this problem,
+  because it alone had a segment-scoped fallback.
+- **The fallback looked like no page in the app** — a title bar and a grey block — so every navigation
+  flashed to something unrelated and then flashed again to real content: two layout shifts where there
+  should be none.
+
+Every segment now has its own fallback, shaped like the route it stands in for
+(`src/components/ui/page-skeleton.tsx`). A fallback that matches the page reads as the page arriving,
+not as a different screen interrupting — the same latency, a different experience.
+
+### The silence `loading.tsx` cannot fix
+
+A route-level fallback only appears when a navigation crosses a **segment** boundary. Most interaction
+in Finance does not: changing the month, the year, a category filter or a status chip pushes a new query
+string on the **same** route. No boundary, no fallback, and the previous month's numbers stay on screen
+until the server answers.
+
+`src/lib/use-navigate.ts` wraps those pushes in `startTransition` so React reports them as pending for
+exactly as long as the server takes. Callers render that locally: a spinner beside the month navigator,
+a thin indeterminate line under `FilterBar`, a spinner on the game card or table row that was clicked.
+
+**Local, not one global progress bar** — that was the first design and it is worse: a bar at the top of
+the viewport is further from the control than the control is from the pointer, so on a wide screen the
+feedback appears where the eye is not, and it cannot say *which* of several controls is working.
+
+And because even a transition takes a moment to begin, the two navs use `useLinkStatus` (Next's own hook
+for exactly this) to acknowledge a click inside the `<Link>` itself, before the router has done anything.
+
+### What was deliberately NOT done
+
+- **No Suspense streaming of the page shells.** Tempting, and it would help a cold full page load. But
+  each page's queries already run through one `Promise.all` against a pool of 10, so a render waits
+  roughly one round trip, not the sum of its queries — and on a client-side navigation the shell is
+  already on screen, so there is nothing for streaming to reveal earlier. The win would be small and the
+  refactor is not.
+- **No caching of query results.** Every number in this app is computed at read time, on purpose
+  (CLAUDE.md invariant 1). Caching totals to make a page feel faster is the exact trade this project
+  exists to refuse.
+- **No index tuning.** See above — there is nothing to tune at 18 MB.

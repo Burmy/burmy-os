@@ -524,3 +524,148 @@ export function buildYearlyBreakdown(
 
   return { months, series };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Statement coverage — is a month actually finished?
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * THE PROBLEM: A CALENDAR MONTH AND A STATEMENT CYCLE ARE NOT THE SAME THING.
+ *
+ * The owner's credit card statement closes around the 27th and the checking
+ * statement around the 15th. So on 28 August, the app holds card transactions
+ * through ~the 27th and checking transactions through ~the 15th — and the
+ * August stat cards confidently reported an income of $3,813.88 against
+ * expenses of $6,497.68, a −70.4% savings rate, and a "↓56% vs Jul" that
+ * compared two weeks of one month against all of another.
+ *
+ * Every one of those numbers was arithmetically correct and completely
+ * misleading. The month wasn't bad; it wasn't over.
+ *
+ * THE RULE, AND WHY IT IS THIS ONE:
+ *
+ *   A month is COVERED when every active account has at least one transaction
+ *   dated on or after that month's last day.
+ *
+ * Read it as "we have imported data that runs past the end of this month,"
+ * which is exactly what makes a month safe to report on. It falls out of the
+ * transactions themselves — no statement-close-day configuration to maintain,
+ * no "mark month complete" checkbox to forget, and it self-corrects the moment
+ * the next statement lands. That matters more than it sounds: a configured
+ * close day LIES when a statement is late or an import is skipped, which are
+ * the exact situations where a wrong answer does damage.
+ *
+ * Worked through the owner's real cycle, on 5 September:
+ *
+ *   card     → latest transaction Aug 26   (statement closed Aug 27)
+ *   checking → latest transaction Aug 14   (statement closed Aug 15)
+ *
+ *   July   → both are past Jul 31          → COVERED, report it
+ *   August → neither reaches Aug 31        → not covered, say so
+ *
+ * July is correctly judged complete even though no statement is aligned to it:
+ * the card statement closing on 27 August contains Jul 28–31, and the checking
+ * statement closing on 15 August contains Jul 16–31. The month is whole across
+ * the two files even though neither file is a month.
+ *
+ * TWO PROPERTIES WORTH STATING PLAINLY:
+ *
+ * 1. It is CONSERVATIVE, and deliberately so. A month with genuinely no
+ *    activity in its final days reads as uncovered until the next statement
+ *    arrives. The cost is a short wait for stats that were going to be
+ *    unremarkable; the cost of the opposite error is a confident wrong number,
+ *    which is the entire failure this exists to stop.
+ *
+ * 2. A DORMANT ACTIVE ACCOUNT FREEZES EVERY LATER MONTH. An account left
+ *    `is_active = true` whose last transaction was in March holds every month
+ *    after March at "not covered" forever, because it never reaches their last
+ *    day. The fix is the mechanism that already exists and already means this:
+ *    set `is_active = false`. This function only ever sees accounts the caller
+ *    considers active, so a deactivated account drops out with no new
+ *    configuration, no new column, and no special case here.
+ */
+export interface AccountCoverage {
+  readonly accountId: string;
+  /** For the "August isn't ready — checking runs through Aug 15" explanation. */
+  readonly accountName: string;
+  /** ISO date of this account's most recent COMMITTED transaction. */
+  readonly latestDate: string;
+}
+
+/** ISO date of a month's last day — the bar every account has to clear. */
+export function lastDayOfMonth(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth(year, month)).padStart(2, '0')}`;
+}
+
+/**
+ * Is every account's data run past the end of this month?
+ *
+ * `false` for an empty `coverage` — no accounts have any transactions at all,
+ * so no month can be reported on. That is also what a brand-new install looks
+ * like, and showing "not covered" there is correct rather than unhelpful: the
+ * dashboard's empty state is what should be on screen.
+ *
+ * ISO dates compare correctly as strings (`'2026-08-15' < '2026-08-31'`), which
+ * is why this needs no `Date` parsing and no timezone reasoning — the same
+ * property `src/lib/format-date.ts` relies on for the opposite reason.
+ */
+export function isMonthCovered(
+  coverage: readonly AccountCoverage[],
+  year: number,
+  month: number,
+): boolean {
+  if (coverage.length === 0) return false;
+  const bar = lastDayOfMonth(year, month);
+  return coverage.every((account) => account.latestDate >= bar);
+}
+
+/**
+ * The most recent month every account has run past — the last month with
+ * numbers worth showing, and where the trend charts stop.
+ *
+ * Walks back from the month containing the EARLIEST account's latest
+ * transaction, because that account is the binding constraint: a month cannot
+ * be covered before the slowest-arriving statement reaches it. At most 12 steps
+ * so a long-dormant account cannot turn this into an unbounded loop; beyond a
+ * year behind, there is nothing worth charting anyway.
+ */
+export function latestCoveredMonth(
+  coverage: readonly AccountCoverage[],
+): { readonly year: number; readonly month: number } | null {
+  if (coverage.length === 0) return null;
+
+  const earliest = coverage.reduce((min, a) => (a.latestDate < min ? a.latestDate : min), coverage[0]!.latestDate);
+  let year = Number.parseInt(earliest.slice(0, 4), 10);
+  let month = Number.parseInt(earliest.slice(5, 7), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+
+  for (let i = 0; i < 12; i += 1) {
+    if (isMonthCovered(coverage, year, month)) return { year, month };
+    const prev = previousMonth(year, month);
+    year = prev.year;
+    month = prev.month;
+  }
+  return null;
+}
+
+/**
+ * Drops trailing months that are not covered yet.
+ *
+ * Without this the last point on every trend chart is a partial month, which
+ * reads as a cliff — income halved, spending collapsed — rather than as
+ * "the statements haven't arrived." A chart cannot carry a footnote, so the
+ * honest move is to end the line where the data ends.
+ *
+ * Only the TAIL is trimmed. A gap in the middle of history is a different
+ * thing (a month that was never imported) and silently dropping it would
+ * misrepresent the shape of the series far more than showing it does.
+ */
+export function dropUncoveredTail<T extends { readonly year: number; readonly month: number }>(
+  points: readonly T[],
+  coverage: readonly AccountCoverage[],
+): T[] {
+  const last = latestCoveredMonth(coverage);
+  if (last === null) return [];
+  const bar = last.year * 12 + last.month;
+  return points.filter((point) => point.year * 12 + point.month <= bar);
+}

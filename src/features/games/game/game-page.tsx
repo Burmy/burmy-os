@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ExternalLink, Loader2, Trash2 } from 'lucide-react';
 import { useEffect, useState, useTransition } from 'react';
@@ -13,13 +14,17 @@ import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
 import type { PlayYearDraft } from '@/features/games/play-years-panel';
-import type { Game } from '@/server/db/games/games';
+import { RatingStars } from '@/components/games/rating-stars';
+import { StatusBadge } from '@/components/games/status-badge';
+import type { CollectionMember, Game } from '@/server/db/games/games';
+import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import type { Trophy } from '@/server/games/trophies';
 import type { GameSuggestion } from '@/server/games/metadata';
 import {
   applyMetadataSuggestionAction,
   deleteGameAction,
   type GameFieldKey,
+  updateGameCollectionAction,
   updateGameFieldAction,
   updateGamePlayYearsAction,
 } from '../game-actions';
@@ -51,6 +56,9 @@ const SEARCH_MIN_LENGTH = 3;
 export function GamePage({
   game,
   trophies,
+  members,
+  collection,
+  collectionOptions,
 }: {
   readonly game: Game;
   /**
@@ -59,12 +67,31 @@ export function GamePage({
    * ~1.5s on every visit — see `trophies-section.tsx` for why that is gone.
    */
   readonly trophies: readonly Trophy[];
+  /** The games INSIDE this one. Non-empty exactly when this row is a collection. */
+  readonly members: readonly CollectionMember[];
+  /** The collection this game sits in, or `null`. */
+  readonly collection: { readonly id: string; readonly title: string } | null;
+  /** Rows this game could be filed into — see `listCollectionOptions`. */
+  readonly collectionOptions: readonly { readonly id: string; readonly title: string }[];
 }): React.ReactElement {
   const router = useRouter();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deletePending, startDeleteTransition] = useTransition();
 
   const steamOwned = game.steamAppid !== null;
+  /**
+   * This row IS a collection — it holds other games. Two consequences: it
+   * cannot itself be filed into one (the one-level rule), and the money,
+   * hours and trophies on it are the SET's, covering everything inside.
+   */
+  const isCollection = members.length > 0;
+  /**
+   * This row is a title inside a collection. Its hours, price and trophies
+   * live on the collection, so the fields that would otherwise invite an
+   * edit here are shown read-only — the same treatment `steamOwned` already
+   * gets, and for the same reason: the value is owned somewhere else.
+   */
+  const isCollectionMember = collection !== null;
 
   async function saveField(field: GameFieldKey, value: string): Promise<ActionResult> {
     return updateGameFieldAction(game.id, field, value);
@@ -72,6 +99,10 @@ export function GamePage({
 
   async function savePlayYears(drafts: readonly PlayYearDraft[]): Promise<ActionResult> {
     return updateGamePlayYearsAction(game.id, drafts);
+  }
+
+  async function saveCollection(collectionId: string): Promise<ActionResult> {
+    return updateGameCollectionAction(game.id, collectionId === '' ? null : collectionId);
   }
 
   function remove(): void {
@@ -115,6 +146,7 @@ export function GamePage({
           hoursTenths={game.hoursTenths}
           platinum={game.platinum}
           steamOwned={steamOwned}
+          collectionOwned={isCollectionMember}
           onSaveField={saveField}
         />
 
@@ -139,11 +171,32 @@ export function GamePage({
             notes={game.notes}
             hoursTenths={game.hoursTenths}
             playYears={game.playYears}
+            collection={collection}
+            collectionOptions={collectionOptions}
+            isCollection={isCollection}
+            isCollectionMember={isCollectionMember}
             onSaveField={saveField}
             onSavePlayYears={savePlayYears}
+            onSaveCollection={saveCollection}
           />
         </div>
       </div>
+
+      {isCollection ? (
+        <div className="mt-8">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-muted-foreground text-xs font-medium">Games in this collection</h2>
+            <span className="text-muted-foreground text-xs">
+              {members.length} game{members.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          {/* The hours, price and trophies above cover this whole set — one
+              purchase, one play time — so each row here shows only what is
+              genuinely its own: its art, its year, and the owner's rating of
+              that specific game. */}
+          <CollectionMembers members={members} />
+        </div>
+      ) : null}
 
       {/* Shown whenever the game is PSN/Steam-linked, even with zero stored
           rows — `TrophiesSection`'s empty state is what tells the owner to run
@@ -182,6 +235,61 @@ export function GamePage({
         onConfirm={remove}
       />
     </>
+  );
+}
+
+/**
+ * The games inside a collection.
+ *
+ * A plain list of links, not cards: each row already has its own page (this
+ * exact component, one level along), and the point here is to make the set's
+ * contents scannable and reachable — not to rebuild the library gallery
+ * inside a detail page.
+ *
+ * Deliberately shows NO hours, price or trophies. Those live on the
+ * collection above and describe the whole set; repeating them per row would
+ * either be a lie (each game did not cost £22.90) or a blank column on every
+ * line. What IS shown is what genuinely belongs to the individual game: its
+ * art, its platform, the year it was played, and the owner's own rating of
+ * it — the fields the flattened import left empty and that this whole
+ * feature exists to give back.
+ */
+function CollectionMembers({ members }: { readonly members: readonly CollectionMember[] }): React.ReactElement {
+  return (
+    <ul className="bg-card divide-y rounded-md px-4">
+      {members.map((member) => (
+        <li key={member.id}>
+          <Link
+            href={`/games/${member.id}`}
+            className="hover:bg-muted/50 -mx-2 flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors"
+          >
+            <span className="bg-muted relative h-12 w-9 shrink-0 overflow-hidden rounded-md">
+              {member.coverUrl === null ? (
+                <span
+                  className="text-muted-foreground/50 flex h-full items-center justify-center text-xs font-semibold"
+                  aria-hidden
+                >
+                  {member.title.trim().charAt(0).toUpperCase()}
+                </span>
+              ) : (
+                <Image src={member.coverUrl} alt="" fill sizes="36px" className="object-cover" />
+              )}
+            </span>
+
+            <span className="min-w-0 flex-1">
+              <span className="block truncate font-medium">{member.title}</span>
+              <span className="text-muted-foreground block text-xs">
+                {PLATFORM_LABELS[member.platform]}
+                {member.firstPlayedYear === null ? '' : ` · ${member.firstPlayedYear}`}
+              </span>
+            </span>
+
+            <StatusBadge status={member.status} />
+            <RatingStars rating={member.rating} />
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 

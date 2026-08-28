@@ -9,6 +9,7 @@ import { requireOwner } from '@/server/auth/owner';
 import { listCategories } from '@/server/db/finance/categories';
 import { listTransactionYears } from '@/server/db/finance/grid';
 import {
+  LEDGER_PAGE_SIZE,
   getLedgerSummary,
   listTransactionsLedger,
 } from '@/server/db/finance/transactions';
@@ -82,6 +83,12 @@ export default async function TransactionsPage({
 
   const yearOptions = years.length > 0 ? years : [filters.year];
 
+  // Computed here, not in the client table: `LEDGER_PAGE_SIZE` is a runtime
+  // value from the DAL, and importing it into a client component pulls
+  // `postgres` into the browser bundle and fails the build. See the note in
+  // `transactions-table.tsx`.
+  const totalPages = Math.max(1, Math.ceil(ledgerPage.totalCount / LEDGER_PAGE_SIZE));
+
   const exportParams = new URLSearchParams();
   for (const [key, value] of Object.entries(raw)) {
     if (key !== 'page' && value) exportParams.set(key, value);
@@ -126,6 +133,8 @@ export default async function TransactionsPage({
 
       <TransactionsTable
         page={ledgerPage}
+        currentPage={page}
+        totalPages={totalPages}
         categories={categories}
         years={yearOptions}
         filters={filters}

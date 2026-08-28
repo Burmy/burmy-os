@@ -843,17 +843,16 @@ excludes.
 / `test:e2e` (27, two consecutive full runs) / `build` all green — actually
 run.
 
-## ▶ RESUME HERE — M10: Backup automation, deployment, hardening, launch
+## M10 — Backup automation, deployment, hardening, launch
 
-**Get running again:**
-
-```bash
-docker compose -f compose.dev.yml up -d postgres
-docker compose -f compose.dev.yml run --rm --build migrate    # --build is NOT optional
-node scripts/provision-owner.mjs    # only if the owner row is absent
-pnpm db:seed
-pnpm dev
-```
+> **Complete.** The app is deployed and live at `https://app.burmy.me` — see `docs/DEPLOYMENT.md`,
+> which is the canonical record of the production architecture and carries the two items still
+> outstanding (no backup has been taken of the live database, and the restore-verification procedure
+> has never been run against Supabase).
+>
+> The commands that used to sit here as "get running again" referenced a Docker `migrate` service that
+> was deleted in the minimalism pass below. The current ones are in `CLAUDE.md`, "Commands", which is
+> the single place they are maintained.
 
 M9 closed out the last owner-facing feature gap: a full searchable ledger,
 its own lightweight reconciliation summary, and CSV export, all built on the
@@ -1043,6 +1042,229 @@ it either; they provision their own throwaway Postgres via Testcontainers). `nex
 the now-long-gone Docker `runner` image, were removed along with `@swc/helpers` as a direct dependency.
 `.dockerignore` had nothing left to ignore for and was deleted too.
 
+## M11 — Finance dashboard
+
+Replaced the bare M8 year grid as Finance's landing view. Commits `045519a`, `87df72b`, `920cfbe`.
+
+### Delivered
+
+- **Headline stat cards** for the selected month — Income, Expenses, Net, Savings rate, Average daily
+  spending, Transaction count — each with a month-over-month comparison.
+- **Charts** (Recharts, the one new dependency): income-vs-expense trend, net cashflow, category
+  breakdown and category trend, largest expenses.
+- **A "This Year" tab** — Year Overview with a Jan–Dec horizontal stacked bar and an annual category
+  donut that falls back to a horizontal bar past 7 categories. Reuses `getCategoryTotalsForWindow`
+  with full-year bounds; no new query.
+- **One consolidated toolbar** — title, month/year navigation, Month/This Year mode, Transactions,
+  Import statement — replacing two separate rows. Desktop container widened 1152px → 1600px on the
+  private layout, so Transactions and Review benefited too.
+- **New DB layer** (`db/finance/grid.ts`): `getMonthlyTotalsAllTime`, `getCategoryTotalsForWindow`,
+  `getDailyTotalsForMonth`, `getTopExpensesForMonth`, sharing a `dashboardBaseConditions()` filter
+  deliberately duplicated from — not coupled to — M8's `gridBaseConditions()`, the precedent M9's
+  `ledgerConditions()` had already set.
+- **New pure domain module** `server/finance/dashboard.ts` for month math, comparisons, trends and
+  category breakdowns. The category-totals/monthly-totals reconciliation is proven in an integration
+  test, not asserted in prose.
+
+The year grid itself was untouched, just relabeled "Full year grid" beneath the new dashboard.
+
+### Bugs and traps found during M11
+
+Both are in CLAUDE.md's gotcha list, which is the canonical copy:
+
+- **`formatInflow()` double-flips an already-flipped aggregate.** `getMonthlyTotalsAllTime` sign-flips
+  income to a positive display figure at the DB boundary; calling `formatInflow` on that rendered
+  `-$6,400.00` for a real paycheck. Nothing catches this statically — the types do not distinguish a
+  raw `Cents` from an already-display-flipped one. Found by seeding data and looking at the screen.
+- **A flex item's default `min-width` is `auto`, not `0`.** The dashboard sitting above the monthly
+  grid pushed `<body>` to 979px on a 390px viewport, despite the table having its own
+  `overflow-x-auto`. Every flex boundary in the chain needed `min-w-0` independently — fixing `<main>`
+  alone was not enough.
+
+---
+
+## Post-M11 — four rounds of Finance changes driven by real daily use
+
+Not a milestone. Five to six specific friction points at a time, surfaced by the owner actually using
+the app on real data, fixed and shipped in rounds. Recorded because the *reasons* are the useful part.
+
+- **Round 1 (`d5357b7`)** — one-click BoA Checking + Credit Card account quick-start (manual form
+  entry before any import worked was the first thing in the way); card-payment detection moved so
+  `PAYMENT FROM CHK…` rows stop displaying as ordinary spending during review, instead of being
+  classified only at commit; unified import review; status text that explains *why* a row landed where
+  it did; collapsible nav so Transactions/Review stay reachable when nothing needs review.
+- **Round 2 (`be4b881`)** — sidebar collapse and tab switching felt slow. Root cause was real: the
+  collapse toggle blocked on a Server Action doing a full `revalidatePath('/', 'layout')` for a purely
+  visual change, and every tab click re-verified the JWT and re-queried the owner row up to three times
+  with no caching. Fixed with a client-instant toggle plus fire-and-forget persistence, `cache()`
+  around `requireOwner()`/`getNeedsReviewCount()`, and a scoped `loading.tsx`. Account management was
+  removed outright; full inline transaction editing and bulk remember-merchant were added.
+- **Round 3 (`e1e79ab`, `3b937c2`)** — Settings became a real landing page again; the browser's native
+  `confirm()` for discarding an import was replaced with a real dialog; categories can now be truly
+  deleted when they have zero transactions; the year grid got a Columns toggle; **income no longer
+  requires a category** to leave `needs_review` or count toward the grid's Income total — the total is
+  summed by `transaction_type`, not category, so requiring one was pure friction.
+- **Round 4 (`76494dd`, `0d74f9c`)** — Recharts tooltip readability; the Yearly Breakdown's synthetic
+  bucket renamed from "Other" (indistinguishable from a real category with that name) to "Other
+  categories", with the cap removed so every real category gets its own series; the palette expanded
+  from 6 to 16 colors. `0d74f9c` also fixed a latent `merchantKeyFrom` bug — it strips everything
+  outside `[A-Z0-9]`, which is correct for a bank CSV arriving in caps but collapsed a
+  lowercase-edited merchant name to capitals only, and would have mis-categorized the paycheck.
+
+---
+
+## The Games module — the second, and final, product module
+
+Merged as `674af16`. Roughly 50 commits of work, built on a `feat/game-tracker` branch, replacing a
+manually-maintained spreadsheet of ~185 games the same way Finance replaced one of transactions.
+
+`docs/GAMES.md` is canonical for everything below; this section exists so the roadmap is not silent
+about half the application.
+
+### Delivered
+
+| Area | What shipped |
+| --- | --- |
+| Schema | `games`, `game_play_years`, `game_trophies`, `game_sync_runs`, `game_sync_changes` — migrations `0004`–`0016` |
+| Library | Gallery (cover-wall) and table views, filters, search, recency sort |
+| Per-game page | Inline per-field editing, trophy list, play-year split |
+| Stats | Distributions, yearly breakdown, leaderboards, trophy sections |
+| Upcoming | Wishlist (`wanted` status) with IGDB release dates and countdowns |
+| Cover art | IGDB, replacing RAWG — which has no portrait art anywhere in its data model |
+| Steam sync | In-app (staged, reviewed, committed) plus a separate CLI script with the OPPOSITE fill rule |
+| PlayStation sync | In-app, via an unofficial API behind a ~2-monthly manual token chore |
+| Trophies | Full per-trophy persistence with rarity, tiers, and earned dates |
+| Collections | Boxed sets — see the next section |
+
+### The four invariants this module added
+
+Each cost real debugging and each is in CLAUDE.md:
+
+1. **Hours are tenths of an hour in an integer, never a float** — containment in
+   `src/server/games/hours.ts`, exactly like `money.ts`.
+2. **Every external credential is optional and fails soft** — IGDB, Steam and PSN all return `[]`/
+   `null` rather than throwing, and the full test suite must pass with none of them set.
+3. **`games.hours_tenths` is the authoritative total; `game_play_years` only says WHICH YEARS** —
+   neither Steam nor PSN can supply a per-year breakdown, so the total must stay a single number an
+   API can write while the split stays owner-entered.
+4. **`titleId` and `npCommunicationId` are different PSN identifier spaces** with no field in either
+   response mapping one to the other — which is why `games` has two separate nullable columns rather
+   than one.
+
+### Known gaps, carried forward honestly
+
+- **The two sync engines deliberately disagree**, and unifying them would be a bug: the CLI script
+  fills only `NULL` columns ("never overwrite what the owner typed"), while the in-app sync makes Steam
+  authoritative for a linked game's hours and achievements.
+- **PSP is permanently manual.** No API covers it.
+- **The NPSSO token expires roughly every two months** and there is no way to detect it except by
+  attempting a sync. This cannot be automated.
+
+---
+
+## Collections (2026-08-28)
+
+A boxed set — "Uncharted: The Nathan Drake Collection" — is one purchase wrapping several games the
+owner counts separately. The spreadsheet drew it as one row with its titles indented underneath;
+`import-game-log.mjs` flattened that into independent rows because the CSV export had already lost the
+indentation, so three games showed as three art-less duplicates of a set that already had a cover.
+
+Migration `0016`: one nullable self-referential FK (`games.collection_id`, `ON DELETE SET NULL`) plus a
+partial index. No new table — a boxed set has a cover, a platform, a price, a play time and a trophy
+list, which is precisely a `games` row.
+
+**The rule, and it is one sentence:** anything that COUNTS games excludes collection rows; anything
+that SUMS hours, money or trophies includes everything. `src/server/games/collections.ts` owns it.
+
+Also shipped: nested rendering in both library views, a "Games in this collection" section on the
+collection's own page, blindness to members in both sync engines (`NOT_A_COLLECTION_MEMBER` — without
+it, an exact-title match would write hours onto a member the collection already accounts for), and two
+report-by-default scripts — `link-game-collections.mjs` (the backfill) and `merge-duplicate-games.mjs`
+(the synced-copy-wins duplicate merge).
+
+**Outstanding: the backfill has not been run.** It needs an explicit map of which titles belong to
+which collection, which is knowledge that lives in the owner's original spreadsheet, not in the data.
+Until it runs, `collection_id` is `NULL` on every row and the feature is inert — correct, tested, and
+doing nothing.
+
+---
+
+## Post-launch rounds (2026-08-28)
+
+Same shape as the post-M11 rounds above — real use, specific complaints, fixed in rounds. Recorded
+because the reasoning is the reusable part.
+
+### Round A — three URL/cache bugs
+
+- **`?category=<non-uuid>` returned a 500** on both `/finance/transactions` and `/finance/review`: the
+  raw param reached a `uuid` column comparison, and Postgres answers a bad one by raising `22P02`.
+  `/finance/review` had a worse version — `type` was a bare `as TransactionType` cast, so
+  `?type=garbage` reached an *enum* comparison. `readStatus` sitting beside them had always validated;
+  these two never did. `src/lib/uuid.ts` now holds the shape check, deliberately a regex rather than
+  `z.string().uuid()` because `filters.ts` is imported by a client component.
+- **Cache invalidation was wrong in both directions.** Review revalidated only `/finance/review`; the
+  ledger's actions revalidated transactions and monthly but never review — even though assigning a
+  category is what removes a row from the queue. Each file was right about its own page and wrong
+  about the others, which is what a per-feature list does. One shared
+  `revalidateTransactionSurfaces()` now covers all three.
+- **`Page NaN of 3`** — the client re-read `?page` with `Number()`, and `NaN` survives
+  `Math.floor`/`max`/`min`. Fixing it surfaced a fourth thing: importing `LEDGER_PAGE_SIZE` from the
+  DAL into that client component pulls `postgres` into the browser bundle and fails the build with
+  `Can't resolve 'fs'` — which is exactly why the page size had been a hardcoded `100` there.
+
+### Round B — statement coverage
+
+The dashboard was confidently wrong about the current month, every month: statements arrive mid-cycle
+(card ~27th, checking ~15th), so August reported a −70.4% savings rate from two weeks of data.
+
+A month is now reportable only when every active account has a transaction on or after its last day.
+Derived from the transactions, never configured — a stored close-day lies exactly when a statement is
+late. `/finance/monthly` defaults to `month − 1`, an uncovered month shows no stat cards at all, and
+trend charts drop the uncovered tail. Full rule and its two accepted costs in `docs/FINANCE.md`,
+"Statement coverage".
+
+The import sheet also gained an "Already imported" list — it showed only STAGED imports, so "did I
+already do August's card statement?" could only be answered by leaving the page.
+
+### Round C — perceived performance
+
+*"The transitions between pages are very laggy, and there is no indication."* Measured first, and the
+measurement moved the answer: the database is not the bottleneck and cannot become one at this size
+(18 MB; the two slowest queries in the app are trophy aggregates at ~109ms and ~66ms, everything else
+under 20ms). What costs time is the serverless round trip; what made it *feel* worse was silence.
+
+Two findings, both in `docs/ARCHITECTURE.md`, "Perceived performance":
+
+1. **A dynamic route with no `loading.tsx` is not prefetched at all** — Next 16's documented behavior,
+   and every route here is dynamic. Only two segments had one, and the shared fallback sat above the
+   sub-nav, so switching Games tabs blanked the tabs. Every segment now has its own, shaped like the
+   route it stands in for.
+2. **`loading.tsx` does nothing for a same-route navigation**, which is most of them — every filter
+   and period change pushes a query string on the route you are already on. `useNavigate` wraps those
+   in `startTransition` and the pending flag is rendered locally, next to the control that caused it.
+
+---
+
+## ▶ RESUME HERE
+
+**State as of 2026-08-28:** deployed, live, and in daily use on real data. Both product modules —
+Finance and Games — are built. There is no next milestone; work is driven by what real use turns up,
+in the round-based shape established above.
+
+**The four things actually outstanding, in priority order:**
+
+1. **No backup exists of the live database.** See `docs/DEPLOYMENT.md`, "Backup strategy". The restore
+   procedure has only ever been verified against local dev, on a different Postgres major version, with
+   five rows in it. This is the highest-value unfinished item in the project.
+2. **Migration `0016` is committed but not applied to production.** Take a backup first — that is
+   exactly the trigger item 1 exists for.
+3. **The collections backfill needs its map**, per the section above.
+4. **Confirm the Netlify function region actually took effect.** `netlify.toml` now pins `us-east-2`
+   to match Supabase, but region pinning may be plan-gated — read the deploy log rather than assuming.
+   Worth tens of milliseconds, not hundreds; see that file's own comment for the honest sizing.
+
+---
+
 ## Carried forward
 
 Items deliberately deferred to a later milestone, tracked so they are not lost.
@@ -1052,20 +1274,31 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | BoA `source_transaction_id` **stability** verification | **Descoped — no milestone** | Coverage (100%) and in-sample uniqueness confirmed in M4; cross-export stability skipped by owner decision so it blocks nothing. No unique constraint. `tierOneCandidateStability()` is written and unused, so closing it out later is a function call. |
 | ~~BoA adapter written against a real export~~ | ~~M4~~ | **Done.** Two real exports read; three of the plan's assumptions about the layout were wrong. See `docs/FINANCE.md`. |
 | ~~Passkey bootstrap + recovery design~~ | ~~M2~~ | **Done.** Both candidates prototyped and measured; the session-first grant design shipped. See `docs/SECURITY.md`. |
-| Cloudflare Access verified against real Cloudflare | M10 | Needs the deployment. Locally covered by unit tests against a real key pair plus fail-closed tests. |
+| ~~Cloudflare Access verified against real Cloudflare~~ | ~~M10~~ | **Done.** `app.burmy.me` is proxied and Access gates it; the app is reachable only through a Google sign-in against the exact-email Allow policy. |
 | ~~Manual real-device passkey verification~~ | ~~M9~~ | **Moot.** The passkey plugin this item was tracking was removed entirely in the post-M8 Cloudflare-Access-only auth change — see that section above. There is no passkey ceremony left to verify on a real device. |
 | ~~Categories-reorder e2e test intermittently failed when run after `import.spec.ts`~~ | ~~M5~~ | **Done — root cause was not shared database state.** `shell.spec.ts`'s reorder test asserted `toBeDisabled()` (true instantly via `useOptimistic`, before the Server Action round-trips) and then called `page.reload()` with no wait for the mutation to actually persist. Under a quiet dev server the write reliably landed first by coincidence; the heavier `import.spec.ts` running immediately before added just enough latency to the shared dev-server process to flip that coincidence, and the reload fetched the PRE-reorder order (confirmed by screenshot: "Mortgage, Gas" instead of "Gas, Mortgage"). Fixed by making the test wait for the reorder Server Action's response before reloading — a missing synchronization point the test always had, now closed, not a data-isolation problem. `resetAll()` in both e2e files also now lists the M5 import tables explicitly, matching `tests/integration/harness.ts`'s existing discipline, as defense in depth. Confirmed with three consecutive full-suite runs, 16/16 green each time. |
 | **E2E suite shares one database; `workers: 1` remains a real architectural simplification** | M9 or when the suite slows further | Not urgent — the specific flake above is fixed, not papered over. But a shared dev-server process across all specs means a heavy spec can still shift timing enough to expose a genuinely un-synchronized test elsewhere, which is what happened here. Real fix, if the suite outgrows this: a database per worker plus a per-worker `DATABASE_URL`, then restore `fullyParallel: true`. |
-| ExcelJS dependency/security review | M9 | Gate immediately before XLSX work begins |
-| Production Docker hardening | M10 | M1 creates the image; M10 hardens the same image |
-| Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it |
+| ~~ExcelJS dependency/security review~~ | ~~M9~~ | **Moot — XLSX import was never built.** There is no ExcelJS dependency and no XLSX adapter. CSV via Papa Parse covers every real export the owner has. The review gate stands if XLSX is ever picked up; there is nothing to review until then. |
+| ~~Production Docker hardening~~ | ~~M10~~ | **Moot — there is no production image.** The Dockerfile was deleted in the minimalism pass above and production is Netlify (serverless). `compose.dev.yml` runs one `postgres` service for local dev and nothing else. |
+| Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it. As of 32 months / ~1,048 transactions, nothing awaits review and the 87 uncategorized rows are all transfers, card payments and income — types that legitimately have no category. On this evidence the tail does not justify it. |
+| **A backup of the live database** | **Now** | Never taken. See `docs/DEPLOYMENT.md`, "Backup strategy" — the policy is written and has never been executed. |
+| **The collections backfill map** | **Now** | Needs the original spreadsheet's parent/child grouping, which only the owner has. Until then `collection_id` is `NULL` on every row. |
+| Postgres major-version mismatch between production and local/CI | When a migration needs an 18-only feature | Supabase runs 17.x; `compose.dev.yml` and CI pin `postgres:18-alpine`. Nothing in the schema depends on the difference today, which is why this is recorded rather than fixed. |
 
 ---
 
 ## Deferred beyond V1
 
 Split transactions · category `parent_id` in the UI · saved filter views · recurring-subscription
-detection · refund→purchase linking · Home dashboard · Finance chat · Amazon item-level splitting ·
-PDF parsing · multi-currency logic · budgets and category limits.
+detection · refund→purchase linking · Finance chat · Amazon item-level splitting · PDF parsing ·
+multi-currency logic · budgets and category limits.
 
-**All non-Finance modules** — Notes, Files, Sheets, Inbox, Bookmarks, Garage, Receipts, Subscriptions.
+"Home dashboard" was on this list and has since been **built** — as the Finance dashboard (M11), on
+`/finance/monthly` rather than as a separate top-level destination. Games has its own equivalent on
+`/games`. Neither is a cross-module home screen, and neither should become one.
+
+**Every module that is not Finance or Games is permanently out of scope** — Notes, Files, Sheets,
+Inbox, Bookmarks, Garage, Receipts, Subscriptions. This is stronger than "deferred": CLAUDE.md forbids
+building them, forbids building abstractions in anticipation of them, and forbids a shared "module
+framework" for the two that exist. Finance and Games deliberately share nothing but generic UI
+primitives and the owner auth boundary.

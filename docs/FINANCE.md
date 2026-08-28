@@ -610,6 +610,22 @@ the preview commits with `review_status = 'confirmed'`; a blank one commits with
 pick up. This is what lets the monthly import be fast even when a few rows need
 more thought than the moment allows.
 
+### The import sheet lists what has already been imported
+
+The upload panel showed only STAGED imports, under "Resume". Finished ones appeared nowhere, so "did I
+already do August's card statement?" could only be answered by leaving the panel and going to look at
+the transactions — and two BoA exports downloaded a month apart have near-identical filenames.
+
+`listCommittedImports` (`db/finance/imports.ts`) now feeds an "Already imported" list, newest first,
+showing each file's name and its **date range**. The range rather than the row count, because a row
+count does not distinguish two statements and a date range always does.
+
+Nothing new is retained to make this possible: `finance_import_files.original_filename` has always been
+recorded, and a filename is not statement content — this does not touch CLAUDE.md's rule that raw
+uploads are deleted immediately after parsing.
+
+---
+
 ## Categorization & classification (M6)
 
 Two mechanisms, both narrow and deterministic. Investment auto-classification
@@ -939,11 +955,16 @@ visible:
 ### What was deferred
 
 Charts, budgets, trends, forecasting, AI insights, custom dashboards, a
-report builder — all explicitly out of scope by owner instruction. The
-Excel-comparison "Reconciliation" feature described earlier in this document
-(`finance_expected_totals`) is a separate, still-unbuilt feature, not part of
-M8 — cell drill-down is what currently replaces manually checking a
+report builder — all explicitly out of scope by owner instruction **at M8**.
+The Excel-comparison "Reconciliation" feature described earlier in this
+document (`finance_expected_totals`) is a separate, still-unbuilt feature, not
+part of M8 — cell drill-down is what currently replaces manually checking a
 spreadsheet, the same role the mockup above assigned to it.
+
+**Charts and trends were subsequently un-deferred and built, in M11.** The
+owner asked for them after living with the bare grid; see "Finance dashboard
+(M11)" below. Budgets, forecasting, AI insights and a report builder remain
+out of scope, and the M8 grid itself is unchanged beneath the dashboard.
 
 ## Transactions ledger & export (M9)
 
@@ -1041,3 +1062,105 @@ XLSX import/export, bulk category/type edit from Transactions, deleting a
 transaction, a `pg_trgm`/GIN search index (plain `ILIKE` is sufficient at
 personal-ledger scale) — all explicitly out of scope. No new
 categorization/classification work: M6 and M7's mechanisms are untouched.
+
+---
+
+## Finance dashboard (M11)
+
+`/finance/monthly` leads with a dashboard; the M8 year grid sits beneath it,
+relabeled "Full year grid" and otherwise untouched.
+
+**Headline stat cards** for the selected month — Income, Expenses, Net,
+Savings rate, Average daily spending, Transaction count — each with a
+month-over-month comparison. **Charts** (Recharts): income-vs-expense trend,
+net cashflow, category breakdown and trend, largest expenses. **A "This Year"
+tab** with a Jan–Dec stacked bar and an annual category donut that falls back
+to a horizontal bar past 7 categories.
+
+**Every number is still computed by SQL at read time.** The invariant does not
+bend for a dashboard: `db/finance/grid.ts` gained `getMonthlyTotalsAllTime`,
+`getCategoryTotalsForWindow`, `getDailyTotalsForMonth` and
+`getTopExpensesForMonth`, and the pure month math lives in
+`server/finance/dashboard.ts`. The category-totals/monthly-totals
+reconciliation is proven by an integration test, not asserted here.
+
+`dashboardBaseConditions()` is **deliberately duplicated from**, not coupled
+to, M8's `gridBaseConditions()` — the same precedent M9's `ledgerConditions()`
+set. Three filters that agree today may need to diverge tomorrow, and a shared
+one would make that a refactor instead of an edit.
+
+**One trap this created, worth repeating from CLAUDE.md:**
+`getMonthlyTotalsAllTime` sign-flips income to a positive display figure at the
+DB boundary. Calling `formatInflow()` on an already-flipped aggregate
+double-flips it and renders a real paycheck as `-$6,400.00`. `formatInflow` is
+only correct on a raw, still-negative stored value — a single transaction row,
+never a pre-summed total.
+
+---
+
+## Statement coverage — the dashboard reports on finished months only
+
+**The problem.** A calendar month and a statement cycle are not the same thing. The owner's credit
+card statement closes around the 27th and the checking statement around the 15th, so on 28 August the
+database holds card data through ~the 27th and checking data through ~the 15th. The August stat cards
+reported income of $3,813.88 against expenses of $6,497.68 — a −70.4% savings rate and a "↓56% vs Jul"
+that measured two weeks of one month against all of another. Every figure was arithmetically correct
+and completely misleading. The month wasn't bad; it wasn't over.
+
+**The rule, in one sentence:**
+
+> A month is COVERED when every active account has at least one transaction dated on or after that
+> month's last day.
+
+Read it as *"we have imported data that runs past the end of this month."* It lives in
+`src/server/finance/dashboard.ts` (`isMonthCovered`, `latestCoveredMonth`, `dropUncoveredTail`) and is
+fed by one query, `getAccountCoverage` — the max `transaction_date` per active account.
+
+**Derived from the transactions, not configured.** No statement-close-day setting, no "mark month
+complete" checkbox. A configured close day *lies* when a statement is late or an import is skipped,
+which are precisely the situations where a wrong answer does damage; the derived rule self-corrects
+the moment the next file lands.
+
+**Worked through the real cycle, on 5 September** — card latest `Aug 26`, checking latest `Aug 14`:
+
+| Month | Covered? | Why |
+| --- | --- | --- |
+| July | **Yes** | Both accounts run past Jul 31. The card statement closing 27 Aug contains Jul 28–31; the checking one closing 15 Aug contains Jul 16–31 |
+| August | **No** | Neither reaches Aug 31 |
+
+July is correctly whole even though no single statement is aligned to it — the month is complete
+*across* the two files even though neither file is a month.
+
+**What changes on screen:**
+
+- **`/finance/monthly` lands on last month, not this one.** A plain `month − 1` (`previousMonth`, so
+  January rolls the year back), deliberately *not* "the newest covered month" — the default is where
+  you land and should be the same every time you open the app. Whether that month is whole is a
+  separate question, answered below it.
+- **An uncovered month shows no numbers at all.** The six stat cards, the category breakdown, the
+  insights and the largest-expenses list are replaced by `MonthNotReady`, which names every account and
+  the date its data reaches: *"BoA Checking — through Aug 15."* That is the answer to "why is my August
+  empty?", on screen, without going to look. It is `role="status"` and muted, not an error — this is the
+  normal state of the current month for most of every month.
+- **Trend charts end at the last covered month.** A partial month at the right-hand end of a line reads
+  as a collapse in income and spending; a chart cannot carry a footnote. Only the TAIL is trimmed — a
+  gap mid-history is a month that was never imported, and hiding it would misrepresent the series far
+  more than showing it does.
+- **`Avg. daily spending` always divides by the whole month.** It used to divide by the elapsed day and
+  label the result "So far this month" — a partial figure dressed as an average. With no partial case
+  left, there is no divisor that changes meaning depending on the date.
+- **Year Overview counts covered months only**, so YTD figures and the annual donut agree with the
+  monthly cards above them.
+- **The full year grid is untouched** and still shows everything imported, partial months included. It
+  is a ledger view, not a set of derived headline figures, and the owner asked for it to stay as it is.
+
+**Two properties, stated rather than engineered around:**
+
+1. **It is conservative.** A month with genuinely no activity in its final days reads as uncovered
+   until the next statement arrives. The cost is a short wait for unremarkable numbers; the cost of the
+   opposite error is a confident wrong one.
+2. **A dormant active account freezes every later month.** An account left `is_active = true` whose
+   last transaction was in March holds every month after March at "not covered", because it never
+   reaches their last day. The fix is the mechanism that already exists and already means this:
+   `is_active = false`. The symptom is self-explaining — `MonthNotReady` prints that account's stale
+   date right next to the others.

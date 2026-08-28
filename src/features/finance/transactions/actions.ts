@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
@@ -15,6 +14,7 @@ import {
   updateTransactionType,
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES } from '@/server/finance/classify/manual';
+import { revalidateTransactionSurfaces } from '../revalidate';
 import { type ActionResult, fail, ok } from './action-result';
 
 /**
@@ -31,14 +31,11 @@ import { type ActionResult, fail, ok } from './action-result';
  * new business logic.
  *
  * Used from TWO surfaces — the Transactions ledger and the Monthly grid's
- * drill-down dialog — so every action revalidates both paths, not just its
- * own page.
+ * drill-down dialog — and visible on a THIRD, the review queue, since
+ * assigning a category is what takes a row out of it. All three are
+ * revalidated together by `revalidateTransactionSurfaces`, which is shared
+ * with `review/actions.ts` so the two cannot drift apart again.
  */
-
-function revalidateBothSurfaces(): void {
-  revalidatePath('/finance/transactions');
-  revalidatePath('/finance/monthly');
-}
 
 const transactionIdSchema = z.string().uuid();
 const categoryIdSchema = z.string().uuid();
@@ -69,7 +66,7 @@ export async function updateTransactionCategoryAction(
     return toResult(error);
   }
 
-  revalidateBothSurfaces();
+  revalidateTransactionSurfaces();
   return ok();
 }
 
@@ -89,7 +86,7 @@ export async function updateTransactionTypeAction(
     return toResult(error);
   }
 
-  revalidateBothSurfaces();
+  revalidateTransactionSurfaces();
   return ok();
 }
 
@@ -108,7 +105,7 @@ export async function updateTransactionMerchantAction(
     return toResult(error);
   }
 
-  revalidateBothSurfaces();
+  revalidateTransactionSurfaces();
   return ok();
 }
 
@@ -123,7 +120,7 @@ export async function updateTransactionNoteAction(transactionId: string, note: s
     return toResult(error);
   }
 
-  revalidateBothSurfaces();
+  revalidateTransactionSurfaces();
   return ok();
 }
 
@@ -190,7 +187,7 @@ export async function applyMerchantRuleAction(
   try {
     const ids = z.array(transactionIdSchema).max(1000).parse(transactionIds);
     const updatedCount = await bulkUpdateCategory(owner.userId, ids, categoryIdSchema.parse(categoryId), true);
-    revalidateBothSurfaces();
+    revalidateTransactionSurfaces();
     return { ok: true, updatedCount };
   } catch (error) {
     const result = toResult(error);

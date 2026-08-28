@@ -18,6 +18,7 @@
 
 import { sql } from 'drizzle-orm';
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   date,
@@ -949,6 +950,50 @@ export const games = pgTable(
      * manually-added game has no IGDB id at all.
      */
     igdbId: integer('igdb_id'),
+    /**
+     * The COLLECTION this game belongs to — a self-reference to another
+     * `games` row. `null` for a standalone game and for a collection row
+     * itself; only the individual titles INSIDE a collection carry it.
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * WHY THIS EXISTS: THE SOURCE DATA ALWAYS HAD IT, AND THE IMPORT DROPPED IT.
+     *
+     * A physical collection — "Uncharted: The Nathan Drake Collection" (3
+     * games), "Legacy of Thieves Collection" (2) — is ONE purchase with ONE
+     * price, ONE play time and ONE trophy list, but several distinct games
+     * the owner counts separately. The source spreadsheet modelled exactly
+     * that: a parent row carrying the money/hours/trophies, with the
+     * individual titles as INDENTED sub-rows beneath it carrying only a name
+     * and a year.
+     *
+     * `scripts/import-game-log.mjs` saw those rows — its own comment calls
+     * them "sparse collection-stub rows" — and imported each as a full,
+     * INDEPENDENT `games` row, discarding the indentation that made them
+     * children. That is the whole bug: the titles are not wrong, they are
+     * ORPHANED. Disconnected from their collection they render as unplayed
+     * `backlog` entries with no hours, no art and no rating, inflate the
+     * backlog count, and drag down every per-game average.
+     *
+     * This column is NOT a speculative abstraction (CLAUDE.md forbids those):
+     * the relationship is observed in real production data, the source system
+     * already modelled it, and it recurs across multiple collections.
+     *
+     * ONE LEVEL ONLY. A child may never itself be a collection — its target
+     * must be a row whose own `collection_id` is null. Enforced in the data-
+     * access layer plus an integration test rather than a CHECK constraint
+     * (which would need a subquery), the same call M6 made for
+     * `counterpart_transaction_id`.
+     *
+     * `ON DELETE SET NULL`, deliberately NOT `CASCADE`: removing a collection
+     * must never destroy the games inside it. They become standalone entries,
+     * which is the same non-destructive default categories (archive) and
+     * accounts (deactivate) already follow. A cascade would turn one "Remove"
+     * click into three silent deletions of real history.
+     * ─────────────────────────────────────────────────────────────────────
+     */
+    collectionId: uuid('collection_id').references((): AnyPgColumn => games.id, {
+      onDelete: 'set null',
+    }),
     sortOrder: integer('sort_order').notNull().default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -982,6 +1027,14 @@ export const games = pgTable(
     uniqueIndex('games_owner_igdb_id_idx')
       .on(t.ownerId, t.igdbId)
       .where(sql`${t.igdbId} is not null`),
+    // Partial, same shape as the three above: only the titles inside a
+    // collection carry a value here, and every read of it ("this
+    // collection's games", "is this row a child") is owner-scoped. A full
+    // index would be mostly nulls — the standalone games and the collection
+    // rows themselves.
+    index('games_owner_collection_idx')
+      .on(t.ownerId, t.collectionId)
+      .where(sql`${t.collectionId} is not null`),
   ],
 );
 

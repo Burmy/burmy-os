@@ -149,6 +149,8 @@ export function InlineEditSelect({
   displayValue,
   placeholder = 'Not set',
   options,
+  disabled = false,
+  disabledHint,
   onSave,
 }: {
   readonly label: string;
@@ -158,6 +160,9 @@ export function InlineEditSelect({
   readonly displayValue: string;
   readonly placeholder?: string;
   readonly options: ReadonlyArray<{ readonly value: string; readonly label: string }>;
+  /** Read-only, because the value is owned somewhere else (a Steam link, a collection). Mirrors `InlineEditField`. */
+  readonly disabled?: boolean;
+  readonly disabledHint?: string;
   readonly onSave: (value: string) => Promise<ActionResult>;
 }): React.ReactElement {
   const [editing, setEditing] = useState(false);
@@ -174,7 +179,14 @@ export function InlineEditSelect({
   return (
     <div className={cn(ROW_CLASS, 'items-center')}>
       <span className="text-muted-foreground">{label}</span>
-      {editing ? (
+      {disabled ? (
+        <span>
+          {displayValue || placeholder}
+          {disabledHint === undefined ? null : (
+            <span className="text-muted-foreground block text-xs">{disabledHint}</span>
+          )}
+        </span>
+      ) : editing ? (
         <Select
           defaultOpen
           value={value}

@@ -547,3 +547,39 @@ button:not(:disabled) {
     }
   }
 }
+
+/**
+ * The indeterminate sweep under `FilterBar` while a filter change is
+ * navigating (`FilterBar`'s `pending` prop, driven by `useNavigate`).
+ *
+ * A keyframes rule, not a Tailwind utility, because Tailwind's own
+ * `animate-pulse` communicates the wrong thing here: pulsing means "content is
+ * loading in this shape", which is what `Skeleton` uses it for. A sweep that
+ * travels means "work is in progress and you cannot see how long it will
+ * take", which is exactly the honest claim for a serverless round trip of
+ * unknown length. Two different signals should not share one animation.
+ *
+ * Deliberately OUTSIDE `@layer components`: this defines only a `@keyframes`,
+ * which has no specificity and cannot win or lose against a utility — the
+ * layering hazard documented above applies to rulesets, not to keyframes.
+ * Placing it in the layer would be cargo-culting the precaution.
+ *
+ * Respects `prefers-reduced-motion` by holding the bar still at a third of the
+ * width rather than removing it: the bar's PRESENCE is the signal, and the
+ * motion is only how it says "indeterminate". Someone who has asked for less
+ * motion still needs to know the app is working.
+ */
+@keyframes filter-bar-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[filter-bar-progress_1\.1s_ease-in-out_infinite\] {
+    animation: none;
+  }
+}

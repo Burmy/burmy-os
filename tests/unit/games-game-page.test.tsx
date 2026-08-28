@@ -72,6 +72,7 @@ function game(overrides: Partial<Game> = {}): Game {
     createdAt: new Date('2026-01-01'),
     updatedAt: new Date('2026-01-01'),
     playYears: [],
+    collectionId: null,
     ...overrides,
   };
 }
@@ -80,9 +81,16 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/**
+ * Collections are their own concern — exercised in `games-collections.test.tsx`
+ * and the integration suite, not here. Spread FIRST at every call site below so
+ * a test that does care can still override any of the three explicitly.
+ */
+const collectionDefaults = { members: [], collection: null, collectionOptions: [] } as const;
+
 describe('GamePage — read display', () => {
   it('renders every field formatted, with no inputs visible until clicked', () => {
-    render(<GamePage game={game()} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game()} trophies={[]} />);
 
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Elden Ring' })).toBeInTheDocument();
@@ -95,7 +103,7 @@ describe('GamePage — read display', () => {
   });
 
   it('shows "Not set" placeholders for unset fields', () => {
-    render(<GamePage game={game({ ownership: null, genre: null, developer: null, publisher: null })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ ownership: null, genre: null, developer: null, publisher: null })} trophies={[]} />);
     expect(screen.getAllByText('Not set').length).toBeGreaterThan(0);
   });
 });
@@ -103,7 +111,7 @@ describe('GamePage — read display', () => {
 describe('GamePage — text field inline editing', () => {
   it('reveals a real input on click and saves the field on blur', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ genre: 'Roguelike' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     const input = screen.getByRole('textbox', { name: 'Genre' });
@@ -118,7 +126,7 @@ describe('GamePage — text field inline editing', () => {
 
   it('does not save when the committed value is unchanged', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ genre: 'Roguelike' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     await user.tab();
@@ -128,7 +136,7 @@ describe('GamePage — text field inline editing', () => {
 
   it('pressing Escape cancels the edit without saving', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ genre: 'Roguelike' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     const input = screen.getByRole('textbox', { name: 'Genre' });
@@ -143,7 +151,7 @@ describe('GamePage — text field inline editing', () => {
     updateGameFieldAction.mockResolvedValueOnce({ ok: false, error: 'Genre is too long' });
     const { toast } = await import('@/components/ui/toast');
     const user = userEvent.setup();
-    render(<GamePage game={game({ genre: 'Roguelike' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ genre: 'Roguelike' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Genre' }));
     const input = screen.getByRole('textbox', { name: 'Genre' });
@@ -158,7 +166,7 @@ describe('GamePage — text field inline editing', () => {
 
   it('edits Notes as a multiline field', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ notes: null })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ notes: null })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Notes' }));
     const textarea = screen.getByRole('textbox', { name: 'Notes' });
@@ -174,7 +182,7 @@ describe('GamePage — text field inline editing', () => {
 describe('GamePage — select field inline editing', () => {
   it('changes Status via a Select that commits immediately, no separate save step', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ status: 'played' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ status: 'played' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Status' }));
     await user.click(screen.getByRole('option', { name: 'Backlog' }));
@@ -186,7 +194,7 @@ describe('GamePage — select field inline editing', () => {
 
   it('changes Ownership, including clearing it back to "Not set"', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ ownership: 'physical' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ ownership: 'physical' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Ownership' }));
     await user.click(screen.getByRole('option', { name: 'Not set' }));
@@ -200,7 +208,7 @@ describe('GamePage — select field inline editing', () => {
 describe('GamePage — Platinum toggle', () => {
   it('saves immediately on click, no edit step', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ platinum: false })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ platinum: false })} trophies={[]} />);
 
     await user.click(screen.getByRole('checkbox', { name: 'Platinum' }));
 
@@ -212,26 +220,26 @@ describe('GamePage — Platinum toggle', () => {
 
 describe('GamePage Steam provenance', () => {
   it('renders Hours as plain, non-editable text for a Steam-linked game', () => {
-    render(<GamePage game={game({ steamAppid: 367520 })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ steamAppid: 367520 })} trophies={[]} />);
     expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/from steam/i).length).toBeGreaterThan(0);
   });
 
   it('keeps Hours editable for a game with no Steam link', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ steamAppid: null })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ steamAppid: null })} trophies={[]} />);
     await user.click(screen.getByRole('button', { name: 'Hours' }));
     expect(screen.getByRole('textbox', { name: 'Hours' })).toBeInTheDocument();
   });
 
   it('keeps achievement counts read-only for a Steam-linked game', () => {
-    render(<GamePage game={game({ steamAppid: 367520 })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ steamAppid: 367520 })} trophies={[]} />);
     expect(screen.queryByRole('button', { name: 'Achievements earned' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Achievements total' })).not.toBeInTheDocument();
   });
 
   it('keeps Rating and Status editable for a Steam-linked game', () => {
-    render(<GamePage game={game({ steamAppid: 367520 })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ steamAppid: 367520 })} trophies={[]} />);
     // Rating is a directly-interactive star row now, not a click-to-reveal
     // text field — Steam owning hours/achievements must not disable it.
     expect(screen.getByRole('radiogroup', { name: 'Rating' })).toBeInTheDocument();
@@ -248,7 +256,7 @@ describe('GamePage Steam provenance', () => {
 describe('GamePage — star rating', () => {
   it('renders the current rating as selected and saves the star that is clicked', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ rating: 5 })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ rating: 5 })} trophies={[]} />);
 
     expect(screen.getByRole('radio', { name: '5 stars' })).toBeChecked();
 
@@ -261,7 +269,7 @@ describe('GamePage — star rating', () => {
 
   it('clears the rating when the already-selected star is clicked again', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ rating: 4 })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ rating: 4 })} trophies={[]} />);
 
     await user.click(screen.getByRole('radio', { name: '4 stars' }));
 
@@ -276,7 +284,7 @@ describe('GamePage — star rating', () => {
 describe('GamePage — Title and metadata search', () => {
   it('makes zero metadata calls until the owner actually edits the title', async () => {
     vi.useFakeTimers();
-    render(<GamePage game={game({ title: 'Elden Ring' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ title: 'Elden Ring' })} trophies={[]} />);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
@@ -288,7 +296,7 @@ describe('GamePage — Title and metadata search', () => {
 
   it('saves just the title on blur when no suggestion is picked', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ title: 'Elden Ring' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ title: 'Elden Ring' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: /^Title/ }));
     const input = screen.getByLabelText('Title');
@@ -318,7 +326,7 @@ describe('GamePage — Title and metadata search', () => {
       },
     ]);
     const user = userEvent.setup();
-    render(<GamePage game={game({ title: 'Had', genre: null })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ title: 'Had', genre: null })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: /^Title/ }));
     const input = screen.getByLabelText('Title');
@@ -353,7 +361,7 @@ describe('GamePage — Title and metadata search', () => {
       },
     ]);
     const user = userEvent.setup();
-    render(<GamePage game={game({ title: 'Had', genre: 'Action RPG' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ title: 'Had', genre: 'Action RPG' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: /^Title/ }));
     const input = screen.getByLabelText('Title');
@@ -373,13 +381,13 @@ describe('GamePage — Title and metadata search', () => {
 
 describe('GamePage play-year split', () => {
   it('shows the split panel already expanded when a split already exists', () => {
-    render(<GamePage game={game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })} trophies={[]} />);
     expect(screen.getByLabelText('Year')).toBeInTheDocument();
   });
 
   it('does not silently drop a row whose year cell was blanked (data-loss regression)', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })} trophies={[]} />);
 
     const yearInput = screen.getByLabelText('Year');
     await user.clear(yearInput);
@@ -396,6 +404,7 @@ describe('GamePage play-year split', () => {
   it('keeps the split editable even when the total is Steam-owned', () => {
     render(
       <GamePage
+        {...collectionDefaults}
         game={game({ steamAppid: 367520, hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] })}
         trophies={[]}
       />,
@@ -429,7 +438,7 @@ describe('GamePage — Trophies', () => {
   }
 
   it('renders no Trophies section for a game linked to neither PSN nor Steam', () => {
-    render(<GamePage game={game({ psnNpCommunicationId: null, steamAppid: null })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ psnNpCommunicationId: null, steamAppid: null })} trophies={[]} />);
     expect(screen.queryByRole('heading', { name: 'Trophies' })).not.toBeInTheDocument();
     expect(screen.queryByText(/find on powerpyx/i)).not.toBeInTheDocument();
   });
@@ -437,6 +446,7 @@ describe('GamePage — Trophies', () => {
   it('renders stored trophies immediately, with no loading state', () => {
     render(
       <GamePage
+        {...collectionDefaults}
         game={game({ id: 'game-42', title: 'Bloodborne', psnNpCommunicationId: 'NPWR12345_00' })}
         trophies={[trophy()]}
       />,
@@ -460,7 +470,7 @@ describe('GamePage — Trophies', () => {
    * must name the fix rather than reading like one.
    */
   it('tells the owner to sync when a linked game has no stored trophies', () => {
-    render(<GamePage game={game({ psnNpCommunicationId: 'NPWR12345_00' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ psnNpCommunicationId: 'NPWR12345_00' })} trophies={[]} />);
 
     expect(screen.getByRole('heading', { name: 'Trophies' })).toBeInTheDocument();
     expect(screen.getByText(/run a sync from settings/i)).toBeInTheDocument();
@@ -469,6 +479,7 @@ describe('GamePage — Trophies', () => {
   it('renders trophies for a Steam-only game too, tierless', () => {
     render(
       <GamePage
+        {...collectionDefaults}
         game={game({ psnNpCommunicationId: null, steamAppid: 367520 })}
         trophies={[trophy({ source: 'steam', tier: null, groupId: null, name: 'Charmed' })]}
       />,
@@ -481,7 +492,7 @@ describe('GamePage — Trophies', () => {
 describe('GamePage — Remove', () => {
   it('deletes the game and navigates back to the library on confirm', async () => {
     const user = userEvent.setup();
-    render(<GamePage game={game({ id: 'game-1', title: 'Elden Ring' })} trophies={[]} />);
+    render(<GamePage {...collectionDefaults} game={game({ id: 'game-1', title: 'Elden Ring' })} trophies={[]} />);
 
     await user.click(screen.getByRole('button', { name: 'Remove' }));
     const removeButtons = screen.getAllByRole('button', { name: 'Remove' });

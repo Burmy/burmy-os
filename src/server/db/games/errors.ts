@@ -47,6 +47,33 @@ export class GameNotFoundError extends Error {
 }
 
 /**
+ * A proposed `collection_id` would break the one-level rule.
+ *
+ * Collections are exactly one level deep — a collection holds games, and a
+ * game inside one can never itself hold others. Three ways to violate that,
+ * all refused here rather than by a CHECK constraint (which would need a
+ * subquery): pointing a game at ITSELF, pointing it at a row that is already
+ * inside another collection, and turning a row that already HAS games into
+ * somebody else's member — which would orphan its own contents a level down
+ * where nothing renders them.
+ *
+ * `reason` is carried so the Server Action can say which of the three
+ * happened; the owner sees a sentence, not a constraint name.
+ */
+export class InvalidCollectionError extends Error {
+  constructor(readonly reason: 'self' | 'target-is-member' | 'already-a-collection') {
+    super(
+      reason === 'self'
+        ? 'A game cannot be inside itself.'
+        : reason === 'target-is-member'
+          ? 'That game is already inside another collection — collections are only one level deep.'
+          : 'This game already holds other games, so it cannot also sit inside one.',
+    );
+    this.name = 'InvalidCollectionError';
+  }
+}
+
+/**
  * A sync run does not exist, or belongs to someone else. One error for both —
  * same "don't let a crafted id distinguish the two" reasoning as
  * `GameNotFoundError`.

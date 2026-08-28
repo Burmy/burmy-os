@@ -1,6 +1,7 @@
 import { Section } from '@/components/ui/section';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatCardGrid } from '@/components/ui/stat-card-grid';
+import { countableGames } from '@/server/games/collections';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatPriceCents } from '@/server/games/money';
 import type { PlayYearRow } from '@/server/games/play-years';
@@ -85,9 +86,21 @@ export function GamesDashboard({
   const yearly = buildYearlyBreakdown(rows, playYears);
   const callouts = findCallouts(rows, yearly.rows);
 
-  const platforms = buildDistribution(rows, (row) => row.platform, (key) => PLATFORM_LABELS[key as GamePlatform]);
+  // Platform and genre count GAMES, so they exclude collection wrappers —
+  // otherwise "The Nathan Drake Collection" contributes a fourth PS4 entry
+  // beside its own three titles, and its genre is counted twice. See
+  // `countableGames`.
+  const games = countableGames(rows);
+  const platforms = buildDistribution(games, (row) => row.platform, (key) => PLATFORM_LABELS[key as GamePlatform]);
+  const genres = buildGenreDistribution(games);
+
+  // OWNERSHIP is the exception, and follows the money rather than the count:
+  // physical-vs-digital is a fact about a PURCHASE, and you own one disc
+  // containing three games. The titles inside a collection carry no
+  // ownership at all (it lives on the collection, like `priceCents`), so
+  // passing the full set is both correct and self-limiting — a child
+  // contributes nothing because `buildDistribution` skips null keys.
   const ownership = buildDistribution(rows, (row) => row.ownership, (key) => (key === 'physical' ? 'Physical' : 'Digital'));
-  const genres = buildGenreDistribution(rows);
 
   // Quality (rating, Metacritic) qualifies the library as a whole, so both
   // ride on the "Games" card rather than each standing alone.

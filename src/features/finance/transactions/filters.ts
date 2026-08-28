@@ -1,3 +1,4 @@
+import { isUuid } from '@/lib/uuid';
 import type { LedgerFilters } from '@/server/db/finance/transactions';
 import type { ReviewStatus, TransactionType } from '@/server/db/finance/transactions';
 
@@ -56,8 +57,16 @@ export function parseLedgerFilters(
   const parsedMonth = raw.month ? Number.parseInt(raw.month, 10) : NaN;
   if (Number.isFinite(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12) filters.month = parsedMonth;
 
+  // THE SHAPE IS CHECKED, NOT JUST THE PRESENCE. `categoryId` reaches
+  // `eq(financeTransactions.categoryId, …)` against a `uuid` column, and
+  // Postgres answers a non-uuid by RAISING (`22P02`), which surfaces as a 500
+  // on a hand-edited link rather than as an ignored filter. Every other param
+  // in this function already drops a value it does not recognise; this one
+  // simply never checked. A well-formed id that does not exist — or belongs
+  // to someone else — is a different case and still handled the same way it
+  // always was: the owner-scoped query returns nothing.
   if (raw.category === 'uncategorized') filters.categoryId = 'uncategorized';
-  else if (raw.category) filters.categoryId = raw.category;
+  else if (raw.category && isUuid(raw.category)) filters.categoryId = raw.category;
 
   if (raw.type && (LEDGER_TRANSACTION_TYPES as readonly string[]).includes(raw.type)) {
     filters.transactionType = raw.type as TransactionType;

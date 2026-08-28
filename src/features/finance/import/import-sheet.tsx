@@ -14,6 +14,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
+import { formatHumanDate } from '@/lib/format-date';
 import type { FinanceImportSummary } from '@/server/db/finance/imports';
 import { uploadStatementAction } from './actions';
 
@@ -34,8 +35,11 @@ import { uploadStatementAction } from './actions';
  */
 export function ImportSheet({
   inProgressImports,
+  committedImports,
 }: {
   readonly inProgressImports: readonly FinanceImportSummary[];
+  /** Already imported, newest first — see `listCommittedImports` for why this list exists. */
+  readonly committedImports: readonly FinanceImportSummary[];
 }): React.ReactElement {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -152,6 +156,39 @@ export function ImportSheet({
                         <span>{imp.originalFilename}</span>
                         <span className="text-muted-foreground text-xs">{imp.rowCount} rows</span>
                       </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {/* Two BoA exports a month apart have near-identical filenames,
+                and the panel previously showed only what was still STAGED —
+                so "did I already do August's card statement?" could only be
+                answered by leaving and going to look at the transactions.
+                The date range is what actually distinguishes two similarly
+                named files, so it is shown beside each one rather than the
+                row count, which two different statements can easily share. */}
+            {committedImports.length > 0 ? (
+              <div>
+                <h2 className="text-sm font-semibold">Already imported</h2>
+                <p className="text-muted-foreground mt-1 text-xs">
+                  Most recent first. Uploading one of these again is caught before parsing.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {committedImports.map((imp) => (
+                    <li
+                      key={imp.id}
+                      className="flex items-baseline justify-between gap-3 rounded-md px-3 py-2 text-sm"
+                    >
+                      <span className="truncate" title={imp.originalFilename}>
+                        {imp.originalFilename}
+                      </span>
+                      <span className="text-muted-foreground shrink-0 text-xs">
+                        {imp.dateRangeStart && imp.dateRangeEnd
+                          ? `${formatHumanDate(imp.dateRangeStart)} – ${formatHumanDate(imp.dateRangeEnd)}`
+                          : `${imp.rowCount} rows`}
+                      </span>
                     </li>
                   ))}
                 </ul>

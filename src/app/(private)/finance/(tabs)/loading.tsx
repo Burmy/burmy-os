@@ -1,16 +1,30 @@
+import {
+  ChartPairSkeleton,
+  FilterBarSkeleton,
+  PageHeaderSkeleton,
+  PageSkeleton,
+  StatCardGridSkeleton,
+} from '@/components/ui/page-skeleton';
+
 /**
- * Scoped to the `(tabs)` segment, not the whole app: the SubNav bar (rendered
- * by this segment's own `layout.tsx`) stays instant and static on every
- * Monthly/Transactions/Review click — only this fallback swaps in for the
- * page content area while the next tab's data streams in. Same plain,
- * no-spinner skeleton convention as `(private)/loading.tsx`.
+ * Scoped to the `(tabs)` segment, not the whole app: the Monthly/Transactions/
+ * Review bar (this segment's own `layout.tsx`) stays instant and static on
+ * every tab click — only the content area below it swaps.
+ *
+ * Shaped as the Monthly dashboard: header, filter row, six stat cards, two
+ * charts. That is the tab this segment opens on and the heaviest of the three,
+ * so it is the shape worth matching. Transactions and Review are both a header
+ * plus a filter row plus a table, which this leads with identically — the stat
+ * cards resolving into a table is a smaller shift than a bare grey block
+ * resolving into anything.
  */
 export default function FinanceTabsLoading(): React.ReactElement {
   return (
-    <div aria-busy="true" aria-live="polite" className="space-y-4">
-      <span className="sr-only">Loading</span>
-      <div className="bg-muted h-7 w-48 animate-pulse rounded-md" />
-      <div className="bg-muted mt-8 h-40 w-full animate-pulse rounded-md" />
-    </div>
+    <PageSkeleton>
+      <PageHeaderSkeleton />
+      <FilterBarSkeleton />
+      <StatCardGridSkeleton />
+      <ChartPairSkeleton />
+    </PageSkeleton>
   );
 }

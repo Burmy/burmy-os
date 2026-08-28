@@ -1,0 +1,3 @@
+ALTER TABLE "games" ADD COLUMN "collection_id" uuid;--> statement-breakpoint
+ALTER TABLE "games" ADD CONSTRAINT "games_collection_id_games_id_fk" FOREIGN KEY ("collection_id") REFERENCES "public"."games"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "games_owner_collection_idx" ON "games" USING btree ("owner_id","collection_id") WHERE "games"."collection_id" is not null;
