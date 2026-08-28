@@ -1,6 +1,7 @@
 'use client';
 
-import { Plus } from 'lucide-react';
+import Link from 'next/link';
+import { Copy, Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -43,8 +44,11 @@ const STATUS_CHIP_STATUSES = ['wanted'] as const satisfies readonly GameStatus[]
  */
 export function LibraryView({
   games,
+  duplicateCount = 0,
 }: {
   readonly games: readonly Game[];
+  /** Pairs the Duplicates screen has something to say about — the link is hidden at 0. */
+  readonly duplicateCount?: number;
 }): React.ReactElement {
   // Opening a game is a full cross-segment navigation with a database read at
   // the other end, and the card gave no sign it had been clicked — the wall of
@@ -214,10 +218,23 @@ export function LibraryView({
           </span>
         }
         actions={
-          <Button onClick={() => setCreating(true)}>
-            <Plus className="size-4" />
-            Add game
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Only when there is something to fix. A permanent entry point
+                reading "0 duplicates" on a clean library is an invitation to
+                an empty page. */}
+            {duplicateCount > 0 ? (
+              <Button variant="outline" asChild>
+                <Link href="/games/duplicates">
+                  <Copy className="size-4" />
+                  {duplicateCount} duplicate{duplicateCount === 1 ? '' : 's'}
+                </Link>
+              </Button>
+            ) : null}
+            <Button onClick={() => setCreating(true)}>
+              <Plus className="size-4" />
+              Add game
+            </Button>
+          </div>
         }
       />
 

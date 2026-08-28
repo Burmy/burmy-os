@@ -210,6 +210,56 @@ live in `src/server/games/trophies.ts` and import nothing.
 
 ---
 
+## Duplicates — finding them, and merging without losing a game
+
+**Two kinds, both from the owner's real library.**
+
+*The same game on two platforms.* `Uncharted: Legacy of Thieves Collection` (PS4, hand-typed, price
+and rating) and `UNCHARTED: Legacy of Thieves Collection` (PS5, PSN-linked, platinum). One purchase,
+played through backwards compatibility, reported by PSN under the platform it ran on — the
+near-identical hours are the tell. `scripts/merge-duplicate-games.mjs` cannot see this pair at all:
+it keys on `platform + title`, so the two land in different groups. `src/server/games/duplicates.ts`
+keys on **title alone** and makes the platform an explicit per-pair decision instead.
+
+*A collection flattened into its own first title.* `Uncharted: The Nathan Drake Collection -
+Uncharted: Drake's Fortune Remastered` — the spreadsheet importer joined a set's name to the first
+game listed under it. The row carries the SET's figures (44h, 154 achievements) under a name that
+reads like one title, which is how 154 achievements came to sit on a single game. Detected by
+splitting on a **spaced** hyphen and matching the left half; a bare hyphen would tear `Spider-Man`
+in half.
+
+**A flattened merge CREATES the game it names.** This is the non-obvious half. The flattened row is
+standalone, so it counts as a game; merging it into the collection deletes it, and the Uncharted
+shelf silently drops from three titles to two — the exact number the owner keeps, and the reason
+collections exist. So the merge also inserts the right-hand half of the title as a real row inside
+the collection, created bare: hours and price are the set's, trophies stay unset until a sync gives
+that title its own PSN list. Skipped when that title already exists.
+
+**The merge transaction's order is forced from both ends** (`src/server/db/games/duplicates.ts`):
+
+1. re-parent any games filed under the loser;
+2. re-parent any trophies stored against the loser;
+3. delete the loser;
+4. write the fills, platinum and platform onto the winner.
+
+Steps 1–2 precede the delete because `game_trophies.game_id` is `ON DELETE CASCADE` and
+`games.collection_id` is `ON DELETE SET NULL`. Step 4 must FOLLOW it, which was found by running the
+merge rather than by reading it: `games_owner_title_platform_idx` is unique on
+`(owner, lower(title), platform)`, and the whole point of a merge is that the two rows share a title
+— so writing the chosen platform onto the winner while the loser still exists collides with the row
+being merged away, and the transaction dies on a `23505` naming an index with no obvious connection
+to the change.
+
+**The plan is re-derived server-side.** The screen sends only which pair and which platform;
+everything else is recomputed from current database state. A client-supplied fills object would be a
+client-supplied list of columns to write, and a plan built at render time can be stale by the time it
+is clicked.
+
+**What it refuses.** Three rows sharing a title, both copies linked, a loser that holds collection
+members or has its own stored trophies — each becomes a "needs your decision" entry naming what is
+ambiguous. Merging deletes a row, so an unforced answer is never guessed at.
+
+
 ## Collections
 
 A boxed set — "Uncharted: The Nathan Drake Collection" — is **one purchase wrapping several games the
