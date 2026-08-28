@@ -166,9 +166,15 @@ test.describe('transactions ledger', () => {
     });
 
     await page.goto('/finance/monthly');
-    // Not a third sidebar destination — reached via a secondary action next
-    // to Import statement, and Nav (the sidebar) stays exactly two entries.
-    await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link')).toHaveCount(2);
+    // Transactions is not a sidebar destination — it is reached from within
+    // Finance. That intent used to be expressed as "the sidebar has exactly 2
+    // links", which broke the moment Games was added (3), even though nothing
+    // about Transactions had changed. Asserting the actual set says what is
+    // meant, fails with a readable message, and still catches an accidental
+    // addition — a new module is expected to update this line.
+    const mainNav = page.getByRole('navigation', { name: 'Main' });
+    await expect(mainNav.getByRole('link')).toHaveText(['Finance', 'Games', 'Settings']);
+    await expect(mainNav.getByRole('link', { name: 'Transactions' })).toHaveCount(0);
     await page.getByRole('link', { name: 'Transactions' }).click();
     await expect(page).toHaveURL(/\/finance\/transactions$/);
     await expect(page.getByRole('heading', { name: 'Transactions' })).toBeVisible();

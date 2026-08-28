@@ -254,7 +254,16 @@ test.describe('review queue', () => {
     expect(former?.counterpart_transaction_id).toBeNull();
   });
 
-  test('filters stay collapsed by default and expand on request', async ({ page }) => {
+  // Rewritten, not deleted. This pair used to assert a collapsible "Filters"
+  // disclosure — closed by default, opened by a click or by a non-default URL
+  // filter. That disclosure was removed on purpose (see `filter-bar.tsx`: "a
+  // click to reveal three controls that fit on one line"), and status moved
+  // from a select to chips at the same time. Both tests kept asserting the old
+  // shape and nothing caught it, because CI had never run them.
+  //
+  // What is still worth testing is the contract underneath: every filter
+  // control is reachable, and a filter in the URL really is applied.
+  test('shows every filter control immediately, with no disclosure to open', async ({ page }) => {
     await signIntoApp(page);
 
     const ownerId = await getOwnerId();
@@ -264,31 +273,32 @@ test.describe('review queue', () => {
     await page.goto('/finance/review');
     await expect(page.getByText('ONE THING TO REVIEW')).toBeVisible();
 
-    // Plain status=needs_review, no other filter active -> the toolbar starts
-    // closed, so the common (one- or two-row) case has nothing to look past.
-    const toggle = page.getByRole('button', { name: 'Filters' });
-    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    // The disclosure is gone — asserted directly, so re-introducing one fails
+    // here rather than silently changing the page's behaviour.
+    await expect(page.getByRole('button', { name: 'Filters', exact: true })).toHaveCount(0);
 
-    await toggle.click();
-    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toBeVisible();
+    // `exact` matters: a second "Category for selected transactions" select
+    // appears for bulk assignment, and a substring match would find both.
     await expect(page.getByRole('combobox', { name: 'Category', exact: true })).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Type', exact: true })).toBeVisible();
+    // Status is chips now, not a select. Anchored so it cannot match another
+    // control whose name merely contains the word.
+    await expect(page.getByRole('button', { name: /^Needs review/ })).toBeVisible();
   });
 
-  test('a non-default filter in the URL opens the toolbar automatically', async ({ page }) => {
+  test('a non-default filter in the URL is applied and shown as active', async ({ page }) => {
     await signIntoApp(page);
 
     const ownerId = await getOwnerId();
     const accountId = await seedAccount(ownerId);
     await seedTransaction({ ownerId, accountId, reviewStatus: 'confirmed', description: 'ALREADY CONFIRMED' });
 
-    // status=all differs from the needs_review default -> the toolbar should
-    // already be open, so the active filter is never hidden from view.
+    // status=all differs from the needs_review default, so a confirmed row is
+    // visible AND the chip for that status reads as the active one.
     await page.goto('/finance/review?status=all');
     await expect(page.getByText('ALREADY CONFIRMED')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Filters' })).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.getByRole('combobox', { name: 'Status', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^All/ })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: /^Needs review/ })).toHaveAttribute('aria-pressed', 'false');
   });
 
   test('bulk category assignment with "remember" writes merchant memory for every distinct merchant selected', async ({
