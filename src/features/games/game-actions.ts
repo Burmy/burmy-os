@@ -11,6 +11,7 @@ import {
   createGame,
   deleteGame,
   getGame,
+  setCollectionForGames,
   setGameCollection,
   updateGame,
 } from '@/server/db/games/games';
@@ -678,6 +679,31 @@ export async function updateGameCollectionAction(
       idSchema.parse(id),
       collectionId === null || collectionId === '' ? null : idSchema.parse(collectionId),
     );
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/**
+ * Files several games into one collection — the collection page's "Add games"
+ * picker and the library's multi-select.
+ *
+ * A cap of 200 ids, matched to the size of a personal library rather than
+ * chosen as a round number: every id costs a validation round trip, and a
+ * request carrying more ids than the owner has games is not a real request.
+ */
+export async function addGamesToCollectionAction(
+  collectionId: string,
+  gameIds: readonly string[],
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    const ids = z.array(idSchema).min(1).max(200).parse(gameIds);
+    await setCollectionForGames(owner.userId, ids, idSchema.parse(collectionId));
   } catch (error) {
     return toResult(error);
   }

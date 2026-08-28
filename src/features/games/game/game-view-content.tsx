@@ -14,6 +14,7 @@ import {
 } from '@/features/games/play-years-panel';
 import { GAME_OWNERSHIPS, OWNERSHIP_LABELS } from '@/server/games/taxonomy';
 import type { GameOwnership } from '@/server/games/taxonomy';
+import { CollectionField } from '@/features/games/collections/collection-field';
 import { InlineEditField, InlineEditSelect } from './inline-edit-row';
 
 /**
@@ -126,15 +127,10 @@ export function GameDetailsContent({
             rule), so a row that holds games gets no picker at all rather
             than a disabled control implying it might one day be allowed. */}
         {isCollection ? null : (
-          <InlineEditSelect
-            label="Part of"
-            value={collection?.id ?? ''}
-            displayValue={collection?.title ?? ''}
-            options={[
-              { value: '', label: 'Not in a collection' },
-              ...collectionOptions.map((option) => ({ value: option.id, label: option.title })),
-            ]}
-            onSave={onSaveCollection}
+          <CollectionField
+            collection={collection}
+            options={collectionOptions}
+            onSave={(collectionId) => onSaveCollection(collectionId ?? '')}
           />
         )}
         <InlineEditSelect

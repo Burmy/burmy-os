@@ -11,7 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -614,6 +614,84 @@ export async function setGameCollection(
     .returning({ id: gamesTable.id });
 
   if (!updated[0]) throw new GameNotFoundError();
+}
+
+/**
+ * Files SEVERAL games into one collection at once — the collection page's
+ * "Add games" picker and the library's multi-select both land here.
+ *
+ * Every id is validated against the same one-level rule a single filing goes
+ * through, and the whole batch is one transaction: filing eight games and
+ * having the fifth fail must not leave four filed and four not, with no
+ * indication of where it stopped. Either the set the owner picked is in, or
+ * nothing moved and the error names the game that blocked it.
+ *
+ * Already-filed rows are not an error and are not rewritten — re-adding a
+ * game that is already in this collection is a no-op, so the picker can show
+ * current members as checked without every confirm re-writing them.
+ */
+export async function setCollectionForGames(
+  ownerId: string,
+  gameIds: readonly string[],
+  collectionId: string,
+): Promise<number> {
+  if (gameIds.length === 0) return 0;
+
+  for (const gameId of gameIds) {
+    await assertCollectionTargetValid(ownerId, gameId, collectionId);
+  }
+
+  const updated = await getDb()
+    .update(gamesTable)
+    .set({ collectionId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        inArray(gamesTable.id, [...gameIds]),
+        // `IS DISTINCT FROM`, not `<>` — a NULL `collection_id` (the normal
+        // case for a game being filed for the first time) makes `<>` NULL,
+        // which is not true, and the row would never be updated at all.
+        sql`${gamesTable.collectionId} is distinct from ${collectionId}`,
+      ),
+    )
+    .returning({ id: gamesTable.id });
+
+  return updated.length;
+}
+
+/**
+ * Games that could be added to `collectionId` — the "Add games" picker's list.
+ *
+ * Three exclusions, each for its own reason:
+ *   · the collection itself       — a row cannot contain itself
+ *   · rows already inside ANOTHER collection — moving one silently out of the
+ *     set it is in is not what "add" means; the owner removes it there first
+ *   · rows that hold games of their own — the one-level rule
+ *
+ * Rows already in THIS collection are deliberately included, so the picker can
+ * render them checked rather than making the current members invisible.
+ */
+export async function listCollectionCandidates(
+  ownerId: string,
+  collectionId: string,
+): Promise<{ readonly id: string; readonly title: string; readonly platform: GamePlatform }[]> {
+  const holdsGames = getDb()
+    .select({ id: gamesTable.collectionId })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), isNotNull(gamesTable.collectionId)));
+
+  return getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title, platform: gamesTable.platform })
+    .from(gamesTable)
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        ne(gamesTable.id, collectionId),
+        or(isNull(gamesTable.collectionId), eq(gamesTable.collectionId, collectionId)),
+        notInArray(gamesTable.id, holdsGames),
+      ),
+    )
+    .orderBy(asc(gamesTable.title));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

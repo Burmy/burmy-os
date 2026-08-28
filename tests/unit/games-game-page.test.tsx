@@ -96,7 +96,12 @@ afterEach(() => {
  * had no test at all, and `updateGameCollectionAction` was missing from the
  * module mock above, so calling it would have thrown.
  */
-const collectionDefaults = { members: [], collection: null, collectionOptions: [] } as const;
+const collectionDefaults = {
+  members: [],
+  collection: null,
+  collectionOptions: [],
+  collectionCandidates: [],
+} as const;
 
 describe('GamePage — read display', () => {
   it('renders every field formatted, with no inputs visible until clicked', () => {
@@ -235,8 +240,11 @@ describe('GamePage — collection picker', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Part of' }));
-    await user.click(screen.getByRole('option', { name: NDC.title }));
+    await user.click(screen.getByRole('button', { name: /Part of/ }));
+    // The picker is a searchable dialog, not a <select> — with 179 games a
+    // plain option list is 178 rows to scroll past. Search then pick.
+    await user.type(screen.getByRole('textbox', { name: 'Search games' }), 'nathan');
+    await user.click(screen.getByRole('button', { name: NDC.title }));
 
     await waitFor(() => {
       expect(updateGameCollectionAction).toHaveBeenCalledWith('uc1', 'ndc');
@@ -257,8 +265,11 @@ describe('GamePage — collection picker', () => {
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: 'Part of' }));
-    await user.click(screen.getByRole('option', { name: 'Not in a collection' }));
+    // Clearing is its own control now, not an option inside the list: "remove
+    // this from its set" is a different intent from "choose a set", and
+    // hiding it among the collections made it the easiest thing to hit by
+    // accident while scrolling.
+    await user.click(screen.getByRole('button', { name: `Remove from ${NDC.title}` }));
 
     await waitFor(() => {
       expect(updateGameCollectionAction).toHaveBeenCalledWith('uc1', null);
@@ -270,7 +281,9 @@ describe('GamePage — collection picker', () => {
       <GamePage {...collectionDefaults} collection={NDC} collectionOptions={[NDC]} game={game()} trophies={[]} />,
     );
 
-    expect(screen.getByRole('button', { name: 'Part of' })).toHaveTextContent(NDC.title);
+    // The accessible name is "Part of <collection>" — the field and its value
+    // — while the visible text stays just the value.
+    expect(screen.getByRole('button', { name: `Part of ${NDC.title}` })).toHaveTextContent(NDC.title);
   });
 
   it('offers no picker at all on a row that HOLDS games', () => {
@@ -296,7 +309,7 @@ describe('GamePage — collection picker', () => {
       />,
     );
 
-    expect(screen.queryByRole('button', { name: 'Part of' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Part of/ })).not.toBeInTheDocument();
   });
 });
 
