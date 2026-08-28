@@ -10,6 +10,7 @@ import {
   buildLibrarySummary,
   buildYearlyBreakdown,
   capDistributionSlices,
+  countableGames,
   findCallouts,
   splitGenres,
 } from '@/server/games/stats';
@@ -33,6 +34,7 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
     platinum: false,
     metacritic: null,
     priceCents: 5999,
+    collectionId: null,
     ...overrides,
   };
 }
@@ -609,5 +611,160 @@ describe('buildLeaderboard', () => {
 
   it('returns an empty board for an empty library', () => {
     expect(buildLeaderboard([], 'hours', 3)).toEqual([]);
+  });
+});
+
+/**
+ * Collections — a bundle bought once, holding several games counted
+ * separately. Modelled on the owner's real data: "Uncharted: The Nathan
+ * Drake Collection" is one PS4 purchase (£22.90, 44h, 154 trophies, one
+ * platinum) containing three distinct games.
+ *
+ * The rule under test, from `countableGames`: anything that counts GAMES
+ * excludes the collection wrapper; anything that sums HOURS, MONEY or
+ * TROPHIES includes everything.
+ */
+describe('collections', () => {
+  const COLLECTION_ID = 'nathan-drake-collection';
+
+  /** The wrapper: carries the money, the hours and the trophies. */
+  const collection = (overrides: Partial<GameStatRow> = {}): GameStatRow =>
+    game({
+      id: COLLECTION_ID,
+      title: 'Uncharted: The Nathan Drake Collection',
+      platform: 'ps4',
+      hoursTenths: 440,
+      priceCents: 2290,
+      achievementsUnlocked: 154,
+      achievementsTotal: 154,
+      platinum: true,
+      firstPlayedYear: 2024,
+      rating: 2,
+      genre: 'Action-Adventure',
+      collectionId: null,
+      ...overrides,
+    });
+
+  /** A title inside it: a real game, but carrying no hours, price or trophies of its own. */
+  const member = (id: string, title: string, overrides: Partial<GameStatRow> = {}): GameStatRow =>
+    game({
+      id,
+      title,
+      platform: 'ps4',
+      hoursTenths: null,
+      priceCents: null,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
+      platinum: false,
+      rating: null,
+      ownership: null,
+      firstPlayedYear: 2024,
+      genre: 'Action-Adventure',
+      collectionId: COLLECTION_ID,
+      ...overrides,
+    });
+
+  const library = (): GameStatRow[] => [
+    collection(),
+    member('drakes-fortune', "Uncharted: Drake's Fortune Remastered"),
+    member('among-thieves', 'Uncharted 2: Among Thieves Remastered'),
+    member('drakes-deception', "Uncharted 3: Drake's Deception Remastered"),
+    game({ id: 'elden-ring', title: 'Elden Ring', hoursTenths: 1360, priceCents: 5999, firstPlayedYear: 2022 }),
+  ];
+
+  it('counts the titles inside a collection but not the collection itself', () => {
+    const countable = countableGames(library());
+
+    expect(countable.map((row) => row.id)).toEqual([
+      'drakes-fortune',
+      'among-thieves',
+      'drakes-deception',
+      'elden-ring',
+    ]);
+    expect(countable.map((row) => row.id)).not.toContain(COLLECTION_ID);
+  });
+
+  it('treats a row nobody points at as an ordinary game, not a collection', () => {
+    const rows = [game({ id: 'solo' })];
+    expect(countableGames(rows).map((row) => row.id)).toEqual(['solo']);
+  });
+
+  it('reports four games for three titles plus a standalone, never five', () => {
+    // The bug this exists to prevent: counting the wrapper alongside its own
+    // contents reports one more game than the owner actually has.
+    expect(buildLibrarySummary(library()).totalGames).toBe(4);
+  });
+
+  it("counts a collection's hours and trophies exactly once, on the collection", () => {
+    const summary = buildLibrarySummary(library());
+
+    // 44h from the collection + 136h from Elden Ring. The three titles carry
+    // null hours, so they contribute nothing and cannot double-count.
+    expect(summary.totalHoursTenths).toBe(440 + 1360);
+    expect(summary.platinumCount).toBe(1);
+  });
+
+  it('excludes the collection from status counts, so a backlog of titles is not inflated by its wrapper', () => {
+    const rows = [
+      collection({ status: 'backlog' }),
+      member('a', 'A', { status: 'backlog' }),
+      member('b', 'B', { status: 'backlog' }),
+    ];
+
+    // Two games are waiting, not three — the collection is not itself
+    // something you sit down and play.
+    expect(buildLibrarySummary(rows).backlogCount).toBe(2);
+  });
+
+  it('counts backlog TITLES but sums backlog MONEY from the collection that holds it', () => {
+    const rows = [
+      collection({ status: 'backlog' }),
+      member('a', 'A', { status: 'backlog' }),
+      member('b', 'B', { status: 'backlog' }),
+    ];
+    const financial = buildFinancialSummary(rows);
+
+    expect(financial.backlogCount).toBe(2);
+    // The price lives on the collection, and is real money sitting unplayed.
+    expect(financial.backlogValueCents).toBe(2290);
+  });
+
+  it('counts a collection once toward total spend, not once per title inside it', () => {
+    expect(buildFinancialSummary(library()).totalSpendCents).toBe(2290 + 5999);
+  });
+
+  it('credits a year with the titles started, and with the collection’s trophies and hours', () => {
+    const { rows } = buildYearlyBreakdown(library(), []);
+    const twentyFour = rows.find((row) => row.year === 2024);
+
+    // Three titles started in 2024 — the wrapper is not a fourth.
+    expect(twentyFour?.startedCount).toBe(3);
+    // ...but the trophies and hours it carries are the real ones.
+    expect(twentyFour?.achievements).toBe(154);
+    expect(twentyFour?.hoursTenths).toBe(440);
+  });
+
+  it('does not count a collection as a platform of its own in a distribution', () => {
+    // Four PS4 rows exist, but only three are games. Counting the wrapper
+    // would report a fourth PS4 entry that nobody owns.
+    const platforms = buildDistribution(
+      countableGames(library()),
+      (row) => row.platform,
+      (key) => key,
+    );
+
+    expect(platforms.find((slice) => slice.key === 'ps4')?.count).toBe(3);
+  });
+
+  it('leaves every number unchanged for a library with no collections at all', () => {
+    const flat = [
+      game({ id: 'a', hoursTenths: 100, priceCents: 1000, firstPlayedYear: 2024 }),
+      game({ id: 'b', hoursTenths: 200, priceCents: 2000, firstPlayedYear: 2024 }),
+    ];
+    const summary = buildLibrarySummary(flat);
+
+    expect(summary.totalGames).toBe(2);
+    expect(summary.totalHoursTenths).toBe(300);
+    expect(buildFinancialSummary(flat).totalSpendCents).toBe(3000);
   });
 });

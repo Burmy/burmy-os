@@ -212,6 +212,113 @@ describe('advanceSteamSyncAction — the no-delete invariant', () => {
   });
 });
 
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A TITLE INSIDE A COLLECTION IS INVISIBLE TO A SYNC.
+ *
+ * The collection row carries the Steam identity, the hours and the trophies;
+ * the titles inside it exist to be counted, rated and illustrated. No Steam
+ * or PSN response will ever be about one of them.
+ *
+ * Left visible, an unlinked child is name-matched like any other row — and
+ * `bestTitleMatchAmong` would score it against the collection's own library
+ * entry, stage a `link` pointing the child at its parent's appid, then
+ * `field_update` the collection's hours onto it. The same 44h would then
+ * exist on two rows and every SUM in `stats.ts` would count it twice.
+ *
+ * This is the same class of guard as the unlinked-PSP rule in
+ * `resolvePlayedTitle` (`psn-actions.ts`), and it gets the same treatment:
+ * a named invariant test that MUTATION-FAILS if the guard is removed. The
+ * scenario is deliberately the hostile one — Steam reporting a game whose
+ * name is an EXACT match for the child — because a test where the names
+ * merely differ would pass with or without the guard and prove nothing.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+describe('advanceSteamSyncAction — collection members are invisible to a sync', () => {
+  it('never touches a title inside a collection, even when Steam owns a game by that exact name', async () => {
+    const ownerId = await provisionOwner();
+    const collection = await games.createGame(ownerId, {
+      title: 'Uncharted: The Nathan Drake Collection',
+      platform: 'steam',
+      status: 'played',
+      hoursTenths: 440,
+    });
+    const member = await games.createGame(ownerId, {
+      title: 'Uncharted 2: Among Thieves Remastered',
+      platform: 'steam',
+      status: 'played',
+      collectionId: collection.id,
+    });
+
+    // The hostile case: Steam's entry is an EXACT title match for the child.
+    // Without the guard this links the child and copies hours onto it.
+    fetchOwnedGames.mockImplementation(async () => [
+      { appid: 999001, name: 'Uncharted 2: Among Thieves Remastered', playtimeMinutes: 600 },
+    ]);
+
+    const before = await fullGameRow(member.id);
+
+    const runId = await startRun();
+    let done = false;
+    for (let i = 0; i < 5 && !done; i += 1) {
+      const progress = await actions.advanceSteamSyncAction(runId);
+      if ('error' in progress) throw new Error(progress.error);
+      done = progress.done;
+    }
+    expect(done).toBe(true);
+
+    // Byte-identical: no link, no field update, no write of any kind.
+    expect(await fullGameRow(member.id)).toEqual(before);
+
+    // ...and nothing was even PROPOSED against it.
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    expect(changes.filter((change) => change.gameId === member.id)).toEqual([]);
+
+    // Note on what DOES happen to that Steam entry: with the child invisible,
+    // no library row accounts for appid 999001, so it is staged as a
+    // `new_game` for the owner to accept or decline. That is correct — a
+    // separately-owned Steam copy of a game you also have inside a boxed
+    // collection is genuinely a second thing — and it stays a proposal either
+    // way, never a write. In the owner's real data this does not arise at
+    // all: Steam sells the collection under one appid, not three.
+  });
+
+  it('still walks and syncs the COLLECTION row itself, which is where the Steam identity lives', async () => {
+    const ownerId = await provisionOwner();
+    const collection = await games.createGame(ownerId, {
+      title: 'Uncharted: The Nathan Drake Collection',
+      platform: 'steam',
+      status: 'played',
+    });
+    await games.createGame(ownerId, {
+      title: "Uncharted: Drake's Fortune Remastered",
+      platform: 'steam',
+      status: 'played',
+      collectionId: collection.id,
+    });
+
+    fetchOwnedGames.mockImplementation(async () => [
+      { appid: 999002, name: 'Uncharted: The Nathan Drake Collection', playtimeMinutes: 2640 },
+    ]);
+
+    const runId = await startRun();
+    let done = false;
+    for (let i = 0; i < 5 && !done; i += 1) {
+      const progress = await actions.advanceSteamSyncAction(runId);
+      if ('error' in progress) throw new Error(progress.error);
+      done = progress.done;
+    }
+    expect(done).toBe(true);
+
+    // The guard excludes CHILDREN, not collections — the wrapper must still
+    // link normally, or the feature would sever every collection from its
+    // own sync.
+    const changes = await sync.listSyncChanges(ownerId, runId);
+    const link = changes.find((change) => change.kind === 'link' && change.gameId === collection.id);
+    expect(link?.payload.steamAppid).toBe(999002);
+  });
+});
+
 describe('advanceSteamSyncAction — matching and staging', () => {
   it('stages a link for a game matched by title for the first time', async () => {
     const ownerId = await provisionOwner();

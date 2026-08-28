@@ -23,6 +23,7 @@ function game(overrides: Partial<GameStatRow>): GameStatRow {
     platinum: true,
     metacritic: 96,
     priceCents: 5999,
+    collectionId: null,
     ...overrides,
   };
 }
