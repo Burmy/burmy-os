@@ -576,13 +576,16 @@ export function buildYearlyBreakdown(
  *    unremarkable; the cost of the opposite error is a confident wrong number,
  *    which is the entire failure this exists to stop.
  *
- * 2. A DORMANT ACTIVE ACCOUNT FREEZES EVERY LATER MONTH. An account left
- *    `is_active = true` whose last transaction was in March holds every month
- *    after March at "not covered" forever, because it never reaches their last
- *    day. The fix is the mechanism that already exists and already means this:
- *    set `is_active = false`. This function only ever sees accounts the caller
- *    considers active, so a deactivated account drops out with no new
- *    configuration, no new column, and no special case here.
+ * 2. A DORMANT ACCOUNT MUST NOT FREEZE EVERY LATER MONTH — see
+ *    `DORMANT_AFTER_DAYS` below. The first version of this rule said the fix
+ *    was for the owner to set `is_active = false`, and shipped on that basis.
+ *    In production the owner had a retired "Historical (2024-2025)" account
+ *    whose last transaction was 1 Dec 2025, and every single month of 2026 read
+ *    as "not fully imported" — no stat cards, trend charts stopping eight months
+ *    short, and the Year Overview zeroed — while the grid underneath showed a
+ *    full year of real data. Requiring a person to notice that and go fix their
+ *    account settings was the wrong default: the data already says the account
+ *    is retired.
  */
 export interface AccountCoverage {
   readonly accountId: string;
@@ -595,6 +598,79 @@ export interface AccountCoverage {
 /** ISO date of a month's last day — the bar every account has to clear. */
 export function lastDayOfMonth(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth(year, month)).padStart(2, '0')}`;
+}
+
+/**
+ * How far behind the NEWEST transaction in the whole ledger an account may fall
+ * before it stops counting toward coverage.
+ *
+ * The number has to separate two things that look identical from a single
+ * account's latest date:
+ *
+ *   a LATE STATEMENT — the account is still in use, its file just hasn't been
+ *   imported yet. It must keep holding coverage; that is the entire point of
+ *   the rule.
+ *
+ *   a RETIRED ACCOUNT — closed, or superseded, and never getting another
+ *   transaction. It must stop holding coverage, because nothing will ever
+ *   release it.
+ *
+ * A statement cycle is about a month, and the two accounts' cycles are already
+ * offset from each other by half of one, so a live account is routinely ~45 days
+ * behind the newest data in the ledger and that is completely normal. 75 days is
+ * past two full cycles: an account that far behind has missed two statements in
+ * a row, which no amount of ordinary lateness produces.
+ *
+ * Deliberately measured against the newest transaction in the LEDGER rather than
+ * against today's date. Coverage is a statement about imported data, and an
+ * owner who hasn't imported anything for three months should see every account
+ * still counting (their data is simply old), not every account declared dormant
+ * at once, which would silently mark stale months "covered".
+ */
+export const DORMANT_AFTER_DAYS = 75;
+
+/** `'YYYY-MM-DD'` as a whole day number, for the one comparison in this file that needs a real interval rather than an ordering. `NaN` for anything unparsable — callers treat that as "keep counting it". */
+function toDayNumber(iso: string): number {
+  const year = Number.parseInt(iso.slice(0, 4), 10);
+  const month = Number.parseInt(iso.slice(5, 7), 10);
+  const day = Number.parseInt(iso.slice(8, 10), 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return NaN;
+  return Date.UTC(year, month - 1, day) / 86_400_000;
+}
+
+/**
+ * Splits the owner's accounts into the ones coverage is judged against and the
+ * ones that have gone quiet — see `DORMANT_AFTER_DAYS`.
+ *
+ * `dormant` is returned rather than discarded so the "not ready yet" panel can
+ * still list the account and say it is being ignored. An account silently
+ * dropped from a rule is how the owner ends up unable to explain their own
+ * dashboard.
+ *
+ * Fails toward COUNTING an account: an unparsable date stays in `reporting`,
+ * where it holds coverage (its string compare against the month-end bar will
+ * not pass) rather than quietly excusing itself from it.
+ */
+export function partitionCoverage(coverage: readonly AccountCoverage[]): {
+  readonly reporting: AccountCoverage[];
+  readonly dormant: AccountCoverage[];
+} {
+  if (coverage.length === 0) return { reporting: [], dormant: [] };
+
+  const newest = coverage.reduce((max, a) => (a.latestDate > max ? a.latestDate : max), coverage[0]!.latestDate);
+  const newestDay = toDayNumber(newest);
+
+  const reporting: AccountCoverage[] = [];
+  const dormant: AccountCoverage[] = [];
+  for (const account of coverage) {
+    const day = toDayNumber(account.latestDate);
+    const behind = newestDay - day;
+    if (Number.isFinite(behind) && behind > DORMANT_AFTER_DAYS) dormant.push(account);
+    else reporting.push(account);
+  }
+  // The newest account is 0 days behind itself, so `reporting` is never empty
+  // for a non-empty input — there is always something to judge against.
+  return { reporting, dormant };
 }
 
 /**
@@ -614,27 +690,34 @@ export function isMonthCovered(
   year: number,
   month: number,
 ): boolean {
-  if (coverage.length === 0) return false;
+  const { reporting } = partitionCoverage(coverage);
+  if (reporting.length === 0) return false;
   const bar = lastDayOfMonth(year, month);
-  return coverage.every((account) => account.latestDate >= bar);
+  return reporting.every((account) => account.latestDate >= bar);
 }
 
 /**
  * The most recent month every account has run past — the last month with
  * numbers worth showing, and where the trend charts stop.
  *
- * Walks back from the month containing the EARLIEST account's latest
- * transaction, because that account is the binding constraint: a month cannot
- * be covered before the slowest-arriving statement reaches it. At most 12 steps
- * so a long-dormant account cannot turn this into an unbounded loop; beyond a
- * year behind, there is nothing worth charting anyway.
+ * Walks back from the month containing the EARLIEST still-reporting account's
+ * latest transaction, because that account is the binding constraint: a month
+ * cannot be covered before the slowest-arriving statement reaches it. At most 12
+ * steps, so a gap in the middle of history cannot turn this into an unbounded
+ * loop; beyond a year behind, there is nothing worth charting anyway.
+ *
+ * Dormant accounts are excluded before the walk starts, not just inside
+ * `isMonthCovered`. Starting from a retired account's final month would spend
+ * all 12 steps in the wrong year and return `null` even though every month since
+ * is covered.
  */
 export function latestCoveredMonth(
   coverage: readonly AccountCoverage[],
 ): { readonly year: number; readonly month: number } | null {
-  if (coverage.length === 0) return null;
+  const { reporting } = partitionCoverage(coverage);
+  if (reporting.length === 0) return null;
 
-  const earliest = coverage.reduce((min, a) => (a.latestDate < min ? a.latestDate : min), coverage[0]!.latestDate);
+  const earliest = reporting.reduce((min, a) => (a.latestDate < min ? a.latestDate : min), reporting[0]!.latestDate);
   let year = Number.parseInt(earliest.slice(0, 4), 10);
   let month = Number.parseInt(earliest.slice(5, 7), 10);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
