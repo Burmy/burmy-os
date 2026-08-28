@@ -14,6 +14,9 @@ import type { Game } from '@/server/db/games/games';
 import { countableGames, groupByCollection } from '@/server/games/collections';
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
+import { toast } from '@/components/ui/toast';
+import { addGamesToCollectionAction } from '@/features/games/game-actions';
+import { BulkCollectionBar } from './bulk-collection-bar';
 import { GameDialog } from './game-dialog';
 import { GameGrid } from './game-grid';
 import { GameTable } from './game-table';
@@ -61,6 +64,57 @@ export function LibraryView({
   const [platform, setPlatform] = useState<PlatformFilter>('all');
   const [search, setSearch] = useState('');
   const [creating, setCreating] = useState(false);
+
+  /**
+   * MULTI-SELECT IS TABLE-ONLY, DELIBERATELY.
+   *
+   * The gallery's cards are already navigation buttons and its job is
+   * browsing covers; the table is the dense, filterable view where you go to
+   * clean something up — search "uncharted", see the seven rows, file three
+   * of them. Adding a second click meaning to the cards would change what a
+   * cover does depending on a mode, for a workflow nobody does from the
+   * gallery. Switching to Gallery therefore clears the selection rather than
+   * hiding it, so there is never a selection the owner cannot see.
+   */
+  const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
+
+  function toggleSelect(game: Game): void {
+    setSelectedIds((current) =>
+      current.includes(game.id) ? current.filter((id) => id !== game.id) : [...current, game.id],
+    );
+  }
+
+  function changeView(next: ViewMode): void {
+    if (next !== 'table') setSelectedIds([]);
+    setView(next);
+  }
+
+  /**
+   * What the selection can be filed INTO. Excludes the selected rows
+   * themselves (a game cannot contain itself) and anything already inside a
+   * collection (the one-level rule) — the same three exclusions
+   * `listCollectionCandidates` applies on the server, which validates every
+   * id again regardless of what this list offers.
+   */
+  const collectionTargets = useMemo(() => {
+    const memberIds = new Set(games.filter((g) => g.collectionId !== null).map((g) => g.id));
+    return games
+      .filter((game) => !selectedIds.includes(game.id) && game.collectionId === null && !memberIds.has(game.id))
+      .map((game) => ({ id: game.id, title: game.title, subtitle: PLATFORM_LABELS[game.platform] }));
+  }, [games, selectedIds]);
+
+  async function addSelectedTo(collectionId: string): Promise<void> {
+    const target = games.find((game) => game.id === collectionId);
+    const count = selectedIds.length;
+    const result = await addGamesToCollectionAction(collectionId, selectedIds);
+
+    if (result.ok) {
+      setSelectedIds([]);
+      toast.success(`${count} game${count === 1 ? '' : 's'} added to ${target?.title ?? 'the collection'}`);
+      return;
+    }
+    toast.error(result.error);
+  }
 
   // `wanted` (wishlist) games are hidden unless their own status chip is
   // active — see the plan's "Library hides it by default." Every OTHER
@@ -257,13 +311,25 @@ export function LibraryView({
 
         <SegmentedToggle
           value={view}
-          onChange={setView}
+          onChange={changeView}
           options={[
             { value: 'gallery', label: 'Gallery' },
             { value: 'table', label: 'Table' },
           ]}
         />
       </FilterBar>
+
+      {/* Only once something is selected. A permanently visible bar would
+          take a strip of the screen to say "0 selected" for the entire time
+          the owner is doing anything else. */}
+      {selectedIds.length > 0 ? (
+        <BulkCollectionBar
+          selectedCount={selectedIds.length}
+          collections={collectionTargets}
+          onClear={() => setSelectedIds([])}
+          onAdd={addSelectedTo}
+        />
+      ) : null}
 
       {games.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm">
@@ -276,7 +342,13 @@ export function LibraryView({
       ) : view === 'gallery' ? (
         <GameGrid groups={groups} openingId={opening ? openingId : null} onOpen={open} />
       ) : (
-        <GameTable groups={groups} openingId={opening ? openingId : null} onOpen={open} />
+        <GameTable
+          groups={groups}
+          openingId={opening ? openingId : null}
+          onOpen={open}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+        />
       )}
 
       <GameDialog open={creating} onOpenChange={setCreating} />

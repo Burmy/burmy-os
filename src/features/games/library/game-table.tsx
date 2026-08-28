@@ -7,6 +7,7 @@ import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
 import { StatusBadge } from '@/components/games/status-badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import type { CollectionGroup } from '@/server/games/collections';
@@ -55,16 +56,30 @@ export function GameTable({
   groups,
   openingId,
   onOpen,
+  selectedIds,
+  onToggleSelect,
 }: {
   readonly groups: readonly CollectionGroup<Game>[];
   /** The row whose navigation is in flight — see `GameCard`'s `opening` for why this exists. */
   readonly openingId: string | null;
   readonly onOpen: (game: Game) => void;
+  /**
+   * Selection is OFF unless both of these are supplied, so every existing
+   * call site keeps a table with no checkbox column and rows that open on
+   * click. Selecting and opening are different intents on the same row, and
+   * a table that silently switched between them would be worse than one
+   * that never offers selection at all.
+   */
+  readonly selectedIds?: readonly string[];
+  readonly onToggleSelect?: (game: Game) => void;
 }): React.ReactElement {
+  const selectable = selectedIds !== undefined && onToggleSelect !== undefined;
+
   return (
     <Table>
       <TableHeader>
         <TableRow>
+          {selectable ? <TableHead className="w-8" /> : null}
           <TableHead>Title</TableHead>
           <TableHead>Platform</TableHead>
           <TableHead>Status</TableHead>
@@ -83,6 +98,9 @@ export function GameTable({
               memberCount={group.members.length}
               opening={group.game.id === openingId}
               onOpen={onOpen}
+              {...(selectable
+                ? { selected: selectedIds.includes(group.game.id), onToggleSelect }
+                : {})}
             />
             {group.members.map((member) => (
               <GameRow
@@ -91,6 +109,7 @@ export function GameTable({
                 collectionTitle={group.game.title}
                 opening={member.id === openingId}
                 onOpen={onOpen}
+                {...(selectable ? { selected: selectedIds.includes(member.id), onToggleSelect } : {})}
               />
             ))}
           </Fragment>
@@ -106,6 +125,8 @@ function GameRow({
   collectionTitle,
   opening = false,
   onOpen,
+  selected,
+  onToggleSelect,
 }: {
   readonly game: Game;
   /** Non-zero when this row is a collection wrapper. */
@@ -114,11 +135,34 @@ function GameRow({
   readonly collectionTitle?: string;
   readonly opening?: boolean;
   readonly onOpen: (game: Game) => void;
+  /** Present only in selection mode — see `GameTable`'s own `selectable`. */
+  readonly selected?: boolean;
+  readonly onToggleSelect?: (game: Game) => void;
 }): React.ReactElement {
   const nested = collectionTitle !== undefined;
+  const selectable = selected !== undefined && onToggleSelect !== undefined;
 
   return (
-    <TableRow className="cursor-pointer" aria-busy={opening || undefined} onClick={() => onOpen(game)}>
+    <TableRow
+      className="cursor-pointer"
+      aria-busy={opening || undefined}
+      // In selection mode the whole row toggles instead of navigating. Two
+      // intents cannot share one click, and selection is the one you are
+      // repeating — you turned the mode on to pick several rows, so it gets
+      // the cheap gesture and the title link keeps navigation.
+      onClick={() => (selectable ? onToggleSelect(game) : onOpen(game))}
+      {...(selectable ? { 'data-selected': selected || undefined } : {})}
+    >
+      {selectable ? (
+        <TableCell className="w-8">
+          <Checkbox
+            checked={selected}
+            aria-label={`Select ${game.title}`}
+            onCheckedChange={() => onToggleSelect(game)}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </TableCell>
+      ) : null}
       <TableCell className={cn('font-medium', nested && 'pl-8 font-normal')}>
         <button
           type="button"
@@ -130,8 +174,10 @@ function GameRow({
           // disagree (WCAG 2.5.3).
           {...(nested ? { 'aria-label': `${game.title} — in ${collectionTitle}` } : {})}
           onClick={(event) => {
-            // The row above already opens on click; stop the event
-            // reaching it so a mouse click doesn't call onOpen twice.
+            // The row above already handles click; stop the event reaching it
+            // so a mouse click doesn't fire twice. The title always OPENS,
+            // even in selection mode — otherwise turning selection on would
+            // leave no way to reach a game's page from the table at all.
             event.stopPropagation();
             onOpen(game);
           }}
