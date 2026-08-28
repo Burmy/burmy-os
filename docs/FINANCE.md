@@ -939,11 +939,16 @@ visible:
 ### What was deferred
 
 Charts, budgets, trends, forecasting, AI insights, custom dashboards, a
-report builder — all explicitly out of scope by owner instruction. The
-Excel-comparison "Reconciliation" feature described earlier in this document
-(`finance_expected_totals`) is a separate, still-unbuilt feature, not part of
-M8 — cell drill-down is what currently replaces manually checking a
+report builder — all explicitly out of scope by owner instruction **at M8**.
+The Excel-comparison "Reconciliation" feature described earlier in this
+document (`finance_expected_totals`) is a separate, still-unbuilt feature, not
+part of M8 — cell drill-down is what currently replaces manually checking a
 spreadsheet, the same role the mockup above assigned to it.
+
+**Charts and trends were subsequently un-deferred and built, in M11.** The
+owner asked for them after living with the bare grid; see "Finance dashboard
+(M11)" below. Budgets, forecasting, AI insights and a report builder remain
+out of scope, and the M8 grid itself is unchanged beneath the dashboard.
 
 ## Transactions ledger & export (M9)
 
@@ -1041,3 +1046,36 @@ XLSX import/export, bulk category/type edit from Transactions, deleting a
 transaction, a `pg_trgm`/GIN search index (plain `ILIKE` is sufficient at
 personal-ledger scale) — all explicitly out of scope. No new
 categorization/classification work: M6 and M7's mechanisms are untouched.
+
+---
+
+## Finance dashboard (M11)
+
+`/finance/monthly` leads with a dashboard; the M8 year grid sits beneath it,
+relabeled "Full year grid" and otherwise untouched.
+
+**Headline stat cards** for the selected month — Income, Expenses, Net,
+Savings rate, Average daily spending, Transaction count — each with a
+month-over-month comparison. **Charts** (Recharts): income-vs-expense trend,
+net cashflow, category breakdown and trend, largest expenses. **A "This Year"
+tab** with a Jan–Dec stacked bar and an annual category donut that falls back
+to a horizontal bar past 7 categories.
+
+**Every number is still computed by SQL at read time.** The invariant does not
+bend for a dashboard: `db/finance/grid.ts` gained `getMonthlyTotalsAllTime`,
+`getCategoryTotalsForWindow`, `getDailyTotalsForMonth` and
+`getTopExpensesForMonth`, and the pure month math lives in
+`server/finance/dashboard.ts`. The category-totals/monthly-totals
+reconciliation is proven by an integration test, not asserted here.
+
+`dashboardBaseConditions()` is **deliberately duplicated from**, not coupled
+to, M8's `gridBaseConditions()` — the same precedent M9's `ledgerConditions()`
+set. Three filters that agree today may need to diverge tomorrow, and a shared
+one would make that a refactor instead of an edit.
+
+**One trap this created, worth repeating from CLAUDE.md:**
+`getMonthlyTotalsAllTime` sign-flips income to a positive display figure at the
+DB boundary. Calling `formatInflow()` on an already-flipped aggregate
+double-flips it and renders a real paycheck as `-$6,400.00`. `formatInflow` is
+only correct on a raw, still-negative stored value — a single transaction row,
+never a pre-summed total.

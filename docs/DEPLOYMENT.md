@@ -1,26 +1,32 @@
 # Deployment
 
-> **Status (2026-08-18): this is the one production architecture Burmy-OS runs.** Not a VPS, not
-> Docker, not a Cloudflare Tunnel. See "Why the VPS was dropped" for the reasoning. The VPS/Docker
-> Compose self-hosting design this repo carried through M10's first pass has been removed from the
-> active repository — it is not documented here as an alternative path, and it is not code anyone
-> should extend. It remains fully available in git history (see commit `205323c` onward) if
-> self-hosting is ever deliberately picked up again; that would be a real, separate piece of work, not
-> a flag to flip.
+> **Status (2026-08-28): DEPLOYED AND LIVE.** `https://app.burmy.me` is serving the real application
+> behind Cloudflare Access, against a Supabase Postgres database holding the owner's real Finance and
+> Games data. Everything below that reads as a plan — "Deployment sequence", "Launch checklist" — has
+> been carried out; both sections are now the RECORD of how it was done, kept because a rollback, a
+> rebuild, or a second environment would follow the same order.
 >
-> **External state, as it actually exists today** (owner-reported, not independently verified by
-> Claude): the Cloudflare DNS migration for `burmy.me` is complete and the zone is Active; Cloudflare
-> Zero Trust Free + a Google identity provider + a Burmy-OS Access application are configured; an
-> Oracle Cloud VPS was attempted and abandoned after repeated capacity failures — **no VPS was ever
-> created, nothing was ever deployed to Oracle.** See "External state" below for the full detail.
+> Read this document as describing a running system, not an intended one. Where something is still
+> outstanding it says so explicitly, in bold, rather than being left implied — there are two such
+> items, both in "Backup strategy": the restore-verification procedure has never been run against the
+> live Supabase project (only against local dev), and no backup cadence has been established.
 >
-> **Authentication decision: keep Cloudflare Access exactly as built (Option A).** `requireOwner()`
-> stays unchanged. `burmy.me` and `www.burmy.me` stay DNS-only, untouched. `app.burmy.me` alone gets
-> proxied through Cloudflare once its Netlify deployment is verified healthy, specifically so the
-> already-configured Access application can enforce Google auth + the exact-email Allow policy in
-> front of it. See "Authentication" and "Deployment sequence" below for the exact, order-sensitive
-> rollout — the naive "verify everything on the temporary `*.netlify.app` URL" sequence does **not**
-> work for the authenticated parts of the app, since that hostname never passes through Access.
+> **Not a VPS, not Docker, not a Cloudflare Tunnel.** See "Why the VPS was dropped" for the reasoning.
+> The VPS/Docker Compose self-hosting design this repo carried through M10's first pass has been
+> removed from the active repository — it is not documented here as an alternative path, and it is not
+> code anyone should extend. It remains fully available in git history (see commit `205323c` onward)
+> if self-hosting is ever deliberately picked up again; that would be a real, separate piece of work,
+> not a flag to flip.
+>
+> **Authentication: Cloudflare Access exactly as built (Option A), and it is what gates the live
+> site.** `requireOwner()` is unchanged. `burmy.me` and `www.burmy.me` remain DNS-only and untouched;
+> `app.burmy.me` alone is proxied through Cloudflare, which is what puts the Access application's
+> Google auth + exact-email Allow policy in front of it.
+>
+> **Everything external here was performed by the owner, not by Claude.** Claude has never touched
+> Cloudflare, Netlify, Namecheap, or the Supabase dashboard. Statements about their configuration are
+> owner-reported; statements about the database's *contents and health* were read directly through
+> Supabase's own tooling and are marked where they appear.
 
 ---
 
@@ -92,6 +98,17 @@ Nothing in this section was performed by Claude; all of it was done manually by 
 back, and is recorded here for reference. **Claude has not touched Cloudflare, Netlify, Namecheap,
 Supabase, or any VPS provider.**
 
+### Summary — everything below is live
+
+| Piece | State |
+| --- | --- |
+| `burmy.me` DNS on Cloudflare | Active, zone migrated |
+| `app.burmy.me` | Proxied through Cloudflare, resolving to the Burmy-OS Netlify site |
+| Cloudflare Access | Gating `app.burmy.me`; Google IdP, exact-email Allow policy |
+| Netlify (Burmy-OS site) | Deployed, serving |
+| Supabase Postgres | Provisioned, migrated, holding the owner's real data |
+| Oracle VPS | Never created. Abandoned before provisioning |
+
 ### DNS — Cloudflare migration (complete)
 
 - `burmy.me`'s DNS authority moved from Netlify DNS/NS1 to Cloudflare. The Cloudflare zone reports
@@ -112,7 +129,7 @@ Supabase, or any VPS provider.**
   step-by-step migration checklist) is preserved in git history rather than repeated here — see commits
   `dc70a6b`, `1b1e186`, `3318170`, `3f7d70f` for the complete record if it's ever needed again.
 
-### Cloudflare Zero Trust / Access (configured, will gate `app.burmy.me` once proxied)
+### Cloudflare Zero Trust / Access (live — gating `app.burmy.me` now)
 
 - A Cloudflare Zero Trust **Free** organization exists.
 - Google is configured as the identity provider and a live authentication test against it succeeded.
@@ -123,10 +140,11 @@ Supabase, or any VPS provider.**
   Access JWT verification unchanged (Option A) — no Supabase Auth, no Netlify Identity, no second OAuth
   implementation, no password auth, no new session framework.** Access only intercepts a request when
   Cloudflare's edge actually sits in front of it — a Tunnel (the original, now-abandoned VPS design) or
-  a *proxied* ("orange cloud") DNS record pointed at an origin Access is told to protect. `app.burmy.me`
-  has no DNS record yet; per "Deployment sequence" below, it gets one — DNS-only at first, so Netlify can
-  verify the domain and provision HTTPS, THEN switched to Proxied once that's healthy — specifically so
-  Access starts gating it. See "Authentication" below for the reasoning this decision is based on.
+  a *proxied* ("orange cloud") DNS record pointed at an origin Access is told to protect.
+- **`app.burmy.me` now has that proxied record, and Access is enforcing on it.** It went in DNS-only
+  first so Netlify could verify the domain and provision HTTPS, then switched to Proxied — the
+  order-sensitive rollout recorded in "Deployment sequence" below, which has since been carried out
+  in full.
 
 ### Oracle VPS (abandoned, nothing created)
 
@@ -164,15 +182,19 @@ owner-auth mechanism inside Burmy-OS was the alternative (Option B) considered a
 Access already does this correctly, and a second implementation would only be a second thing to keep
 secure for no functional gain.
 
-**The one sequencing hazard this creates, and why "Deployment sequence" below is written the way it
-is:** `app.burmy.me` cannot be proxied from the start — Netlify needs the domain DNS-only first to
-verify ownership and provision its own HTTPS certificate. That means there is a window where the
-Burmy-OS Netlify deployment exists but is not yet behind Access. The authenticated parts of the app
-(everything behind `requireOwner()` — which is everything except `/api/health`) **cannot be verified
+**The one sequencing hazard this created, and why "Deployment sequence" below is written the way it
+is:** `app.burmy.me` could not be proxied from the start — Netlify needs the domain DNS-only first to
+verify ownership and provision its own HTTPS certificate. That meant a window in which the Burmy-OS
+Netlify deployment existed but was not yet behind Access. The authenticated parts of the app
+(everything behind `requireOwner()` — which is everything except `/api/health`) **could not be verified
 during that window**, including on the temporary `*.netlify.app` URL, which never passes through
 Cloudflare at all and so never carries the Access JWT `requireOwner()` needs. Only build/runtime/public
-health (`/api/health`) can be checked before the DNS cutover; the sequence below reflects that
-explicitly rather than assuming the temporary URL proves more than it does.
+health (`/api/health`) was checkable before the DNS cutover; the sequence below reflects that rather
+than assuming the temporary URL proved more than it did.
+
+That window is closed — `app.burmy.me` is proxied and Access enforces on it — but the hazard is
+recorded rather than deleted, because it recurs verbatim for any future custom domain, any second
+environment, and any rebuild of the site from scratch.
 
 ### The boundary holds even if the Netlify origin is reached directly
 
@@ -233,7 +255,30 @@ being pulled into a scope (like Post processing, which touches build output) whe
 | `CF_ACCESS_AUD` | the Burmy-OS Access application's Audience tag | Functions / Runtime only | **Production only** | Yes |
 | `NODE_ENV` | `production` | — | Set by Netlify automatically | Not applicable — never set this manually |
 
-**None of the four are given a Build scope.** `next build` never needs a live database or Access
+### The five OPTIONAL Games variables
+
+The four above are what the application REQUIRES. The Games module adds five more, and every one of
+them is optional by contract — see `docs/GAMES.md` and `.env.example`, both of which spell out the
+soft-failure behavior. They are listed here because the table above used to be the complete picture and
+is not any more, and because "optional" makes their absence invisible rather than loud: with none of
+them set the app runs correctly and simply offers less.
+
+| Variable | What it enables | Absent behavior |
+| --- | --- | --- |
+| `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` | Cover art and metadata suggestions (genre, developer/publisher, critic score, playtime, ESRB) | Lookup returns `[]`. No error, no crash — a game just has no art |
+| `STEAM_API_KEY`, `STEAM_ID` | The Library's "Sync with Steam" button | Button renders DISABLED with a visible explanation naming both variables. Never hidden, never thrown |
+| `PSN_NPSSO` | The Library's "Sync with PlayStation" button | Same: disabled, with a visible explanation naming the variable |
+
+Same scoping rule as the required four — **Functions/Runtime only, Production only, secret-marked.**
+They are credentials tied to the owner's personal Twitch, Steam and PlayStation accounts, and none of
+them is needed at build time.
+
+**`PSN_NPSSO` is the one that will need re-entering.** It expires roughly every two months and there is
+no way to detect that except by attempting a sync, at which point the button surfaces a distinct "token
+expired" message rather than a generic failure. Re-pasting it in Netlify's dashboard is a manual chore
+with no automated alternative — see `docs/GAMES.md`, "The NPSSO token."
+
+**None of the four required variables are given a Build scope.** `next build` never needs a live database or Access
 config — `src/server/db/index.ts` connects lazily, on first query, specifically so `next build` (which
 imports every route module to analyze it) never requires `DATABASE_URL` to be live or even present.
 Scoping all four to Functions/Runtime only, Production context only, means: a Deploy Preview or Branch
@@ -306,6 +351,26 @@ safe for local dev and migrations too).
 specify `sslmode=require`, and `postgres.js` respects that from the URL. Hardcoding `ssl: 'require'` in
 `db/index.ts` would break the plain, no-TLS local dev connection (`postgres://burmy:burmy@localhost/burmy`).
 
+### Production runs a different Postgres MAJOR version than local dev and CI
+
+`compose.dev.yml` and `.github/workflows/ci.yml` both pin `postgres:18-alpine`. The live Supabase
+project was observed running **17.6** — Supabase chooses its own version and does not track the newest
+major release. So every migration is generated and tested on 18 and applied to 17.
+
+**Nothing in this schema currently depends on the difference**, which is why this is recorded rather
+than fixed: the migrations are ordinary DDL (tables, enums, indexes, foreign keys, one partial index)
+with no 18-only syntax. But that is a property of what has been written so far, not a guarantee — a
+future migration using an 18-only feature would generate cleanly, pass CI, and then fail against
+production, which is the worst possible place to find out.
+
+Two ways to close it, neither done: pin the local/CI image to the major version Supabase actually
+runs, or upgrade the Supabase project. Pinning down is the cheaper and safer of the two — testing
+against a version OLDER than production is the wrong direction, and matching exactly is better than
+either.
+
+**Re-check the live version before assuming this is still true** (`select version()`); Supabase
+upgrades projects over time and this note will go stale silently.
+
 **Migration credential is named and handled distinctly from the runtime credential — `MIGRATION_DATABASE_URL`
 vs. `DATABASE_URL` — even though `scripts/migrate.mjs` itself doesn't need to change to make that true.**
 The script already just reads whatever `DATABASE_URL` is present in the process it's invoked with; the
@@ -338,6 +403,30 @@ Local development is unaffected: `docker compose -f compose.dev.yml up -d postgr
 Postgres container, not Supabase. Drizzle/`drizzle-kit` need no changes — `drizzle.config.ts`
 already just reads `DATABASE_URL`.
 
+### Running any OTHER script against production
+
+`migrate.mjs` and `provision-owner.mjs` are the two scripts that are *supposed* to run against
+Supabase. Everything else in `scripts/` guards itself, and the guards are not uniform, because the
+right answer differs per script:
+
+| Script | Guard |
+| --- | --- |
+| `migrate.mjs`, `provision-owner.mjs` | None — running against production is their purpose |
+| `pnpm db:seed` | **Refuses** unless `DATABASE_URL`'s host is `localhost`/`127.0.0.1`/`::1` |
+| `sync-steam-library.mjs`, `backfill-game-metadata.mjs`, `fix-game-platforms.mjs`, `import-game-log.mjs` | **Refuse** a non-local database outright — sync locally, then migrate the result deliberately |
+| `link-game-collections.mjs`, `merge-duplicate-games.mjs` | Report by default; `--apply` writes; a non-local database additionally requires `--remote` |
+
+**Why `db:seed`'s guard is a hostname check and not `NODE_ENV`.** It was added after `pnpm db:seed`
+was once run against the real Supabase database by accident, immediately after legitimately pointing
+`DATABASE_URL` at production for `db:migrate` and `db:provision-owner` in the same shell. An ad-hoc
+operator shell running production commands typically has no `NODE_ENV` set at all, so a
+`NODE_ENV !== 'production'` gate would have passed cleanly in exactly the situation that caused the
+mistake. See `src/server/db/seed-guard.ts`.
+
+**The two collections scripts are the exception that proves the rule.** They exist to fix data that
+only exists in production, so they cannot carry the flat local-only refusal. `--remote` is the
+deliberate second key: nothing about a mistyped command line produces it accidentally.
+
 ---
 
 ## Backup strategy (simplified)
@@ -364,6 +453,11 @@ supabase db dump -f "burmy-$(date +%Y-%m-%d).sql"
 pg_dump "<supabase direct connection string>" -Fc -f "burmy-$(date +%Y-%m-%d).dump"
 ```
 
+> **OUTSTANDING: no backup has been taken of the live database.** The policy below was written before
+> the Supabase project existed. It is a good policy and it has never been executed. Both triggers have
+> since occurred — real statement data was imported, and migrations `0011`–`0016` were applied — so the
+> gap is not theoretical.
+
 **Initial policy — run by hand at two specific triggers, not on a fixed schedule:**
 
 1. **After a meaningful monthly import** — a real statement import is the only thing that meaningfully
@@ -387,12 +481,23 @@ psql "<supabase direct connection string>" -f burmy-2026-08-19.sql
 pg_restore -d "<supabase direct connection string>" --clean --if-exists burmy-2026-08-19.dump
 ```
 
-### Restore-verification procedure — actually performed locally, not just written
+### Restore-verification procedure — run against LOCAL DEV only, never against Supabase
 
-A dump that was never restored is not a proven backup — the same reasoning the old VPS design's
-(now-removed) `scripts/verify.sh` was built around. The procedure below was **actually run**, once, against the local
-dev Postgres container (standing in for Supabase, since no Supabase project exists yet to dump from —
-the mechanics are identical either way, only the connection string changes):
+> **OUTSTANDING. This is the single most important unfinished item in this document.** The procedure
+> below was run once, against the local dev Postgres container, at a time when no Supabase project
+> existed yet to dump from. It has **never been run against the live Supabase database**, which now
+> holds the only copy of the owner's real Finance and Games data.
+>
+> Until it has, there is no proven backup of production — only a proven backup *procedure*, verified
+> against a different database, on a different Postgres major version (see "Production runs a different
+> Postgres MAJOR version" above), with 5 rows in it instead of thousands. Those differences are exactly
+> where a restore goes wrong: role ownership, extensions, and version-specific dump format are all
+> things the local test could not exercise.
+>
+> Run it against the real project, and record the result here. Everything else in this document
+> describes something that has been done; this describes something that has not.
+
+The mechanics are identical either way — only the connection string changes. The recorded local run:
 
 ```bash
 # 1. Dump the source database, custom format.
@@ -412,13 +517,18 @@ psql "<connection string, database=postgres>" -c "DROP DATABASE burmy_restore_te
 rm burmy-verify-test.dump
 ```
 
-**Result, actually observed:** dump succeeded (57 KB from the current dev dataset); restore into the
-scratch database completed with no errors; row counts matched exactly between source and restored
-(`user`: 1/1, `finance_transactions`: 2/2, `finance_categories`: 2/2); scratch database and dump file
-both removed afterward. `--no-owner` on restore is kept in the documented command even though it made
-no difference in this same-cluster test — it matters once the restore target's role structure doesn't
-exactly match the dump's recorded owner, which is the normal case restoring into a fresh Supabase
-project or a different Postgres instance entirely.
+**Result, actually observed (LOCAL DEV, 2026-08-19):** dump succeeded (57 KB from the then-current dev
+dataset); restore into the scratch database completed with no errors; row counts matched exactly
+between source and restored (`user`: 1/1, `finance_transactions`: 2/2, `finance_categories`: 2/2);
+scratch database and dump file both removed afterward. `--no-owner` on restore is kept in the
+documented command even though it made no difference in this same-cluster test — it matters once the
+restore target's role structure doesn't exactly match the dump's recorded owner, which is the normal
+case restoring into a fresh Supabase project or a different Postgres instance entirely.
+
+**When repeating this against Supabase, compare more than three tables.** The row-count check above
+was written when the database held two transactions. The live schema has 23 tables across Finance and
+Games; a restore that silently dropped `game_trophies` or `finance_import_rows` would pass the check
+exactly as written. Count every table that should be non-empty, or diff the full `\dt` output.
 
 **This is intentionally the simplest thing that provides real, independent protection, not the final
 word.** If a manual cadence turns out to be too easy to forget, or the lack of managed PITR becomes a
@@ -456,6 +566,10 @@ mid-migration, or already carrying newer writes the old code doesn't expect. Con
 ---
 
 ## Deployment sequence
+
+**This was carried out in full; `app.burmy.me` is live.** It is kept as the record of the order the
+steps have to happen in, because that order is not obvious and is the part worth re-reading before a
+rebuild, a second environment, or a domain change.
 
 Order-sensitive, and corrected from an earlier draft that assumed the temporary `*.netlify.app` URL
 could verify the whole app — it can't, since Cloudflare Access never sits in front of that hostname
@@ -509,9 +623,9 @@ independent Netlify project, not a change to the existing one.
 
 ## Git / release workflow
 
-The repository currently carries a long run of local commits on `main`, never pushed — deliberate, per
-standing instruction ("do not push anything yourself"), but not a workflow to keep doing indefinitely
-once real deployment starts. Intended workflow from here, before production data is ever involved:
+This described a repository with a long run of unpushed local commits on `main`. That is no longer the
+case — `main` is on GitHub and the Netlify site deploys from it. The workflow below is what the project
+follows now, not what it intends to:
 
 1. Full local quality gate — `pnpm typecheck` / `lint` / `test` / `test:integration` / `test:e2e` /
    `build`, all green.
@@ -532,7 +646,23 @@ pushing remains something only the owner triggers or explicitly asks for.
 
 ## Launch checklist — Definition of Done for the default (Netlify + Supabase) path
 
-Real financial data does not touch production until every item below is demonstrated, not assumed:
+**Launched. Real financial data is in production.** Status against the original list, which was
+written as a gate and is now a record:
+
+| # | Item | Status |
+| --- | --- | --- |
+| 1 | Cloudflare Access working end to end on the deployed app | ✅ — the site is reachable only through it |
+| 2 | Netlify build succeeds with no config beyond `netlify.toml` + env vars | ✅ |
+| 3 | Migrations applied against Supabase | ✅ through `0015`. **`0016` (collections) is generated and committed but NOT YET APPLIED** — take a backup first (item 8) |
+| 4 | Owner resolves correctly; fails closed for anything else | ✅ |
+| 5 | `app.burmy.me` resolves, HTTPS healthy, SSL/TLS `Full (strict)` | ✅ |
+| 6 | Unauthorized access fails closed against the real deployment | ✅ |
+| 7 | Import, categorization and the dashboard work against real Supabase data | ✅ |
+| 8 | A logical backup taken and verified restorable | ❌ **NOT DONE.** See "Backup strategy" — this is the outstanding item |
+| 9 | All test/build gates green | ✅ locally. `test:integration` needs Docker and is CI-verified, not verified in every environment |
+| 10 | Rollback procedure understood before it is needed | ✅ documented; never exercised |
+
+The original wording of each item is preserved below.
 
 1. Cloudflare Access (Option A) is confirmed working end to end on the deployed app via the "Deployment
    sequence" above (steps 11–12) — not just configured, actually invoked and passed.

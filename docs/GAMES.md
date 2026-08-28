@@ -152,6 +152,64 @@ form submit at all.
 
 ---
 
+## The `game_trophies` table — the one place Games stores a list
+
+Everything else in this module is a scalar on a `games` row. `game_trophies` is the exception: one row
+per individual trophy or achievement, persisted by the syncs so the game page and the Stats screen can
+answer questions a pair of counters cannot.
+
+**This does not contradict "Achievements are a count, not a checklist" above.** That rule is about what
+the OWNER maintains — `achievements_unlocked`/`achievements_total` are still two hand-editable numbers,
+and still what every stat and the library table read. `game_trophies` is what a SYNC brings back, and
+it exists because PSN and Steam hand over the full list anyway: discarding it and keeping only the
+count would throw away rarity and earned-dates that nothing else can reconstruct. The counters remain
+the owner's summary; this table is the platform's detail.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `source` | enum, not null | `psn \| steam` |
+| `external_id` | text, not null | PSN `trophyId` or Steam `apiname`. **Unique only within a title** — PSN restarts `trophyId` at 0 for every game |
+| `name`, `description`, `icon_url` | text, nullable | As reported. Null for a hidden trophy the platform withholds |
+| `tier` | enum, nullable | `bronze \| silver \| gold \| platinum`. **PSN only** — Steam has no tiers, and inventing one would misrepresent its data |
+| `group_id` | text, nullable | PSN `trophyGroupId`: `default` for the base game, `001`/`002`… for DLC. PSN only |
+| `hidden`, `earned` | boolean, not null | |
+| `earned_at` | timestamptz, nullable | Null whenever `earned` is false. PSN reports it directly; Steam's `unlocktime` is converted |
+| `rarity_tenths` | integer, nullable | Percentage of players who earned it, in TENTHS: `225` = 22.5%. Null when the API reported no rate |
+
+### Rarity is an integer of tenths, for the same reason hours are
+
+Both APIs report exactly one decimal place (PSN `trophyEarnedRate: "22.5"`, Steam `percent: "76.8"`).
+Storing that as `NUMERIC` is forbidden outright by CLAUDE.md — the `pg` driver returns `NUMERIC` as a
+**string**, and the `parseFloat` that follows is the precise bug this project exists to avoid. Storing
+it as a float reintroduces `0.1 + 0.2`. So it is an integer of tenths, exactly like `hours_tenths`,
+with all conversion contained in `src/server/games/trophies.ts` and nowhere else.
+
+**Null is a real state and is never coerced to 0.** A rate of 0 would claim "nobody on the platform has
+this," which is a different and much stronger statement than "the API did not tell us."
+
+### A re-sync is an UPSERT, keyed on four columns
+
+`(owner_id, game_id, source, external_id)` is unique. `external_id` alone cannot be the key — it is
+unique only within a title — and omitting `source` would make a Steam achievement collide with the PSN
+trophy that happens to share its id. `replaceGameTrophies` (`src/server/db/games/trophies.ts`) is what
+every sync writes through, so syncing the same game twice updates rows rather than doubling them.
+
+### Three indexes, two of them partial
+
+`(owner_id, earned_at DESC)` and `(owner_id, rarity_tenths)` are both `WHERE earned` — the two ordered
+views on the Stats screen (Recently earned, Rarest earned) only ever look at earned rows, so an index
+covering the ~40% that are unearned would be dead weight in a scan that can never return them. The
+third, `(owner_id, game_id)`, serves the game page's own trophy list.
+
+### What reads it
+
+`listGameTrophies` (the game page's trophy section), plus four Stats-screen readers:
+`listCloseToPlatinum`, `listRecentlyEarned`, `listRarestEarned` and `getCompletionSummary`. All are
+owner-scoped, all live in `src/server/db/games/trophies.ts`; the pure conversion and formatting helpers
+live in `src/server/games/trophies.ts` and import nothing.
+
+---
+
 ## Collections
 
 A boxed set — "Uncharted: The Nathan Drake Collection" — is **one purchase wrapping several games the

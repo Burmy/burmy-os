@@ -1,6 +1,5 @@
 'use server';
 
-import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
@@ -11,12 +10,18 @@ import {
   updateTransactionType,
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES } from '@/server/finance/classify/manual';
+import { revalidateTransactionSurfaces } from '../revalidate';
 import { type ActionResult, type BulkActionResult, fail, ok } from './action-result';
 
 /**
  * Server Actions for the review queue. Every one begins with
  * `await requireOwner()` — see account-actions.ts for why that cannot be
  * delegated to a layout.
+ *
+ * All three revalidate the Monthly grid and the ledger as well as the queue
+ * itself (`revalidateTransactionSurfaces`). They used to revalidate only
+ * `/finance/review`, so confirming a category here left the grid — the page
+ * whose entire content is category totals — serving its cached render.
  */
 
 const transactionIdSchema = z.string().uuid();
@@ -48,7 +53,7 @@ export async function updateTransactionCategoryAction(
     return toResult(error);
   }
 
-  revalidatePath('/finance/review');
+  revalidateTransactionSurfaces();
   return ok();
 }
 
@@ -68,7 +73,7 @@ export async function updateTransactionTypeAction(
     return toResult(error);
   }
 
-  revalidatePath('/finance/review');
+  revalidateTransactionSurfaces();
   return ok();
 }
 
@@ -87,7 +92,7 @@ export async function bulkUpdateCategoryAction(
       categoryIdSchema.parse(categoryId),
       z.boolean().parse(rememberMerchant),
     );
-    revalidatePath('/finance/review');
+    revalidateTransactionSurfaces();
     return { ok: true, updatedCount };
   } catch (error) {
     if (error instanceof NotFoundError) return { ok: false, error: error.message };

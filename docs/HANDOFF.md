@@ -1,26 +1,31 @@
-# Handoff — Games module, 2026-08-25
+# Handoff — Games module
 
 Written at the end of a long session so the next one can pick up cold. **Read
 `CLAUDE.md` first** (invariants, stack, gotchas), then this. `docs/GAMES.md`
 is canonical for the Games domain; where it and the code disagree, the code
 wins and the doc is a bug.
 
+**The gotchas below are the reason this file still exists.** They were all
+found the hard way and none of them has expired. The status sections at the
+top and bottom are maintained; treat anything not explicitly dated as
+describing the module's design rather than a moment in time.
+
 ---
 
-## Where things stand
+## Where things stand (2026-08-28)
 
 | | |
 | --- | --- |
-| Branch | `feat/game-tracker`, **85 commits ahead of `main`**, unmerged, unpushed |
-| HEAD | `2d34899` |
-| Migrations | 14 on disk, 14 applied to local dev |
-| Gate | typecheck, lint, **1062 unit + 296 integration**, build — all green |
-| Library | 170 played · 1 playing · 9 backlog · 2 wanted |
-| Deployed | **Nothing.** M10 never happened — Supabase has no games tables at all |
+| Branch | Merged to `main` (`674af16`) and pushed. The `feat/game-tracker` branch is history |
+| Migrations | 17 on disk (`0000`–`0016`). **`0016` is NOT yet applied to production** |
+| Gate | typecheck, lint, 1239 unit tests, build — all green. Integration tests need Docker and are CI-verified |
+| Deployed | **Live** at `https://app.burmy.me`, Games included, against real data in Supabase |
 
-Credentials in `.env` and all working: `IGDB_CLIENT_ID`/`SECRET`,
-`STEAM_API_KEY`/`STEAM_ID`, `PSN_NPSSO`. `RAWG_API_KEY` is dead — RAWG was
-replaced by IGDB; the var is vestigial.
+Credentials in `.env` locally and in Netlify for production:
+`IGDB_CLIENT_ID`/`SECRET`, `STEAM_API_KEY`/`STEAM_ID`, `PSN_NPSSO`. All five
+are optional by contract — the module and its full test suite work with none
+of them set. `RAWG_API_KEY` is dead — RAWG was replaced by IGDB; the var is
+vestigial and should not be reintroduced.
 
 ---
 
@@ -42,6 +47,14 @@ grouped by month with a Later/TBD bucket.
 **Then five fixes from real use:** the status-model rework, shared UI
 primitives across Finance and Games, a stats-page redesign, IGDB enrichment of
 synced games, and a Games section in Settings.
+
+**Since the merge:** per-trophy persistence (`game_trophies`, migration `0015`
+— see `docs/GAMES.md`), and **collections** (migration `0016`) — a boxed set
+modelled as a nullable self-FK on `games`, so "Uncharted: The Nathan Drake
+Collection" counts as its three titles instead of flattening into four
+unrelated rows. Two report-by-default scripts came with it:
+`link-game-collections.mjs` (the backfill, which still needs its map) and
+`merge-duplicate-games.mjs` (synced-copy-wins duplicate merge).
 
 ---
 
@@ -139,15 +152,21 @@ These were all found the hard way. Do not rediscover them.
 
 ---
 
-## Outstanding
+## Outstanding (2026-08-28)
 
 **Immediate**
 
-1. **Eight stale `ready` sync runs sit in the dev database.** Two contain
-   Netflix and YouTube as games, staged before that filter existed —
-   committing one would put them in the library. The owner planned a **reset
-   sync**: cancel or ignore these and run fresh.
-2. Nothing has been merged or pushed. 85 commits on `feat/game-tracker`.
+1. **No backup exists of the live Supabase database.** This is the project's
+   highest-priority gap, and for Games it is the only protection there is —
+   unlike Finance, there is no CSV archive to re-import from. See
+   `docs/BACKUP_RESTORE.md` and `docs/DEPLOYMENT.md`, "Backup strategy."
+2. **Migration `0016` (collections) is committed but not applied to
+   production.** Take the backup first; that is exactly the trigger it exists
+   for.
+3. **The collections backfill has no map yet.** `link-game-collections.mjs`
+   needs an explicit collection-title → member-titles JSON file, which is
+   knowledge from the owner's original spreadsheet. Until it runs,
+   `collection_id` is `NULL` on every row and the feature is inert.
 
 **Known, accepted**
 
@@ -157,12 +176,18 @@ These were all found the hard way. Do not rediscover them.
   until the next run. Accepted over the duplicate-staging it replaced.
 - An interactive IGDB search landing during an enrichment run can briefly
   exceed 4 req/s. Worst case is one empty autocomplete; `igdbPost` soft-fails.
-- `docs/ROADMAP.md`, `ARCHITECTURE.md` and `SECURITY.md` still don't mention
-  Games at all.
-- M10 (deployment) remains unstarted. Supabase has the Finance schema only.
+- Production runs Postgres 17.x while local dev and CI pin 18. Nothing in the
+  schema depends on the difference; see `docs/DEPLOYMENT.md`.
 
-**Deferred minors** are recorded in the commit messages of the branch rather
-than a separate list.
+**Resolved since this file was first written**
+
+- ~~Eight stale `ready` sync runs in the dev database, two containing Netflix
+  and YouTube as games.~~ Dev-database state, superseded by the merge.
+- ~~Nothing merged or pushed.~~ Merged as `674af16`.
+- ~~`ROADMAP.md`, `ARCHITECTURE.md` and `SECURITY.md` don't mention Games.~~
+  All three now cover it.
+- ~~M10 (deployment) unstarted; Supabase has the Finance schema only.~~
+  Deployed and live, Games schema included.
 
 ---
 

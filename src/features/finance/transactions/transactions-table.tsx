@@ -32,10 +32,10 @@ import { formatHumanDate } from '@/lib/format-date';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type {
   LedgerFilters,
-  MerchantRulePreview,
   LedgerPage,
   LedgerSummary,
   LedgerTransaction,
+  MerchantRulePreview,
 } from '@/server/db/finance/transactions';
 import { MANUAL_TRANSACTION_TYPES, TRANSACTION_TYPE_LABELS, type ManualTransactionType } from '@/server/finance/classify/manual';
 import { LEDGER_TRANSACTION_TYPES } from './filters';
@@ -71,12 +71,18 @@ function categoryLabel(category: FinanceCategory): string {
 
 export function TransactionsTable({
   page,
+  currentPage,
+  totalPages,
   categories,
   years,
   filters,
   summary,
 }: {
   readonly page: LedgerPage;
+  /** 1-based, already parsed by `parseLedgerFilters` on the server. See the note in the body. */
+  readonly currentPage: number;
+  /** Computed server-side from `LEDGER_PAGE_SIZE`, which cannot be imported here — see the note in the body. */
+  readonly totalPages: number;
   readonly categories: readonly FinanceCategory[];
   readonly years: readonly number[];
   readonly filters: LedgerFilters;
@@ -190,8 +196,36 @@ export function TransactionsTable({
 
   // The export href is built by the PAGE now, not here — Export became a
   // header action alongside every other page-level action in the app.
-  const totalPages = Math.max(1, Math.ceil(page.totalCount / 100));
-  const currentPage = Math.min(totalPages, Math.max(1, Math.floor((searchParams.get('page') ? Number(searchParams.get('page')) : 1))));
+  //
+  // BOTH PAGINATION NUMBERS COME DOWN AS PROPS, and neither can be computed
+  // here. Two separate reasons:
+  //
+  // `currentPage` used to be `Number(searchParams.get('page') ?? 1)` read
+  // straight from the query string. On `?page=abc` that is `NaN`, and NaN
+  // survives `Math.floor`, `Math.max` and `Math.min` unchanged — so the footer
+  // read "Page NaN of 3", `disabled={NaN <= 1}` was `false` (NaN compares
+  // false against everything), and clicking Previous navigated to `?page=NaN`.
+  // The server had already parsed the same param correctly via
+  // `parseLedgerFilters` and was serving page 1, so the two disagreed about
+  // which page was on screen. One parse, on the server, is the fix; a second
+  // sanitizer here would just be a second thing to keep in sync.
+  //
+  // `totalPages` is computed on the server because `LEDGER_PAGE_SIZE` lives in
+  // `@/server/db/finance/transactions`, and importing a RUNTIME value from
+  // that module into this client component drags the whole DAL — and
+  // `postgres` itself — into the browser bundle. The build fails outright
+  // (`Can't resolve 'fs'`), which is the good outcome; the bad one would have
+  // been shipping it. `import type` from the same module is fine and is what
+  // the types above use — only a value import pulls the graph in. This is why
+  // the page size was hardcoded as a literal `100` here before, and passing
+  // the finished number down is the fix that keeps one source of truth
+  // without crossing that boundary.
+  //
+  // Clamped against the total, which only the count query knows:
+  // `parseLedgerFilters` guarantees a page >= 1, but `?page=999` on a
+  // three-page ledger is well-formed and would otherwise read "Page 999 of 3"
+  // with both buttons disabled and no way back.
+  const shownPage = Math.min(currentPage, totalPages);
 
   return (
     <div className="space-y-8">
@@ -369,22 +403,22 @@ export function TransactionsTable({
 
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">
-              Page {currentPage} of {totalPages} — {page.totalCount} total
+              Page {shownPage} of {totalPages} — {page.totalCount} total
             </span>
             <div className="flex gap-2">
               <Button
                 variant="outline"
                 size="sm"
-                disabled={currentPage <= 1}
-                onClick={() => setPage(currentPage - 1)}
+                disabled={shownPage <= 1}
+                onClick={() => setPage(shownPage - 1)}
               >
                 Previous
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                disabled={currentPage >= totalPages}
-                onClick={() => setPage(currentPage + 1)}
+                disabled={shownPage >= totalPages}
+                onClick={() => setPage(shownPage + 1)}
               >
                 Next
               </Button>

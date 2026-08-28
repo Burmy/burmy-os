@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 
 import { ReviewQueue } from '@/features/finance/review/review-queue';
+import { LEDGER_TRANSACTION_TYPES } from '@/features/finance/transactions/filters';
+import { isUuid } from '@/lib/uuid';
 import { requireOwner } from '@/server/auth/owner';
 import { listCategories } from '@/server/db/finance/categories';
 import {
@@ -27,6 +29,32 @@ function readStatus(value: string | undefined): StatusFilter {
 }
 
 /**
+ * `readStatus` above has always checked its value against a known list. These
+ * two never did — `type` was a bare `as TransactionType` cast and `category`
+ * was passed through untouched — so `?type=garbage` reached an enum comparison
+ * and `?category=garbage` reached a `uuid` one, and Postgres answers both by
+ * RAISING (`22P02`). A hand-edited link 500'd instead of rendering an
+ * unfiltered queue.
+ *
+ * Both drop an unrecognised value rather than 404ing, which is what every
+ * other param on this page and in `parseLedgerFilters` already does. The
+ * transaction-type list is shared with the ledger deliberately: two
+ * independently-maintained copies of "the filterable types" is how one of them
+ * silently goes stale.
+ */
+function readTransactionType(value: string | undefined): TransactionType | undefined {
+  if (value && (LEDGER_TRANSACTION_TYPES as readonly string[]).includes(value)) {
+    return value as TransactionType;
+  }
+  return undefined;
+}
+
+function readCategoryId(value: string | undefined): string | undefined {
+  if (value === 'uncategorized') return 'uncategorized';
+  return value && isUuid(value) ? value : undefined;
+}
+
+/**
  * Filters live in the URL (search params), not client state — a filtered view
  * is shareable and survives a refresh, and it keeps this a plain Server
  * Component: the query runs once, server-side, per filter change.
@@ -40,9 +68,8 @@ export default async function ReviewPage({
   const params = await searchParams;
 
   const status = readStatus(readParam(params.status));
-  const categoryParam = readParam(params.category);
-  const categoryId = categoryParam === 'uncategorized' ? 'uncategorized' : categoryParam;
-  const transactionType = readParam(params.type) as TransactionType | undefined;
+  const categoryId = readCategoryId(readParam(params.category));
+  const transactionType = readTransactionType(readParam(params.type));
 
   // Built with `if` guards on a mutable local shape rather than merged
   // conditional spreads — `exactOptionalPropertyTypes` loses precision when

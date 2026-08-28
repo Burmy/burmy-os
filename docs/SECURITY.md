@@ -111,6 +111,18 @@ gates on the same Google identity. The full comparison and the M2 prototyping ev
 history for whoever wants the detail; this document no longer carries it, because none of that code is
 live to reason about anymore.
 
+**Five tables from that design are still in the schema and are referenced by nothing.** `session`,
+`account`, `verification`, `passkey` and `rate_limit` are all defined in `src/server/db/schema.ts` and
+appear in no query anywhere in `src/` — only `user` survived the removal, and it survived because
+`requireOwner()` resolves the owner row from it.
+
+They are left in place deliberately, not overlooked. Dropping a table is a destructive migration, and
+these hold nothing: no rows are ever written to them, so they cost storage measured in bytes and leak
+nothing. The one thing worth stating plainly is that **their presence is not evidence of a second auth
+path** — a reader finding a `session` table could reasonably assume Burmy keeps sessions of its own. It
+does not. There is exactly one identity mechanism, described above, and these are its predecessor's
+empty furniture.
+
 ---
 
 ## Authorization — every entry point defends itself
@@ -314,6 +326,32 @@ managed services with no VPS, no SSH, no `ufw`, no self-managed network to reaso
   production moved to Netlify + Supabase; see `docs/DEPLOYMENT.md`, "Why the VPS was dropped," and git
   history if self-hosting is ever picked up again.
 
+### Outbound HTTP — three destinations, all Games, all optional
+
+**Finance makes no outbound requests at all.** "No bank connections, ever" is a CLAUDE.md invariant: no
+Plaid, no bank APIs, no OAuth to a financial institution, no scraping, no stored bank credentials.
+Statements arrive as a file the owner picks in the browser. Nothing in `src/server/finance/` or
+`src/server/db/finance/` calls `fetch`.
+
+The Games module calls three third-party APIs, and every one of them is confined to `src/server/db/games/`:
+
+| Destination | Sends | Credential |
+| --- | --- | --- |
+| IGDB (auth via Twitch OAuth) | Game titles for lookup | `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` |
+| Steam Web API | The owner's SteamID and app ids | `STEAM_API_KEY`/`STEAM_ID` |
+| PlayStation Network | The owner's account context | `PSN_NPSSO` |
+
+Three properties hold for all of them:
+
+- **No Finance data ever crosses these boundaries.** The two modules share no data path.
+- **Every one is optional and fails soft** — a missing credential, timeout, non-200 or malformed JSON
+  yields `[]`/`null`, never a throw. The full test suite must pass with none of them set. A third party
+  being down or slow can degrade a Games feature; it cannot break a page or affect Finance.
+- **PSN's is an UNOFFICIAL API** reached with a browser-derived token (`PSN_NPSSO`) that expires roughly
+  every two months. It is the least trustworthy dependency in the project: undocumented, unversioned,
+  and revocable without notice. It is treated accordingly — an expired token surfaces a specific
+  message, never a retry loop, and nothing about the app depends on it working.
+
 ---
 
 ## Secrets
@@ -322,8 +360,14 @@ managed services with no VPS, no SSH, no `ufw`, no self-managed network to reaso
 - **Production secrets live in Netlify's own environment-variable store** — scoped to Functions/Runtime
   only (never Build), Production context only (never Deploy Previews or Branch deploys), and marked
   "Contains secret values" (Netlify's Secrets Controller) where applicable. Full policy, including which
-  of the four production variables get which scope, in `docs/DEPLOYMENT.md`, "Netlify environment-variable
-  policy." None of them are ever written into `netlify.toml`, which is committed.
+  variable gets which scope, in `docs/DEPLOYMENT.md`, "Netlify environment-variable policy." None of
+  them are ever written into `netlify.toml`, which is committed.
+- **Four required variables, plus five optional ones for Games.** `DATABASE_URL`, `OWNER_EMAIL`,
+  `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` are what the application needs to run.
+  `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`, `STEAM_API_KEY`/`STEAM_ID` and `PSN_NPSSO` are credentials for
+  the owner's personal accounts on three third-party platforms; every one is optional by contract, and
+  the full test suite must pass with none of them present. They get the same scoping and secret-marking
+  as the required four — an optional credential is still a credential.
 - **The Supabase migration credential (`MIGRATION_DATABASE_URL`) is never stored in Netlify at all** —
   it exists only on an operator's own shell for the moment a migration runs. See `docs/DEPLOYMENT.md`,
   "Database — Supabase Postgres."

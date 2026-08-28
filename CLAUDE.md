@@ -357,6 +357,19 @@ These are verified, not folklore. Do not "fix" them back.
   rule lives in `src/server/games/collections.ts` and nowhere else. Both sync engines are blind to
   members (`NOT_A_COLLECTION_MEMBER`): without that, a Steam/PSN exact-title match would write hours
   onto a member that the collection already accounts for. See `docs/GAMES.md`, "Collections."
+- **A RUNTIME import from a `server/db/**` module into a client component drags `postgres` into the
+  browser bundle and fails the build with `Can't resolve 'fs'`.** `import type` from the same module is
+  fine — types are erased — which is why `transactions-table.tsx` has always imported `LedgerPage`,
+  `LedgerFilters` and friends from `@/server/db/finance/transactions` without trouble. Importing the
+  VALUE `LEDGER_PAGE_SIZE` from it pulled the whole DAL in. The failure names `postgres/src/index.js`
+  and `fs`, not your import, so it reads like a dependency problem; the import trace underneath it is
+  the part that identifies the real cause. This is why the page size was a hardcoded literal `100` in
+  that component in the first place — a shared constant is the obvious-looking fix and is the one that
+  breaks. Compute the derived number on the server and pass it down as a prop instead. A constant BOTH
+  sides genuinely need belongs in a pure module (`src/server/finance/`, `src/server/games/`,
+  `src/lib/`), never in the DAL. Same reason `src/lib/uuid.ts` uses a regex rather than
+  `z.string().uuid()`: `filters.ts` is imported by a client component, so a runtime `zod` import there
+  would ship zod to the browser to check a string shape.
 - **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
   `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
   renders and reads correctly on screen, and `textContent` is right, but the computed name comes out
