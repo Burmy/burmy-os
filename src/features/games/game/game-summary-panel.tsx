@@ -41,6 +41,7 @@ export function GameSummaryPanel({
   hoursTenths,
   platinum,
   steamOwned,
+  collectionOwned,
   onSaveField,
 }: {
   readonly coverUrl: string | null;
@@ -51,6 +52,13 @@ export function GameSummaryPanel({
   readonly hoursTenths: number | null;
   readonly platinum: boolean;
   readonly steamOwned: boolean;
+  /**
+   * This game sits inside a collection, which owns the set's single play-time
+   * figure. Same "the value lives elsewhere" treatment as `steamOwned`, and
+   * checked second when both apply — Steam is the one that actually rewrites
+   * the number on every sync, so its hint is the more useful of the two.
+   */
+  readonly collectionOwned: boolean;
   readonly onSaveField: (field: GameFieldKey, value: string) => Promise<ActionResult>;
 }): React.ReactElement {
   return (
@@ -97,8 +105,8 @@ export function GameSummaryPanel({
           value={hoursTenths === null ? '' : String(hoursTenths / 10)}
           displayValue={hoursTenths === null ? undefined : formatHours(hours(hoursTenths))}
           placeholder="Not tracked"
-          disabled={steamOwned}
-          disabledHint="From Steam"
+          disabled={steamOwned || collectionOwned}
+          disabledHint={steamOwned ? 'From Steam' : 'From the collection'}
           onSave={(value) => onSaveField('hours', value)}
         />
         <div className={cn(ROW_CLASS, 'items-center')}>

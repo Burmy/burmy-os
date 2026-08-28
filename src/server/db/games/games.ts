@@ -21,6 +21,7 @@ import {
   DuplicateGameError,
   DuplicateWishlistGameError,
   GameNotFoundError,
+  InvalidCollectionError,
   isUniqueViolation,
 } from './errors';
 import { listPlayYears, listPlayYearsForGame } from './play-years';
@@ -487,6 +488,132 @@ export async function updateWantedReleaseDate(
         eq(gamesTable.status, 'wanted'),
       ),
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Collections
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One title inside a collection, as the collection's own page lists them. */
+export interface CollectionMember {
+  readonly id: string;
+  readonly title: string;
+  readonly coverUrl: string | null;
+  readonly platform: GamePlatform;
+  readonly status: GameStatus;
+  readonly rating: number | null;
+  readonly firstPlayedYear: number | null;
+}
+
+/** The games inside one collection, alphabetical — a boxed set has a running order, but the database does not know it. */
+export async function listCollectionMembers(
+  ownerId: string,
+  collectionId: string,
+): Promise<CollectionMember[]> {
+  const rows = await getDb()
+    .select({
+      id: gamesTable.id,
+      title: gamesTable.title,
+      coverUrl: gamesTable.coverUrl,
+      platform: gamesTable.platform,
+      status: gamesTable.status,
+      rating: gamesTable.rating,
+      firstPlayedYear: gamesTable.firstPlayedYear,
+    })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.collectionId, collectionId)))
+    .orderBy(asc(gamesTable.title));
+
+  return rows.map((row) => ({
+    ...row,
+    platform: row.platform as GamePlatform,
+    status: row.status as GameStatus,
+  }));
+}
+
+/**
+ * The rows a game may be filed INTO, for the editor's picker.
+ *
+ * Anything that is not itself already inside a collection, minus the game
+ * being edited — i.e. exactly the set `assertCollectionTargetValid` below
+ * will accept, so the picker can never offer a choice the server refuses.
+ * Deliberately includes ordinary standalone games, not just rows that
+ * already have members: a collection comes into existence the moment the
+ * first game is filed into one, and requiring a separate "make this a
+ * collection" step first would be a mode for no reason.
+ */
+export async function listCollectionOptions(
+  ownerId: string,
+  excludeGameId: string,
+): Promise<{ readonly id: string; readonly title: string }[]> {
+  return getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title })
+    .from(gamesTable)
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        isNull(gamesTable.collectionId),
+        ne(gamesTable.id, excludeGameId),
+      ),
+    )
+    .orderBy(asc(gamesTable.title));
+}
+
+/**
+ * Refuses a `collection_id` that would break the one-level rule — see
+ * `InvalidCollectionError` for the three cases. Owner-scoped throughout: a
+ * target belonging to someone else is simply not found, and reads as an
+ * ordinary not-found rather than confirming it exists.
+ */
+async function assertCollectionTargetValid(
+  ownerId: string,
+  gameId: string,
+  collectionId: string,
+): Promise<void> {
+  if (collectionId === gameId) throw new InvalidCollectionError('self');
+
+  const [target] = await getDb()
+    .select({ id: gamesTable.id, collectionId: gamesTable.collectionId })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.id, collectionId)))
+    .limit(1);
+
+  if (!target) throw new GameNotFoundError();
+  if (target.collectionId !== null) throw new InvalidCollectionError('target-is-member');
+
+  // Moving a row that already holds games INTO another collection would bury
+  // its own members two levels deep, where no view renders them.
+  const [ownMember] = await getDb()
+    .select({ id: gamesTable.id })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.collectionId, gameId)))
+    .limit(1);
+
+  if (ownMember) throw new InvalidCollectionError('already-a-collection');
+}
+
+/**
+ * Files a game into a collection, or takes it out of one (`null`).
+ *
+ * Removing a game from its collection does NOT give it back the hours, price
+ * or trophies that live on the collection — those were never its own. It
+ * simply becomes an ordinary standalone entry again, which is the same thing
+ * `ON DELETE SET NULL` does when a collection is deleted outright.
+ */
+export async function setGameCollection(
+  ownerId: string,
+  gameId: string,
+  collectionId: string | null,
+): Promise<void> {
+  if (collectionId !== null) await assertCollectionTargetValid(ownerId, gameId, collectionId);
+
+  const updated = await getDb()
+    .update(gamesTable)
+    .set({ collectionId, updatedAt: new Date() })
+    .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.id, gameId)))
+    .returning({ id: gamesTable.id });
+
+  if (!updated[0]) throw new GameNotFoundError();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

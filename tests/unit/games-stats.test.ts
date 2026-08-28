@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { countableGames } from '@/server/games/collections';
 import {
   type DistributionSlice,
   type GameStatRow,
@@ -10,7 +11,6 @@ import {
   buildLibrarySummary,
   buildYearlyBreakdown,
   capDistributionSlices,
-  countableGames,
   findCallouts,
   splitGenres,
 } from '@/server/games/stats';

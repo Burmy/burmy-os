@@ -1,13 +1,28 @@
 'use client';
 
 import type { Game } from '@/server/db/games/games';
+import type { CollectionGroup } from '@/server/games/collections';
 import { GameCard } from './game-card';
 
+/**
+ * ONE CARD PER TOP-LEVEL ROW. A collection's titles get no card of their own.
+ *
+ * That is the whole point of the collections work: the three games inside
+ * "Uncharted: The Nathan Drake Collection" have no cover art of their own and
+ * never will — IGDB has art for the collection, not for a remaster that only
+ * ships inside it — so giving them cards would put three letter-tiles in a
+ * wall of box art. The collection's own card carries a "3 games" marker and
+ * opens a page that lists them (`GamePage`'s "Games in this collection").
+ *
+ * Reading the titles inside a collection is what TABLE view is for, which is
+ * exactly the split `game-card.tsx` already makes for every other fact about
+ * a game.
+ */
 export function GameGrid({
-  games,
+  groups,
   onOpen,
 }: {
-  readonly games: readonly Game[];
+  readonly groups: readonly CollectionGroup<Game>[];
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   return (
@@ -19,8 +34,13 @@ export function GameGrid({
     // window that means 4 noticeably larger covers rather than 5 cramped
     // ones. `gap-6` matches the app's shared 24px spacing step.
     <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-      {games.map((game) => (
-        <GameCard key={game.id} game={game} onOpen={onOpen} />
+      {groups.map((group) => (
+        <GameCard
+          key={group.game.id}
+          game={group.game}
+          memberCount={group.members.length}
+          onOpen={onOpen}
+        />
       ))}
     </div>
   );

@@ -1,6 +1,7 @@
 import { Section } from '@/components/ui/section';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatCardGrid } from '@/components/ui/stat-card-grid';
+import { countableGames } from '@/server/games/collections';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatPriceCents } from '@/server/games/money';
 import type { PlayYearRow } from '@/server/games/play-years';
@@ -12,7 +13,6 @@ import {
   buildLeaderboard,
   buildLibrarySummary,
   buildYearlyBreakdown,
-  countableGames,
   findCallouts,
 } from '@/server/games/stats';
 import type { CloseToPlatinumRow, CompletionSummary, EarnedTrophyRow } from '@/server/db/games/trophies';

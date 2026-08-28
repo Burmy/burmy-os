@@ -349,6 +349,23 @@ These are verified, not folklore. Do not "fix" them back.
   instead of one: a game can resolve one without the other. A title with no confident trophy-name
   match gets play data and NO trophy fields proposed at all — never a zero. See `docs/GAMES.md`,
   "PlayStation sync."
+- **Collections: anything that COUNTS games excludes collection rows; anything that SUMS hours, money
+  or trophies includes everything.** A boxed set is one `games` row wrapping several titles via a
+  nullable self-FK (`games.collection_id`), so counting it alongside its own three titles reports four
+  games where there are three. The sums need no rule at all — a title inside a collection carries NULL
+  hours, NULL price and `platinum = false`, so every existing `SUM` already excludes it for free. The
+  rule lives in `src/server/games/collections.ts` and nowhere else. Both sync engines are blind to
+  members (`NOT_A_COLLECTION_MEMBER`): without that, a Steam/PSN exact-title match would write hours
+  onto a member that the collection already accounts for. See `docs/GAMES.md`, "Collections."
+- **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
+  `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
+  renders and reads correctly on screen, and `textContent` is right, but the computed name comes out
+  `"Remastered— in Uncharted…"` — the space is stripped before the join. `getByRole('button', { name })`
+  then fails against a string that looks byte-identical to what's on the page, which reads as a test
+  bug rather than the markup defect it is. Put the whole string in an explicit `aria-label` instead,
+  keeping the visible text a prefix of it (WCAG 2.5.3). Diagnose this class of failure by passing a
+  FUNCTION as `name` and capturing what it receives — the accessible name is the only thing that
+  matters and it is not what the DOM dump shows you.
 
 ---
 

@@ -16,6 +16,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
+import { collectionIdsIn, countableGames } from './collections';
 import { type PlayYearRow, attributeHours } from './play-years';
 import type { GameOwnership, GamePlatform, GameStatus } from './taxonomy';
 
@@ -40,56 +41,8 @@ export interface GameStatRow {
   readonly platinum: boolean;
   readonly metacritic: number | null;
   readonly priceCents: number | null;
-  /** The collection this title belongs to — `null` for a standalone game AND for a collection row itself. See `countableGames`. */
+  /** The collection this title belongs to. See `collections.ts` for the counting rule this feeds. */
   readonly collectionId: string | null;
-}
-
-/**
- * ─────────────────────────────────────────────────────────────────────────────
- * THE COLLECTION COUNTING RULE, IN ONE SENTENCE
- *
- *   Anything that counts GAMES excludes collection rows.
- *   Anything that sums HOURS, MONEY or TROPHIES includes everything.
- *
- * A collection ("Uncharted: The Nathan Drake Collection") is one purchase
- * with one price, one play time and one trophy list, wrapping several
- * distinct games the owner counts separately — exactly how the source
- * spreadsheet modelled it. So the collection row is a WRAPPER, not a game
- * that was played: counting it alongside its own three titles would report
- * four games where there are three, and double its platform in every
- * distribution.
- *
- * The sums need no rule at all, and that is the point: a title inside a
- * collection carries NULL hours, NULL price and `platinum = false`, so every
- * existing `SUM` and `reduce` in this file already excludes it for free.
- * Only the COUNTS need this filter, which is why it is a helper applied at a
- * few named call sites rather than a filter at the read boundary the way
- * `wanted` is (`listGameStatRows`) — filtering collections out there would
- * take their hours and money with them.
- *
- * Derived from the rows themselves rather than a stored flag: a row is a
- * collection exactly when some other row names it. One pass, no extra query,
- * and it keeps this module free of the database per its own charter.
- *
- * Edge case, stated rather than engineered around: `listGameStatRows`
- * excludes `wanted` rows, so a WISHLISTED collection whose titles are not
- * wishlisted would not be recognised as a collection here. That state has no
- * meaning (a collection you do not own has nothing inside it to have played)
- * and no way to reach it in the UI.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-export function collectionIdsIn(rows: readonly GameStatRow[]): ReadonlySet<string> {
-  const ids = new Set<string>();
-  for (const row of rows) {
-    if (row.collectionId !== null) ids.add(row.collectionId);
-  }
-  return ids;
-}
-
-/** The rows that count as a GAME: the titles inside collections, plus every standalone game. Excludes collection wrappers. */
-export function countableGames(rows: readonly GameStatRow[]): GameStatRow[] {
-  const collections = collectionIdsIn(rows);
-  return rows.filter((row) => !collections.has(row.id));
 }
 
 export interface YearlyBreakdownRow {

@@ -5,7 +5,7 @@ import { notFound } from 'next/navigation';
 import { GamePage } from '@/features/games/game/game-page';
 import { requireOwner } from '@/server/auth/owner';
 import { GameNotFoundError } from '@/server/db/games/errors';
-import { getGame } from '@/server/db/games/games';
+import { getGame, listCollectionMembers, listCollectionOptions } from '@/server/db/games/games';
 import { listGameTrophies } from '@/server/db/games/trophies';
 
 export const metadata: Metadata = { title: 'Game — Burmy' };
@@ -46,14 +46,38 @@ export default async function GameDetailPage({
   // Read here rather than fetched by the client: trophies are persisted by
   // the syncs now, so they come down with the page instead of costing a ~1.5s
   // PSN round trip after it has already rendered.
-  const trophies = await listGameTrophies(owner.userId, game.id);
+  //
+  // `members` is what makes this page a COLLECTION's page when it is one —
+  // non-empty exactly when other games point at this row. `collectionOptions`
+  // feeds the "Part of" picker and is fetched unconditionally rather than
+  // only for non-collections: it is a two-column read over ~190 rows, and
+  // branching the query on `members.length` would mean two round trips in
+  // sequence for no measurable gain.
+  const [trophies, members, collectionOptions] = await Promise.all([
+    listGameTrophies(owner.userId, game.id),
+    listCollectionMembers(owner.userId, game.id),
+    listCollectionOptions(owner.userId, game.id),
+  ]);
+
+  // The collection this game sits IN, resolved from the options list already
+  // in hand rather than a third query — `collectionId` always points at a row
+  // that is itself collection-less, which is precisely what that list holds.
+  const collection = game.collectionId === null
+    ? null
+    : (collectionOptions.find((option) => option.id === game.collectionId) ?? null);
 
   return (
     <div>
       <Link href="/games/library" className="text-muted-foreground hover:text-foreground text-sm">
         ← Library
       </Link>
-      <GamePage game={game} trophies={trophies} />
+      <GamePage
+        game={game}
+        trophies={trophies}
+        members={members}
+        collection={collection}
+        collectionOptions={collectionOptions}
+      />
     </div>
   );
 }

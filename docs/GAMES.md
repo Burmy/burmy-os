@@ -58,6 +58,7 @@ guess.
 | `average_playtime_hours` | smallint, nullable | IGDB's `game_time_to_beats.normally`, whole hours. A third-party estimate, not the owner's measured time — deliberately not tenths |
 | `esrb_rating` | text, nullable | Read-only, filled only from a metadata suggestion |
 | `notes` | text, nullable | Free text — carries nuance the schema deliberately doesn't model, e.g. "6h of that was the DLC" |
+| `collection_id` | uuid, nullable, FK → `games.id` `ON DELETE SET NULL` | The boxed set this title belongs to. Null for a standalone game AND for a collection row itself — see "Collections" below |
 
 **Uniqueness is case-insensitive per platform**: `(owner_id, lower(title), platform)`. The same title
 legitimately appears twice when replayed on a different platform — `Uncharted 4` on PS4 and again on
@@ -148,6 +149,104 @@ create and update, rather than following the create-omits/update-clears-to-null 
 back off from the editor. This is the hand-editing path only — a PSN sync run writes `platinum`
 through the staged `field_update`/commit path described in "PlayStation sync" below, not through this
 form submit at all.
+
+---
+
+## Collections
+
+A boxed set — "Uncharted: The Nathan Drake Collection" — is **one purchase wrapping several games the
+owner counts separately**. The source spreadsheet drew it as one row with its titles indented beneath,
+and this is that shape restored.
+
+### One nullable self-reference, one level deep
+
+`games.collection_id` is a nullable `uuid` referencing `games.id`, `ON DELETE SET NULL`, with a partial
+index on `(owner_id, collection_id) WHERE collection_id IS NOT NULL`. It is `NULL` for a standalone
+game **and** for a collection row itself — a row is a collection exactly when some other row names it,
+never because of a stored flag. There is no `collections` table: a boxed set has a cover, a platform, a
+price, a play time and a trophy list, which is precisely a `games` row.
+
+**Deleting a collection does not delete its games.** `SET NULL`, not `CASCADE` — the titles inside are
+real games the owner counted, and the wrapper going away must leave three standalone entries, not a
+hole in the library.
+
+**Nesting is one level, and three rules enforce it** (`assertCollectionTargetValid`,
+`src/server/db/games/games.ts`): a row cannot be its own collection; a collection that is itself inside
+one is refused; and a row that already holds members cannot become a member. `listCollectionOptions`
+offers exactly the set that will be accepted, so the picker can never present a choice the server
+rejects. The same three rules are re-implemented in `scripts/link-game-collections.mjs`, deliberately —
+a backfill that skipped them is how a two-level chain no view can render gets into the database.
+
+### The counting rule, in one sentence
+
+> Anything that counts GAMES excludes collection rows. Anything that sums HOURS, MONEY or TROPHIES
+> includes everything.
+
+`src/server/games/collections.ts` is the only home for it (`collectionIdsIn`, `countableGames`,
+`groupByCollection`) — pure TypeScript, same framework-free boundary as `stats.ts`, which imports it.
+
+The sums need no rule at all, and that is the point: a title inside a collection carries `NULL` hours,
+`NULL` price and `platinum = false`, so every existing `SUM` and `reduce` already excludes it for free.
+Only the COUNTS need the filter, which is why it is applied at a few named call sites rather than at the
+read boundary the way `wanted` is — filtering collections out in `listGameStatRows` would take their
+hours and money with them.
+
+Applied in: `buildLibrarySummary` (`totalGames`, `backlogCount`, `playingCount`, `playedCount`),
+`buildFinancialSummary` (`backlogCount`), `buildYearlyBreakdown` (`startedCount`), the dashboard's
+platform and genre distributions, and the Library header's own game count. **Not** applied to the
+ownership distribution — that follows the purchase, and one boxed set was one physical or digital
+thing. `playedCount` in the yearly breakdown likewise counts the collection once rather than once per
+title: hours are attributed to the row that carries them.
+
+### Where the figures live
+
+A title inside a collection has no hours, price, trophies or play-year split of its own — the set has
+one of each, on the collection. The game page renders exactly those fields read-only for a member, with
+the hint "From the collection", the same treatment a Steam-linked game already gets for hours and
+achievements (Steam's hint wins when somehow both apply, since Steam is the one that actually rewrites
+the value on every sync). Taking a game back out of a collection does **not** hand it those figures —
+they were never its own, which is also what `ON DELETE SET NULL` does when the collection is deleted.
+
+### Both sync engines are blind to collection members
+
+`NOT_A_COLLECTION_MEMBER` (`src/server/db/games/games.ts`) is applied to every Steam and PSN
+scoping query — counts, chunks and match candidates alike. A title inside a collection is invisible to
+both. Without it, Steam or PSN would match a member by an exact title and write hours onto it that the
+collection already accounts for, double-counting the set's play time in every total that sums across
+rows.
+
+### How the two views render it
+
+The **table** indents members under their collection, which is literally the spreadsheet layout, and
+marks the wrapper "3 games". The indent is CSS and says nothing to a screen reader, so a nested row's
+button carries an explicit `aria-label` of `"<title> — in <collection>"` — an `sr-only` span beside the
+title does not work here, because an accessible name is computed by concatenating child nodes with each
+one **trimmed**, which glues the separator to the title ("Remastered— in …").
+
+The **gallery** gives a collection one card with a "3 games" pill and gives its titles no card at all.
+Those titles have no cover art and never will — IGDB has art for the collection, not for a remaster that
+only ships inside one — so cards for them would be three letter-tiles in a wall of box art. Reading the
+titles inside a set is what table view is for. A search that matches a member still surfaces the
+collection's card (`LibraryView` keeps a group when the collection **or** any title inside it matches),
+so the gallery never silently has nothing for a title the owner typed.
+
+### Backfilling an already-imported library
+
+`scripts/import-game-log.mjs` wrote every spreadsheet row — including every sparse sub-row — as an
+independent `games` row, because the CSV export had already lost the indentation. The relationship has
+to be re-stated once, by hand, which is what `scripts/link-game-collections.mjs` is for: it takes an
+explicit JSON map of collection title → member titles, matches titles exactly (case, whitespace and
+curly quotes folded; never fuzzy), and writes `collection_id` and **nothing else**. A member that
+carries its own hours, price or trophies is reported and skipped rather than filed, since those figures
+belong to the collection under this model. `--suggest` writes a starting point for that map from a
+keyword heuristic; it is wrong often enough that its output is a file to edit, not an answer.
+
+`scripts/merge-duplicate-games.mjs` handles the related mess: a sync could not match a colon-bearing
+boxed-set title (`isTokenContainmentMatch` disables token containment when either side contains a
+colon, so "Half-Life 2" never absorbs "Half-Life 2: Episode One"), created its own row, and the library
+ended up holding the same game twice. **The synced copy wins** — it is the row the next sync will keep
+writing to. Both scripts report by default and need `--apply` to write; against a non-local database
+they need `--remote` on top of it.
 
 ---
 
@@ -275,10 +374,9 @@ function added later would silently miss it. Filtering at the read boundary make
 future stat correct by construction. A wishlisted game is also hidden from the Library screen unless
 its own chip is active.
 
-**The library's gallery view pins `playing` games first and renders them larger** (`LibraryView`,
-`GameGrid`, `GameCard`'s `size` prop) — the one status the owner is actively acting on is also the one
-most worth surfacing without scrolling. The table view is untouched: a taller row in a dense list is
-noise, not a feature.
+**The gallery no longer pins or enlarges `playing` games.** It did once — `GameGrid` sorted them first
+and `GameCard` took a `size` prop — but neither exists in the code any more. The gallery renders one
+uniform card per row, in the recency order `listGames` already sorted by.
 
 ---
 

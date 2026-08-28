@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedToggle } from '@/components/ui/segmented-toggle';
 import type { Game } from '@/server/db/games/games';
+import { countableGames, groupByCollection } from '@/server/games/collections';
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { GameDialog } from './game-dialog';
@@ -63,9 +64,24 @@ export function LibraryView({
 
   const nonWantedGames = useMemo(() => games.filter((game) => game.status !== 'wanted'), [games]);
 
-  const visible = useMemo(() => {
+  /**
+   * Both views render the same two-level shape: top-level rows, each carrying
+   * the titles filed under it (`collections.ts`). The gallery draws one card
+   * per group; the table indents the members under their collection.
+   *
+   * TWO RULES ABOUT WHICH SIDE OF A GROUP A FILTER APPLIES TO:
+   *
+   *   - A group survives if the collection itself matches OR any title inside
+   *     it does. Otherwise searching "Drake's Fortune" would find nothing at
+   *     all in the gallery, where that title has no card of its own.
+   *   - When the collection matches, its members are NOT re-filtered — the
+   *     whole set matched, so the whole set shows. This is also what keeps
+   *     `visibleCount` below honest: a matching group always contributes at
+   *     least one countable title.
+   */
+  const groups = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return games.filter((game) => {
+    const matches = (game: Game): boolean => {
       if (status === 'all') {
         if (game.status === 'wanted') return false;
       } else if (game.status !== status) {
@@ -78,8 +94,26 @@ export function LibraryView({
         (game.developer ?? '').toLowerCase().includes(needle) ||
         (game.publisher ?? '').toLowerCase().includes(needle)
       );
-    });
+    };
+
+    return groupByCollection(games)
+      .map((group) => ({
+        game: group.game,
+        members: matches(group.game) ? group.members : group.members.filter(matches),
+      }))
+      .filter((group) => matches(group.game) || group.members.length > 0);
   }, [games, status, platform, search]);
+
+  // TITLES, not rows — the collection counting rule (`collections.ts`). A
+  // group with members contributes its titles; a standalone game contributes
+  // itself. So the header agrees with the Games dashboard's own total, and a
+  // three-game boxed set reads as three games in both places, exactly as the
+  // source spreadsheet counted it.
+  const visibleCount = useMemo(
+    () => groups.reduce((total, group) => total + (group.members.length || 1), 0),
+    [groups],
+  );
+  const totalCount = useMemo(() => countableGames(nonWantedGames).length, [nonWantedGames]);
 
   const counts = useMemo(() => {
     const byStatus = new Map<GameStatus, number>();
@@ -87,9 +121,14 @@ export function LibraryView({
     return byStatus;
   }, [games]);
 
+  // Also titles rather than rows, for the same reason — a collection's own
+  // platform would otherwise be counted alongside each of its titles', which
+  // is the double-count the whole rule exists to prevent.
   const platformCounts = useMemo(() => {
     const byPlatform = new Map<GamePlatform, number>();
-    for (const game of nonWantedGames) byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
+    for (const game of countableGames(nonWantedGames)) {
+      byPlatform.set(game.platform, (byPlatform.get(game.platform) ?? 0) + 1);
+    }
     return byPlatform;
   }, [nonWantedGames]);
 
@@ -103,9 +142,9 @@ export function LibraryView({
         // includes invisible wishlist rows.
         meta={
           <span>
-            {visible.length === nonWantedGames.length
-              ? `${nonWantedGames.length} game${nonWantedGames.length === 1 ? '' : 's'}`
-              : `${visible.length} of ${nonWantedGames.length} games`}
+            {visibleCount === totalCount
+              ? `${totalCount} game${totalCount === 1 ? '' : 's'}`
+              : `${visibleCount} of ${totalCount} games`}
           </span>
         }
         actions={
@@ -218,14 +257,14 @@ export function LibraryView({
         <p className="text-muted-foreground py-16 text-center text-sm">
           No games yet. Add your first one to start the library.
         </p>
-      ) : visible.length === 0 ? (
+      ) : groups.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm">
           No games match this filter.
         </p>
       ) : view === 'gallery' ? (
-        <GameGrid games={visible} onOpen={(game) => router.push(`/games/${game.id}`)} />
+        <GameGrid groups={groups} onOpen={(game) => router.push(`/games/${game.id}`)} />
       ) : (
-        <GameTable games={visible} onOpen={(game) => router.push(`/games/${game.id}`)} />
+        <GameTable groups={groups} onOpen={(game) => router.push(`/games/${game.id}`)} />
       )}
 
       <GameDialog open={creating} onOpenChange={setCreating} />
