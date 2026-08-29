@@ -35,7 +35,7 @@ const MONTH_ABBR = [
  *
  * That module imports `MONTH_ABBREVIATIONS` from `@/server/finance/grid`, and
  * CLAUDE.md forbids Finance and Games code from importing each other — reusing
- * it would put a Finance import in the Games bundle. `relative-time.ts` already
+ * it would put a Finance import in the Games bundle. `src/lib/relative-time.ts` already
  * records this exact reasoning for itself, and is past-tense ("3 days ago"), so
  * it does not fit a countdown either.
  * ─────────────────────────────────────────────────────────────────────────────

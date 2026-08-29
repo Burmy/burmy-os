@@ -25,6 +25,7 @@ import {
   finishAnimeSyncRun,
   getAnimeSyncRun,
   getAnimeSyncSnapshot,
+  getLastAnimeSyncTime,
   setAnimeSyncChangeSelected,
 } from '@/server/db/anime/sync';
 
@@ -59,6 +60,12 @@ export interface AnimeSyncProgress {
 export async function isAnilistConfiguredAction(): Promise<boolean> {
   await requireOwner();
   return anilistConfigured();
+}
+
+/** When AniList was last read successfully, for the Settings row's status line. */
+export async function getAnimeLastSyncedAtAction(): Promise<Date | null> {
+  const owner = await requireOwner();
+  return getLastAnimeSyncTime(owner.userId);
 }
 
 /**

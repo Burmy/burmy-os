@@ -12,7 +12,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { anime as animeTable, animeSyncChanges, animeSyncRuns } from '@/server/db/schema';
@@ -145,6 +145,30 @@ export async function finishAnimeSyncRun(
     .update(animeSyncRuns)
     .set({ status, errorMessage, snapshot: null, updatedAt: new Date() })
     .where(and(eq(animeSyncRuns.ownerId, ownerId), eq(animeSyncRuns.id, runId)));
+}
+
+/**
+ * A run counts as "synced" once it reached `ready` — the AniList read
+ * succeeded and the whole library was walked — whether or not the owner went
+ * on to approve anything.
+ *
+ * Deliberately not `committed` only. A run that found nothing to change is the
+ * healthiest possible outcome and commits nothing at all; treating it as "never
+ * synced" would make a perfectly current library read as stale forever. Same
+ * reasoning as `SUCCESSFUL_SYNC_STATUSES` in `db/games/sync.ts`.
+ */
+const SYNCED_STATUSES = ['ready', 'committed'] as const;
+
+/** The most recent successful run, or `null` if AniList has never been read. */
+export async function getLastAnimeSyncTime(ownerId: string): Promise<Date | null> {
+  const [row] = await getDb()
+    .select({ lastAt: sql<string | null>`max(${animeSyncRuns.updatedAt})` })
+    .from(animeSyncRuns)
+    .where(
+      and(eq(animeSyncRuns.ownerId, ownerId), inArray(animeSyncRuns.status, [...SYNCED_STATUSES])),
+    );
+
+  return row?.lastAt ? new Date(row.lastAt) : null;
 }
 
 export async function listAnimeSyncChanges(ownerId: string, runId: string): Promise<AnimeSyncChange[]> {

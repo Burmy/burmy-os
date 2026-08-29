@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatRelativeTime } from '@/features/games/sync/relative-time';
+import { formatRelativeTime } from '@/lib/relative-time';
 
 /**
  * Pure phrase formatting — no rendering, no clock dependency (`now` is

@@ -1,0 +1,17 @@
+import { PageHeaderSkeleton, PageSkeleton, TableSkeleton } from '@/components/ui/page-skeleton';
+import { Skeleton } from '@/components/ui/skeleton';
+
+/**
+ * The sync run is the one anime screen the owner reaches while genuinely
+ * waiting on a third party, so a blank page here reads as "the sync failed"
+ * rather than "still loading" — the worst possible misreading on this route.
+ */
+export default function AnimeSyncRunLoading(): React.ReactElement {
+  return (
+    <PageSkeleton>
+      <Skeleton className="h-4 w-20" />
+      <PageHeaderSkeleton />
+      <TableSkeleton rows={10} />
+    </PageSkeleton>
+  );
+}
