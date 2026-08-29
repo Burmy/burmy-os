@@ -3,14 +3,22 @@
 Private, single-user personal web application. Deployed to `app.burmy.me`. The public portfolio at
 `burmy.me` is a **separate** project and is not in this repository.
 
-**Two product modules: Finance and Games.** "OS" is a metaphor for a personal workspace — this is
-not an operating system and not a platform. Do not build Notes, Files, Sheets, Inbox, Bookmarks,
-Garage, Receipts or Subscriptions. Do not build abstractions in anticipation of them, and do not
-build a shared "module framework" for the two that exist — they deliberately share nothing but
-generic UI primitives and the owner auth boundary.
+**Three product modules: Finance, Games and Anime.** "OS" is a metaphor for a personal workspace —
+this is not an operating system and not a platform. Do not build Notes, Files, Sheets, Inbox,
+Bookmarks, Garage, Receipts or Subscriptions. Do not build abstractions in anticipation of them, and
+do not build a shared "module framework" for the three that exist — they deliberately share nothing
+but generic UI primitives and the owner auth boundary.
+
+*Anime was added on 2026-08-29 at the owner's request, amending a rule that previously said two
+modules and "do not build a third". The half of that rule that still stands is the load-bearing half:
+**no shared module framework, no generic module registry, no abstraction that two modules both
+instantiate.** Anime copies the SHAPE of Games and reuses `src/components/ui/`, the `(private)`
+layout, `getDb()`, `requireOwner()` and `src/proxy.ts` — and nothing else. Where a Games component
+and an Anime component look near-identical, they are two files whose constraints differ, not
+duplication waiting to be factored out.*
 
 `docs/FINANCE.md` is the canonical Finance-domain reference (money model, categorization, dedup,
-reconciliation); `docs/GAMES.md` is canonical for the Games domain. `docs/ARCHITECTURE.md`,
+reconciliation); `docs/GAMES.md` is canonical for the Games domain; `docs/ANIME.md` for Anime. `docs/ARCHITECTURE.md`,
 `docs/SECURITY.md`, `docs/DEPLOYMENT.md` and `docs/BACKUP_RESTORE.md` are canonical for their own
 areas. `docs/ROADMAP.md` is authoritative on current milestone status. If any of these disagree with
 the code, the code is authoritative — that's a bug to resolve, not a discrepancy to document around.
@@ -317,6 +325,14 @@ These are verified, not folklore. Do not "fix" them back.
   exactly like the AI-optional rule for Finance. IGDB replaced RAWG (2026-08-20): RAWG has no portrait
   cover art anywhere in its data model and its search response silently omits `developers`/
   `publishers`; see `docs/GAMES.md`, "Cover art — IGDB, and its soft-failure contract."
+- **`ANILIST_USERNAME` is optional, same contract as the IGDB and Steam credentials.**
+  `src/server/db/anime/anilist-client.ts` fails soft (`null`, never a throw) when it is unset, on a
+  network error, a timeout, a non-200 (429 included), a GraphQL `errors` body, or malformed JSON — and
+  the full test suite must pass without it, which `tests/unit/anime-anilist-client.test.ts` enforces by
+  asserting `fetch` is never CALLED rather than merely that the result is empty. `null` and `[]` mean
+  different things here and are kept apart deliberately: "the request failed" and "this list is empty"
+  are separate facts. AniList needs no auth because the owner's profile is public — if a private one
+  ever needs supporting, copy `psn-client.ts`'s three-way failure string, not a fourth `null`.
 - **`STEAM_API_KEY`/`STEAM_ID` are optional too, same contract as IGDB's pair above.**
   `src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing
   credentials, a network error, a timeout, a non-200, or malformed JSON, and the full test suite must
@@ -457,11 +473,14 @@ src/proxy.ts              Access JWT verification, security headers, CSP nonce
 src/app/                  routes; / redirects to /finance/monthly (the landing view)
 src/features/finance/     Finance UI
 src/features/games/       Games UI
+src/features/anime/       Anime UI
 src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks)
 src/lib/                  framework-free helpers usable from BOTH server and client (uuid, use-navigate)
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
+src/server/anime/         ANIME DOMAIN CORE — same rule
 src/server/db/games/      owner-scoped data access + the one HTTP boundary (igdb.ts)
+src/server/db/anime/      same, with anilist-client.ts as its one HTTP boundary
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only
@@ -469,7 +488,7 @@ scripts/                  migrate.mjs, provision-owner.mjs — plain host-run No
 docs/                     the approved plan and supporting documents
 ```
 
-**`src/server/finance/` and `src/server/games/` must stay framework-free.** Money math, merchant
+**`src/server/finance/`, `src/server/games/` and `src/server/anime/` must stay framework-free.** Money math, merchant
 normalization, deduplication, categorization and classification are all testable without a browser or
 a server; hours conversion, taxonomy and stats aggregation hold the same property for Games. That is
 what makes financial (and library) correctness verifiable — protect this boundary.

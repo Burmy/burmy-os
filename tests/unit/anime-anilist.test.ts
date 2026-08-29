@@ -269,3 +269,48 @@ describe('hasNextActivityPage', () => {
     expect(hasNextActivityPage({ data: { Page: {} } })).toBe(false);
   });
 });
+
+describe('toListEntries — custom lists', () => {
+  it('returns a show ONCE even when several lists carry it', () => {
+    // AniList does not move an entry into a custom list, it copies it. A show
+    // in both "Completed" and a custom "Favourites" comes back twice — and
+    // undeduped it is counted twice in every total and staged as two
+    // `new_anime` changes, the second of which fails the unique index.
+    const duplicated = {
+      data: {
+        MediaListCollection: {
+          lists: [{ entries: [entry()] }, { entries: [entry()] }],
+        },
+      },
+    };
+
+    expect(toListEntries(duplicated)).toHaveLength(1);
+  });
+
+  it('still keeps genuinely different shows across lists', () => {
+    const twoShows = {
+      data: {
+        MediaListCollection: {
+          lists: [{ entries: [entry()] }, { entries: [entry({}, { id: 21 })] }],
+        },
+      },
+    };
+
+    expect(toListEntries(twoShows).map((row) => row.mediaId)).toEqual([16498, 21]);
+  });
+
+  it('keeps the FIRST occurrence, so the result is deterministic', () => {
+    const payload = {
+      data: {
+        MediaListCollection: {
+          lists: [
+            { entries: [entry({ progress: 12 })] },
+            { entries: [entry({ progress: 99 })] },
+          ],
+        },
+      },
+    };
+
+    expect(toListEntries(payload)[0]?.progress).toBe(12);
+  });
+});

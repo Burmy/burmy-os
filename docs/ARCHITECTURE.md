@@ -207,7 +207,13 @@ modelling neither well.
 
 **There is still no module registry, no plugin system, no generic repository.** CLAUDE.md now makes
 this a rule rather than a preference: do not build a shared module framework for the two that exist,
-and do not build a third module. Finance and Games are the product.
+and do not build a shared module framework for the modules that exist.
+
+**Amended 2026-08-29:** a third module, Anime, was added at the owner's request; this section
+previously read "and do not build a third module". The prohibition that survives is the one about
+COUPLING, not about count: no generic module registry, no abstraction two modules both instantiate,
+no shared feature layer. Anime shares `src/components/ui/`, the `(private)` layout, `getDb()`,
+`requireOwner()` and `src/proxy.ts` with the other two, and nothing beyond that.
 
 ---
 

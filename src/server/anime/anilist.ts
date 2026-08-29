@@ -230,6 +230,24 @@ export function seriesRelatedIds(value: unknown): number[] {
 /**
  * A `MediaListCollection` response into entries.
  *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * DEDUPED BY MEDIA ID, AND THAT IS NOT A TIDINESS MEASURE.
+ *
+ * AniList returns one `lists` array per list the owner has, and a CUSTOM list
+ * does not move an entry — it copies it. A show in both "Completed" and a
+ * custom "Favourites" list comes back twice, identical. Left undeduped, that
+ * show is counted twice in every total, its episodes are added twice to the
+ * headline time, and — worse — it is staged as two `new_anime` changes, the
+ * second of which fails the unique index at commit.
+ *
+ * The same class of defect as the PSN sync's duplicate played titles, and the
+ * reason that engine dedupes at its own boundary rather than downstream.
+ *
+ * The FIRST occurrence wins. Custom lists are appended after the standard ones
+ * in AniList's response, so first-wins prefers the real status list; and since
+ * the copies are identical it only matters that the choice is deterministic.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
  * An entry with no media id or no romaji title is skipped — both are required
  * columns, and a row that cannot be identified cannot be matched on a later
  * sync either.
@@ -238,7 +256,9 @@ export function toListEntries(payload: unknown): AniListEntry[] {
   const lists = asRecord(asRecord(asRecord(payload)?.data)?.MediaListCollection)?.lists;
   if (!Array.isArray(lists)) return [];
 
-  return lists.flatMap((list): AniListEntry[] => {
+  const seen = new Set<number>();
+
+  const all = lists.flatMap((list): AniListEntry[] => {
     const entries = asRecord(list)?.entries;
     if (!Array.isArray(entries)) return [];
 
@@ -277,6 +297,12 @@ export function toListEntries(payload: unknown): AniListEntry[] {
         },
       ];
     });
+  });
+
+  return all.filter((entry) => {
+    if (seen.has(entry.mediaId)) return false;
+    seen.add(entry.mediaId);
+    return true;
   });
 }
 

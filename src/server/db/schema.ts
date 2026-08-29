@@ -1310,6 +1310,10 @@ export const animeSyncRunStatusEnum = pgEnum('anime_sync_run_status', [
   'ready',
   'committed',
   'failed',
+  // Never written today. Present because Postgres has no `DROP VALUE` but
+  // adding one is trivial — and a run the owner abandons is a real state the
+  // Games engine already models. Free now, a migration later.
+  'cancelled',
 ]);
 
 /**
@@ -1340,6 +1344,12 @@ export const animeSeries = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
+    /**
+     * An OVERRIDE, never a synced or derived copy. Left null, the UI shows the
+     * cover of the earliest season — deriving it rather than storing it, so the
+     * two can never drift. It exists only for the case where a franchise has key
+     * art that belongs to no single season.
+     */
     coverUrl: text('cover_url'),
     /** The AniList media id this series was derived from, when the relations graph proposed it. */
     anilistParentId: integer('anilist_parent_id'),
@@ -1349,6 +1359,13 @@ export const animeSeries = pgTable(
   },
   (t) => [
     uniqueIndex('anime_series_owner_title_idx').on(t.ownerId, sql`lower(${t.title})`),
+    // What makes a re-sync resolve the SAME series rather than creating a
+    // second one. The title alone cannot: it is produced by a heuristic that
+    // strips "Season 2" and friends, the owner can rename it, and either would
+    // let the next run miss the match and insert a duplicate franchise.
+    uniqueIndex('anime_series_owner_anilist_parent_idx')
+      .on(t.ownerId, t.anilistParentId)
+      .where(sql`${t.anilistParentId} is not null`),
     index('anime_series_owner_idx').on(t.ownerId),
   ],
 );
@@ -1416,9 +1433,19 @@ export const anime = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('anime_owner_title_idx').on(t.ownerId, sql`lower(${t.titleRomaji})`),
+    // NO UNIQUE INDEX ON THE TITLE, and that is a correction rather than an
+    // omission. `games` can have one because `(owner, lower(title), platform)`
+    // carries a discriminator — the same game legitimately exists twice on two
+    // consoles. Anime has no such column, and AniList genuinely lists separate
+    // entries that share a romaji title: a season and its recap compilation, a
+    // TV run and its bundled OVA. A unique title index turns those into a
+    // failed import partway through, and buys nothing `anilist_media_id` does
+    // not already guarantee for every synced row.
+    //
     // Unique WHEN PRESENT — the same partial-index shape the four Games
     // external-id indexes use, so an unlinked row never collides with another.
+    // This is also what makes a stale `new_anime` from an older run a clean
+    // `isUniqueViolation()` skip inside the commit's SAVEPOINT.
     uniqueIndex('anime_owner_anilist_id_idx')
       .on(t.ownerId, t.anilistMediaId)
       .where(sql`${t.anilistMediaId} is not null`),

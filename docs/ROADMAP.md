@@ -1297,7 +1297,7 @@ multi-currency logic · budgets and category limits.
 `/finance/monthly` rather than as a separate top-level destination. Games has its own equivalent on
 `/games`. Neither is a cross-module home screen, and neither should become one.
 
-**Every module that is not Finance or Games is permanently out of scope** — Notes, Files, Sheets,
+**Every module that is not Finance, Games or Anime is permanently out of scope** (Anime added 2026-08-29 by owner decision; see CLAUDE.md) — Notes, Files, Sheets,
 Inbox, Bookmarks, Garage, Receipts, Subscriptions. This is stronger than "deferred": CLAUDE.md forbids
 building them, forbids building abstractions in anticipation of them, and forbids a shared "module
 framework" for the two that exist. Finance and Games deliberately share nothing but generic UI
