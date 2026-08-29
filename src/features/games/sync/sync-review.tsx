@@ -129,7 +129,11 @@ export function SyncReview({
   const disableApply = pending || committing || selectedCount === 0;
 
   return (
-    <div className="space-y-8">
+    // `pb-20` is clearance for the sticky action bar below. Without it the
+    // bar — which is opaque and pinned to the bottom of the viewport — sits
+    // permanently over the last row of the last group, and there is no amount
+    // of scrolling that reveals it.
+    <div className="space-y-8 pb-20">
       {needsAttention.length > 0 ? (
         <ChangeGroup title="Needs attention" description="These need your review — nothing here applies automatically.">
           <Table>

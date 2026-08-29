@@ -134,14 +134,35 @@ airing span and the cover all come from its members at read time
 (`seriesTotals`, `seriesCover`). A stored copy and the members it came from can
 drift, and no step in this app would ever notice.
 
-### Membership is editable from both ends
+### Membership is editable from every direction it comes up
 
-The show page's "Part of" row (`SeriesField`) and the series page's "Add shows"
-panel (`SeriesMembersPanel`) drive the same write. Having both is not redundancy:
-filing a season you are looking at, and gathering the seasons of a franchise you
-are looking at, are two different moments, and each is clumsy from the other's
-screen. The library's table view adds a third path — multi-select plus one bulk
-"Add to series".
+| From | Control |
+| --- | --- |
+| One show | "Part of" on the show page (`SeriesField`) — which can also CREATE the series |
+| One franchise | "Add shows" on the series page (`SeriesMembersPanel`) |
+| Several shows at once | Multi-select plus "Add to series" in the library's table view |
+| A sync | An approved `series_hint`, which creates the series and files its members |
+
+All four drive the same column through the same validation. Having them all is
+not redundancy: filing a season you are looking at, gathering the seasons of a
+franchise you are looking at, and grouping six of them at once are three
+different moments, and each is clumsy from the other's screen.
+
+### Franchises are browsable
+
+`/anime/series` lists every one, as a card carrying its cover, its airing span,
+its totals and the first few seasons in it — the nesting made visible. It was
+added because a series had been reachable only sideways (a link in the library's
+table, or by already knowing to pick it from the filter), and a nesting nobody
+can browse is a data model rather than a feature.
+
+Searching it matches a SEASON's name as well as the franchise's, because that is
+how anyone looks for one: you remember "Final Season", not the base title the
+grouping heuristic produced.
+
+The Library tab stays FLAT on purpose. A season is still a show you watched, and
+collapsing seasons into one card there would make the library's counts disagree
+with the stats page.
 
 `SeriesField` can also CREATE a series, which the Games equivalent cannot: a
 game's collection is another game and always already exists, while a franchise
@@ -150,6 +171,37 @@ The suggested name comes from `suggestSeriesTitle`, which **under-strips on
 purpose** — leaving two series the owner joins with one click is far better than
 merging two different shows. It is a suggestion for an editable field, never an
 identity key; `anilist_parent_id` is the identity.
+
+### How a sync proposes a franchise
+
+`groupRelatedMedia` takes connected components over AniList's
+prequel/sequel/parent edges, restricted to media the owner actually has or is
+about to get. Components, not pairs: AniList records relations pairwise, and
+proposing each pair would ask the owner to approve one franchise three times and
+could file a show into two different series depending on approval order.
+
+A proposal is skipped when the owner has fewer than two of its shows, and skipped
+again when everything they have is already filed in the same series. A sync that
+re-proposes the same franchises every run is how a review screen trains its
+reader to tick without looking.
+
+Shows the SAME RUN is proposing as `new_anime` count as members. Without that a
+first import — the moment grouping is most useful, when hundreds of shows arrive
+at once — could never propose anything, because none of the shows exist yet.
+`COMMIT_ORDER` puts `series_hint` after `new_anime` and the hint resolves media
+ids to rows at that point, so approving the grouping but not one of the shows
+simply files the members that exist.
+
+Approving one **does the work**: find-or-create the series on
+`anilist_parent_id`, then fill `series_id` on the members that have none. It
+never moves a show the owner filed by hand. An earlier version staged this as an
+advisory note that applied nothing — a checkbox that counted toward "Apply N
+selected changes" and then changed nothing, which is worse than no control at
+all.
+
+`anilist_parent_id` is the smallest media id in the component: a pure function of
+the set, so the same franchise resolves the same series on every run. A title
+cannot do that job — it comes from a heuristic and the owner can rename it.
 
 ### Dissolving is not deleting
 
@@ -242,6 +294,34 @@ place where getting it wrong writes to the wrong table.
    `isUniqueViolation()`, which walks the `cause` chain because Drizzle wraps
    driver errors.
 
+### Matching a show that has no AniList id
+
+A show added by hand has no `anilist_media_id`, so the only way to link it is its
+title. `src/server/anime/matching.ts` does that, and is deliberately far stricter
+than the Games matcher, which accepts 0.70 similarity.
+
+Anime breaks the assumption that lets Games be generous. "Shingeki no Kyojin" and
+"Shingeki no Kyojin Season 2" are 85%+ similar by any string metric and are
+DIFFERENT SHOWS. A wrong match in Games fills in a wrong cover; a wrong link here
+lets the next sync overwrite one season's progress and status with another's,
+indistinguishable from a real correction.
+
+So there is a hard gate no score can override: `ordinalMarker` extracts the
+season/part marker from each title, and a disagreement rejects the pair outright
+— including a bare title against a numbered one. Past that gate, an exact
+normalised match on either of AniList's titles links, then a Sørensen–Dice
+similarity at or above `MATCH_FLOOR` (0.9). Otherwise nothing. An unlinked show
+is a fine state; a wrongly linked one is data loss.
+
+A match is never silent: it is staged as a `link` the owner approves, and the
+review screen shows THEIR title beside AniList's, because "matched to #16498" is
+not something anyone can check.
+
+Media ids already claimed by another row are excluded before matching — and
+claimed again within the walk itself, so two hand-added rows with the same title
+cannot both match the same entry and collide on
+`anime_owner_anilist_id_idx` at commit.
+
 ### What a sync may and may not change
 
 `SYNCABLE_ANIME_FIELDS` is the whole list: status, progress, repeat count,
@@ -314,6 +394,7 @@ headings for anyone west of Greenwich.
 | --- | --- |
 | `/anime` | Redirects to `/anime/library`. |
 | `/anime/library` | The cover wall and the table view. Filters (status, series, search) are entirely client-side — every one is a pure re-render of data already loaded. |
+| `/anime/series` | Every franchise, as a card with its span, its totals and the seasons in it. |
 | `/anime/log` | The dated log, newest first, grouped by day, capped at 500 with the truncation stated. |
 | `/anime/stats` | The dashboard. |
 | `/anime/[id]` | One show. Every field inline-editable; a History section when the log has anything for it. |
@@ -347,9 +428,9 @@ thrown.
 - **`ListActivity` retention is unknown.** The log is only as complete as the
   feed; the watermark exists to say so rather than let it look like a bug.
 - **Series grouping from `relations` will be partial.** Sequels chain cleanly;
-  recaps, compilation films and side stories do not. `series_hint` is advisory
-  for exactly this reason, and both ends of the manual picker exist because a
-  manual pass is expected.
+  recaps, compilation films and side stories do not. That is why a `series_hint`
+  is staged UNSELECTED with every member title listed for the owner to read, and
+  why membership is editable from four directions — a manual pass is expected.
 - **The airing-era chart plots only the years present**, so a gap between 1998
   and 2009 is one tick wide rather than eleven. Denser and free of empty-bar
   noise; it does understate a long absence.

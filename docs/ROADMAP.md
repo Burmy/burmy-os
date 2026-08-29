@@ -1312,6 +1312,24 @@ at read time.
 - **The watermark states where the log begins**, because a truncated history otherwise reads exactly
   like missing data.
 
+### Completeness pass — five things the milestones had left half-done
+
+Reviewed against the code rather than against the plan, after the owner asked for
+a full feature rather than a set of milestones that each stopped at the boundary.
+Every one of these was live in `main`-bound work and every one was a real hole.
+
+| Left half-done | Now |
+| --- | --- |
+| `planSeriesHint` was **never called**. AniList's relation graph was fetched and thrown away, `anilist_parent_id` was never written, and the review screen had a group that could not render. Had it rendered, `APPLIES_NOTHING` meant ticking it counted toward "Apply N selected changes" and did nothing. | The sync takes connected components over the relation graph and proposes each franchise once. Approving one find-or-creates the series and files its members. It never re-proposes a group that is already complete, and never moves a show the owner filed by hand. |
+| A hand-added show could **never** link to AniList. The walk skipped every row with no media id, under a comment deferring the work "to the form it exists for" — a form that was then built two milestones later. | `src/server/anime/matching.ts`, deliberately far stricter than the Games matcher: a hard ordinal gate ("Shingeki no Kyojin" can never match "…Season 2", whatever the score), then exact-or-0.9. The review screen shows the owner's title beside AniList's, because "#16498" is uncheckable. |
+| Franchises were **unreachable** — a link in the library's table or a filter dropdown you had to already know to open. | `/anime/series`, a fourth tab, listing every franchise with its span, totals and member seasons. Searchable by a SEASON's name, which is how anyone looks for one. |
+| `anime_series.cover_url` and `.notes` existed with **no way to set either** — the cover override's own comment described a case the UI could not serve. | Both inline-editable on the series page, through one exhaustive-switch action. `anilist_parent_id` stays uneditable: it is identity. |
+| The add-show dialog's schema accepted `studio` and `genre` and **rendered no inputs**, so a hand-added show was invisible in the two largest charts on the Stats page. | Both asked for, and the form says why they matter. |
+
+Also fixed while there: the sticky Apply bar on both sync review screens had no
+clearance beneath it, so the last row of the last group sat permanently under an
+opaque bar with no amount of scrolling revealing it.
+
 ### Bugs and traps found during the Anime module
 
 Every one of these was invisible to typecheck, lint and the test suite, and appeared only when the

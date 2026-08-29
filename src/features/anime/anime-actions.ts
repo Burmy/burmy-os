@@ -20,7 +20,13 @@ import {
   updateAnime,
 } from '@/server/db/anime/anime';
 import { AnimeNotFoundError, AnimeSeriesNotFoundError, isUniqueViolation } from '@/server/db/anime/errors';
-import { createSeries, deleteSeries, renameSeries, setSeriesForAnime } from '@/server/db/anime/series';
+import {
+  type EditableSeriesField,
+  createSeries,
+  deleteSeries,
+  setSeriesForAnime,
+  updateSeriesField,
+} from '@/server/db/anime/series';
 import { type ActionResult, fail, ok } from './action-result';
 
 /**
@@ -355,14 +361,54 @@ export async function createSeriesForAnimeAction(
   }
 }
 
-export async function renameSeriesAction(seriesId: string, title: string): Promise<ActionResult> {
+const SERIES_FIELD_SCHEMAS = {
+  title: z.string().trim().min(1, 'A series needs a name.').max(300),
+  coverUrl: z.string().url('That is not a valid image URL.').max(2000),
+  notes: z.string().trim().max(4000),
+} as const satisfies Record<EditableSeriesField, unknown>;
+
+/**
+ * Edits one of a series' own fields.
+ *
+ * `title`, `coverUrl` and `notes` are the whole list, and `anilist_parent_id`
+ * is deliberately absent: it is the series' IDENTITY, the thing that lets a
+ * re-sync resolve the same franchise, and letting it be edited would be letting
+ * the owner detach a series from its own history.
+ *
+ * An empty commit CLEARS `coverUrl` and `notes`. It cannot clear `title` — a
+ * series with no name is unreachable in every picker in the app — and the
+ * schema rejects it on its own terms rather than needing a special case.
+ */
+export async function updateSeriesFieldAction(
+  seriesId: string,
+  field: EditableSeriesField,
+  rawValue: string,
+): Promise<ActionResult> {
   const owner = await requireOwner();
 
-  const name = title.trim();
-  if (name === '') return fail('A series needs a name.');
+  const trimmed = rawValue.trim();
+  let value: string | null;
 
   try {
-    await renameSeries(owner.userId, idSchema.parse(seriesId), name);
+    const id = idSchema.parse(seriesId);
+
+    switch (field) {
+      case 'title':
+        value = SERIES_FIELD_SCHEMAS.title.parse(trimmed);
+        break;
+      case 'coverUrl':
+        value = trimmed === '' ? null : SERIES_FIELD_SCHEMAS.coverUrl.parse(trimmed);
+        break;
+      case 'notes':
+        value = trimmed === '' ? null : SERIES_FIELD_SCHEMAS.notes.parse(trimmed);
+        break;
+      default: {
+        const exhaustive: never = field;
+        return fail(`Unknown field: ${String(exhaustive)}`);
+      }
+    }
+
+    await updateSeriesField(owner.userId, id, field, value);
   } catch (error) {
     if (isUniqueViolation(error)) return fail('You already have a series with that name.');
     return toResult(error);

@@ -6,13 +6,22 @@ import { z } from 'zod';
 import { type ActionResult, fail, ok } from '@/features/anime/action-result';
 import { requireOwner } from '@/server/auth/owner';
 import type { AniListEntry } from '@/server/anime/anilist';
+import { bestTitleMatch } from '@/server/anime/matching';
+import { groupRelatedMedia, seriesIdentityFor, suggestSeriesTitle } from '@/server/anime/series';
 import {
   type PlannedAnimeChange,
   planLinkedAnimeChanges,
   planNewAnimeChange,
+  planSeriesHint,
 } from '@/server/anime/sync-plan';
 import { anilistConfigured, fetchActivities, fetchAnimeList } from '@/server/db/anime/anilist-client';
-import { countAnime, listAnimeChunk, listAnilistIdMap, listLinkedAnilistIds } from '@/server/db/anime/anime';
+import {
+  countAnime,
+  listAnilistIdMap,
+  listAnimeChunk,
+  listLinkedAnilistIds,
+  listSeriesMembership,
+} from '@/server/db/anime/anime';
 import { insertWatchLogEntries } from '@/server/db/anime/watch-log';
 import {
   AnimeSyncRunAlreadyCommittedError,
@@ -133,12 +142,33 @@ export async function advanceAnimeSyncAction(
 
     const chunk = await listAnimeChunk(owner.userId, run.lastAnimeId, CHUNK_SIZE);
 
+    // Media ids some row already owns. An unlinked row must never be matched
+    // onto one of these: `anime_owner_anilist_id_idx` is unique, so two rows
+    // pointing at the same entry is a `23505` at commit time — and even if it
+    // were allowed, the second row would then be fed another show's progress.
+    const claimed = await listLinkedAnilistIds(owner.userId);
+
+    // Entries still available to match against, computed once per chunk.
+    const unclaimed = entries.filter((entry) => !claimed.has(entry.mediaId));
+
     const changes: PlannedAnimeChange[] = [];
     for (const row of chunk) {
-      // M1 matches on the stored AniList id only. Every row this sync creates
-      // carries one, and there is no manual-add form yet, so there is no
-      // unlinked row to title-match — that lands with the form it exists for.
-      if (row.anilistMediaId === null) continue;
+      if (row.anilistMediaId === null) {
+        // A HAND-ADDED SHOW. It has no AniList id, so the only way in is the
+        // title — see `matching.ts` for why that matcher is far stricter than
+        // the Games one, and why a wrong link here would be data loss rather
+        // than a wrong cover.
+        const match = bestTitleMatch(row.title, unclaimed);
+        if (match === null) continue;
+
+        // Claim it within this walk too. Two hand-added rows with the same
+        // title would otherwise both match the same entry, and the second
+        // link would fail at commit.
+        claimed.add(match.entry.mediaId);
+        changes.push(...planLinkedAnimeChanges(row, match.entry));
+        continue;
+      }
+
       const entry = byMediaId.get(row.anilistMediaId);
       if (entry === undefined) continue; // AniList no longer lists it — leave the row completely alone.
 
@@ -165,7 +195,19 @@ export async function advanceAnimeSyncAction(
         .filter((entry) => !linked.has(entry.mediaId))
         .map((entry) => planNewAnimeChange(entry));
 
-      await appendAnimeSyncChanges(owner.userId, id, newChanges, run.cursor + chunk.length, run.lastAnimeId);
+      const hints = await planSeriesHints(
+        owner.userId,
+        entries,
+        new Set(newChanges.map((change) => Number(change.payload.anilistMediaId))),
+      );
+
+      await appendAnimeSyncChanges(
+        owner.userId,
+        id,
+        [...newChanges, ...hints],
+        run.cursor + chunk.length,
+        run.lastAnimeId,
+      );
       await finishAnimeSyncRun(owner.userId, id, 'ready');
     }
 
@@ -250,6 +292,89 @@ export async function importAnimeActivityAction(): Promise<
 
   revalidatePath('/anime', 'layout');
   return { ok: true, imported, skipped };
+}
+
+/**
+ * Franchises AniList's relation graph says exist, staged for approval.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONLY PROPOSES WHAT WOULD ACTUALLY CHANGE SOMETHING.
+ *
+ * A sync that re-proposes the same franchises every single run trains the owner
+ * to tick everything without reading, which is exactly the habit the review
+ * screen exists to prevent. So a component is skipped when the owner has fewer
+ * than two of its shows (one show is not a franchise), and skipped again when
+ * every one of the shows they DO have is already filed in the same series.
+ *
+ * A partially-filed franchise is still proposed — that is the case where the
+ * hint has real work to do — and `applySeriesHint` only ever fills a `NULL`
+ * `series_id`, so approving it cannot move a show the owner placed by hand.
+ *
+ * Run at the END of the walk, alongside `new_anime`, because it needs the whole
+ * snapshot rather than one chunk of it.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+async function planSeriesHints(
+  ownerId: string,
+  entries: readonly AniListEntry[],
+  /**
+   * Media ids this same run is proposing as `new_anime`.
+   *
+   * Counted as members, and that is what makes a FIRST import able to propose
+   * franchises at all — the moment grouping is most useful is the one where
+   * hundreds of shows arrive at once, and every one of them is new. Without
+   * this a hint could only ever appear on the second sync.
+   *
+   * Safe because `COMMIT_ORDER` puts `series_hint` after `new_anime` and
+   * `applySeriesHint` resolves media ids to rows at that point: approving the
+   * grouping but not one of the shows simply files the members that exist.
+   */
+  proposedNew: ReadonlySet<number>,
+): Promise<PlannedAnimeChange[]> {
+  const components = groupRelatedMedia(
+    entries.map((entry) => ({ mediaId: entry.mediaId, relatedIds: entry.relatedIds })),
+  );
+  if (components.length === 0) return [];
+
+  const byMediaId = new Map(entries.map((entry) => [entry.mediaId, entry]));
+  const membership = await listSeriesMembership(ownerId);
+
+  const hints: PlannedAnimeChange[] = [];
+
+  for (const mediaIds of components) {
+    const owned = mediaIds.filter((mediaId) => membership.has(mediaId) || proposedNew.has(mediaId));
+    if (owned.length < 2) continue;
+
+    // Already grouped, all of it, in one place, with nothing new joining it.
+    // Re-proposing that every run is how a review screen trains the owner to
+    // tick without reading.
+    const existing = owned.filter((mediaId) => membership.has(mediaId));
+    const seriesIds = new Set(existing.map((mediaId) => membership.get(mediaId) ?? null));
+    if (existing.length === owned.length && seriesIds.size === 1 && !seriesIds.has(null)) continue;
+
+    const members = owned.flatMap((mediaId) => {
+      const entry = byMediaId.get(mediaId);
+      return entry === undefined
+        ? []
+        : [{ mediaId, titleRomaji: entry.titleRomaji, seasonYear: entry.seasonYear }];
+    });
+
+    const identity = seriesIdentityFor(owned);
+    if (identity === null) continue;
+
+    // The name comes from the EARLIEST member's title with its ordinal markers
+    // stripped — a suggestion for a field the owner can rename, never an
+    // identity. `anilistParentId` is the identity.
+    const earliest = [...members].sort(
+      (a, b) => (a.seasonYear ?? Number.POSITIVE_INFINITY) - (b.seasonYear ?? Number.POSITIVE_INFINITY),
+    )[0];
+    if (earliest === undefined) continue;
+
+    const hint = planSeriesHint(members, suggestSeriesTitle(earliest.titleRomaji), identity);
+    if (hint !== null) hints.push(hint);
+  }
+
+  return hints;
 }
 
 export async function setAnimeSyncChangeSelectedAction(

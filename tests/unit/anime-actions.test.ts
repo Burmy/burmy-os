@@ -25,10 +25,11 @@ vi.mock('@/server/db/anime/anime', () => ({
 
 const setSeriesForAnime = vi.fn(async () => 1);
 const createSeries = vi.fn(async () => ({ id: 'new-series', title: 'Shingeki no Kyojin' }));
+const updateSeriesField = vi.fn(async () => undefined);
 vi.mock('@/server/db/anime/series', () => ({
   setSeriesForAnime: (...a: unknown[]) => setSeriesForAnime(...(a as [])),
   createSeries: (...a: unknown[]) => createSeries(...(a as [])),
-  renameSeries: vi.fn(async () => undefined),
+  updateSeriesField: (...a: unknown[]) => updateSeriesField(...(a as [])),
   deleteSeries: vi.fn(async () => undefined),
 }));
 
@@ -36,6 +37,7 @@ const {
   createSeriesForAnimeAction,
   setAnimeSeriesAction,
   updateAnimeFieldAction,
+  updateSeriesFieldAction,
 } = await import('@/features/anime/anime-actions');
 
 const ID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -44,6 +46,7 @@ beforeEach(() => {
   updateAnime.mockClear();
   setSeriesForAnime.mockClear();
   createSeries.mockClear();
+  updateSeriesField.mockClear();
 });
 
 describe('updateAnimeFieldAction — validation', () => {
@@ -143,5 +146,44 @@ describe('createSeriesForAnimeAction', () => {
   it('uses an explicit name when one is given', async () => {
     await createSeriesForAnimeAction(ID, '  Attack on Titan  ');
     expect(createSeries).toHaveBeenCalledWith('owner-1', { title: 'Attack on Titan' });
+  });
+});
+
+describe('updateSeriesFieldAction', () => {
+  const SERIES_ID = 'ffffffff-1111-4222-8333-444444444444';
+
+  it('writes a trimmed name through', async () => {
+    const result = await updateSeriesFieldAction(SERIES_ID, 'title', '  Attack on Titan  ');
+    expect(result.ok).toBe(true);
+    expect(updateSeriesField).toHaveBeenCalledWith('owner-1', SERIES_ID, 'title', 'Attack on Titan');
+  });
+
+  it('refuses to blank the name — a nameless series is unreachable in every picker', async () => {
+    const result = await updateSeriesFieldAction(SERIES_ID, 'title', '   ');
+    expect(result).toEqual({ ok: false, error: 'A series needs a name.' });
+    expect(updateSeriesField).not.toHaveBeenCalled();
+  });
+
+  it('clears the cover override on an empty commit', async () => {
+    // `null` means "show the earliest season's cover", which is the normal
+    // answer — so clearing has to be possible.
+    await updateSeriesFieldAction(SERIES_ID, 'coverUrl', '');
+    expect(updateSeriesField).toHaveBeenCalledWith('owner-1', SERIES_ID, 'coverUrl', null);
+  });
+
+  it('rejects a cover that is not a URL', async () => {
+    const result = await updateSeriesFieldAction(SERIES_ID, 'coverUrl', 'not a url');
+    expect(result).toEqual({ ok: false, error: 'That is not a valid image URL.' });
+  });
+
+  it('clears notes on an empty commit', async () => {
+    await updateSeriesFieldAction(SERIES_ID, 'notes', '  ');
+    expect(updateSeriesField).toHaveBeenCalledWith('owner-1', SERIES_ID, 'notes', null);
+  });
+
+  it('refuses a malformed id before touching the database', async () => {
+    const result = await updateSeriesFieldAction('nope', 'title', 'Anything');
+    expect(result.ok).toBe(false);
+    expect(updateSeriesField).not.toHaveBeenCalled();
   });
 });

@@ -108,7 +108,19 @@ describe('AnimeSyncReview — the populated branch', () => {
           makeChange({ id: 'n1', kind: 'new_anime', animeId: null, title: 'Frieren', payload: { status: 'completed', progress: 28, episodes: 28 } }),
           makeChange({ id: 'f1', payload: { field: 'progress', from: 10, to: 12 } }),
           makeChange({ id: 'l1', kind: 'link', payload: { anilistMediaId: 21 } }),
-          makeChange({ id: 's1', kind: 'series_hint', animeId: null, selected: false, payload: { relatedTitles: ['Season 2'] } }),
+          makeChange({
+            id: 's1',
+            kind: 'series_hint',
+            animeId: null,
+            title: 'Attack on Titan',
+            selected: false,
+            payload: {
+              anilistParentId: 16498,
+              seriesTitle: 'Attack on Titan',
+              mediaIds: [16498, 25777],
+              titles: ['Shingeki no Kyojin', 'Shingeki no Kyojin Season 2'],
+            },
+          }),
         ]}
       />,
     );
@@ -116,7 +128,7 @@ describe('AnimeSyncReview — the populated branch', () => {
     expect(screen.getByRole('heading', { name: 'New shows (1)' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Field updates' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Links' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Series suggestions' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Series to group' })).toBeInTheDocument();
   });
 
   it('counts only the selected changes on the apply button', () => {
@@ -143,6 +155,75 @@ describe('AnimeSyncReview — the populated branch', () => {
     );
 
     expect(screen.getByRole('button', { name: 'Apply 0 selected changes' })).toBeDisabled();
+  });
+});
+
+describe('AnimeSyncReview — series grouping', () => {
+  function hint(overrides: Partial<Change> = {}): Change {
+    return makeChange({
+      id: 'h1',
+      kind: 'series_hint',
+      animeId: null,
+      title: 'Attack on Titan',
+      selected: false,
+      payload: {
+        anilistParentId: 16498,
+        seriesTitle: 'Attack on Titan',
+        mediaIds: [16498, 25777, 99147],
+        titles: ['Shingeki no Kyojin', 'Shingeki no Kyojin Season 2', 'Shingeki no Kyojin Season 3'],
+      },
+      ...overrides,
+    });
+  }
+
+  it('lists every show it would group, one per line', () => {
+    // This is the only information the owner has to judge the proposal on — a
+    // recap film wrongly attached is exactly what they are being asked to
+    // catch, so it has to be readable rather than a joined run.
+    render(<AnimeSyncReview run={makeRun()} changes={[hint()]} />);
+    const items = screen.getAllByRole('listitem');
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Shingeki no Kyojin',
+      'Shingeki no Kyojin Season 2',
+      'Shingeki no Kyojin Season 3',
+    ]);
+  });
+
+  it('says approving one actually files them, not that it is advisory', () => {
+    // It WAS advisory, and applied nothing — a checkbox that counted toward
+    // "Apply N selected changes" and did nothing at all.
+    render(<AnimeSyncReview run={makeRun()} changes={[hint()]} />);
+    expect(screen.getByText(/Approving one files them under a single series/)).toBeInTheDocument();
+  });
+
+  it('arrives unticked, so it cannot be approved by clicking through', () => {
+    render(<AnimeSyncReview run={makeRun()} changes={[hint()]} />);
+    expect(screen.getByRole('checkbox', { name: 'Include Attack on Titan' })).not.toBeChecked();
+  });
+});
+
+describe('AnimeSyncReview — links', () => {
+  it('shows YOUR title beside AniList’s, so a wrong match can be caught', () => {
+    // A link now comes from a TITLE match on a hand-added show. "Matched to
+    // #16498" is unverifiable, and approving it is the only thing standing
+    // between a wrong match and a later sync overwriting the show.
+    render(
+      <AnimeSyncReview
+        run={makeRun()}
+        changes={[
+          makeChange({
+            id: 'l1',
+            kind: 'link',
+            title: 'Attack on Titan',
+            payload: { anilistMediaId: 16498, matchedTitle: 'Shingeki no Kyojin' },
+          }),
+        ]}
+      />,
+    );
+
+    const row = screen.getByRole('row', { name: /Attack on Titan/ });
+    expect(within(row).getByText('Shingeki no Kyojin')).toBeInTheDocument();
+    expect(within(row).getByText('#16498')).toBeInTheDocument();
   });
 });
 

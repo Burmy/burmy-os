@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   compareByAiring,
+  groupRelatedMedia,
   membersOf,
   seriesCover,
+  seriesIdentityFor,
   seriesTotals,
   suggestSeriesTitle,
   type SeriesMemberRow,
@@ -172,5 +174,86 @@ describe('suggestSeriesTitle', () => {
   it('is idempotent — running it on its own output changes nothing', () => {
     const once = suggestSeriesTitle('Attack on Titan Season 3 Part 2');
     expect(suggestSeriesTitle(once)).toBe(once);
+  });
+});
+
+describe('groupRelatedMedia', () => {
+  it('joins a whole season chain into ONE component, not three pairs', () => {
+    // AniList records relations pairwise. Proposing each pair would ask the
+    // owner to approve the same franchise three times and could file one show
+    // into two different series depending on approval order.
+    const groups = groupRelatedMedia([
+      { mediaId: 1, relatedIds: [2] },
+      { mediaId: 2, relatedIds: [1, 3] },
+      { mediaId: 3, relatedIds: [2] },
+    ]);
+    expect(groups).toEqual([[1, 2, 3]]);
+  });
+
+  it('treats the edges as undirected, so one-sided data still joins', () => {
+    const groups = groupRelatedMedia([
+      { mediaId: 1, relatedIds: [] },
+      { mediaId: 2, relatedIds: [1] },
+    ]);
+    expect(groups).toEqual([[1, 2]]);
+  });
+
+  it('ignores ids the owner does not have', () => {
+    // AniList points at media that was never listed; following those would
+    // grow a component through shows nothing is proposing.
+    expect(groupRelatedMedia([{ mediaId: 1, relatedIds: [999] }])).toEqual([]);
+  });
+
+  it('drops a show related to nothing — that is a show, not a franchise', () => {
+    const groups = groupRelatedMedia([
+      { mediaId: 1, relatedIds: [2] },
+      { mediaId: 2, relatedIds: [1] },
+      { mediaId: 9, relatedIds: [] },
+    ]);
+    expect(groups).toEqual([[1, 2]]);
+  });
+
+  it('keeps two separate franchises separate', () => {
+    const groups = groupRelatedMedia([
+      { mediaId: 1, relatedIds: [2] },
+      { mediaId: 2, relatedIds: [1] },
+      { mediaId: 10, relatedIds: [11] },
+      { mediaId: 11, relatedIds: [10] },
+    ]);
+    expect(groups).toEqual([
+      [1, 2],
+      [10, 11],
+    ]);
+  });
+
+  it('is deterministic — same snapshot, byte-identical proposals', () => {
+    const input = [
+      { mediaId: 30, relatedIds: [10] },
+      { mediaId: 10, relatedIds: [20] },
+      { mediaId: 20, relatedIds: [30] },
+    ];
+    expect(groupRelatedMedia(input)).toEqual(groupRelatedMedia([...input].reverse()));
+    expect(groupRelatedMedia(input)).toEqual([[10, 20, 30]]);
+  });
+
+  it('survives a self-reference without looping', () => {
+    expect(groupRelatedMedia([{ mediaId: 1, relatedIds: [1] }])).toEqual([]);
+  });
+
+  it('is empty for an empty snapshot', () => {
+    expect(groupRelatedMedia([])).toEqual([]);
+  });
+});
+
+describe('seriesIdentityFor', () => {
+  it('is a pure function of the set, so a re-sync resolves the same series', () => {
+    // A title cannot do this job — it comes from a heuristic and the owner can
+    // rename it. Same `dedupe_key` vs `merchant_key` distinction Finance draws.
+    expect(seriesIdentityFor([99147, 16498, 25777])).toBe(16498);
+    expect(seriesIdentityFor([16498, 25777, 99147])).toBe(16498);
+  });
+
+  it('is null for an empty set rather than a fabricated id', () => {
+    expect(seriesIdentityFor([])).toBeNull();
   });
 });

@@ -29,7 +29,7 @@ type Anime = Parameters<typeof AnimeLibraryView>[0]['anime'][number];
 type Series = Parameters<typeof AnimeLibraryView>[0]['series'][number];
 
 const SERIES: Series[] = [
-  { id: 'aot', title: 'Attack on Titan', coverUrl: null, anilistParentId: null },
+  { id: 'aot', title: 'Attack on Titan', coverUrl: null, notes: null, anilistParentId: null },
 ];
 
 function show(overrides: Partial<Anime> & { readonly id: string }): Anime {

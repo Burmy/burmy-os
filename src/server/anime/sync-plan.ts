@@ -104,7 +104,10 @@ export function planLinkedAnimeChanges(
       kind: 'link',
       animeId: stored.id,
       title: stored.title,
-      payload: { anilistMediaId: entry.mediaId },
+      // `matchedTitle` is display-only and the review screen needs it: a link
+      // reading "matched to #16498" is unverifiable, and the owner is being
+      // asked to approve it precisely because a title match can be wrong.
+      payload: { anilistMediaId: entry.mediaId, matchedTitle: entry.titleRomaji },
     });
   }
 
@@ -183,27 +186,57 @@ export function planNewAnimeChange(entry: AniListEntry): PlannedAnimeChange {
 }
 
 /**
- * Two entries AniList's relation graph says are seasons of one show.
+ * A franchise AniList's relation graph says exists, staged for approval.
  *
- * ADVISORY ONLY — it applies nothing at commit, exactly like the Games sync's
- * `reconcile` item. Series membership decides how the library COUNTS and
- * GROUPS, and a relation graph is not reliable enough to make that call
- * unattended: sequels chain cleanly, but recaps, compilation films and
- * side stories are related to a season without being one.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * APPROVING ONE ACTUALLY GROUPS THE SHOWS. It did not always.
  *
- * Staged unselected, so it can never be approved by clicking through.
+ * The first version of this staged an advisory note that applied nothing, which
+ * meant a checkbox the owner could tick, that counted toward "Apply N selected
+ * changes", and that then did nothing at all. A control which reports success
+ * and changes nothing is worse than no control. So the payload carries
+ * everything the commit needs to do the work: a stable identity, a suggested
+ * name, and the media ids to file in.
+ *
+ * MEDIA IDS, NOT ROW IDS. Half of a franchise can be `new_anime` in the very
+ * same run and have no row yet at staging time. The commit resolves media ids
+ * to rows AFTER the inserts (`COMMIT_ORDER` puts `series_hint` last), which is
+ * also what makes a hint survive being approved in a later run than the one
+ * that created the shows.
+ *
+ * STILL STAGED UNSELECTED. A relation graph chains sequels cleanly and is much
+ * less sure about recaps, compilation films and side stories, and series
+ * membership decides how the library COUNTS and GROUPS. Unselected means the
+ * owner has to look at the list of titles and agree, which is exactly the
+ * amount of ceremony an unreliable signal deserves.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
 export function planSeriesHint(
-  entry: AniListEntry,
-  relatedTitles: readonly string[],
+  members: readonly { readonly mediaId: number; readonly titleRomaji: string; readonly seasonYear: number | null }[],
+  suggestedTitle: string,
+  anilistParentId: number,
 ): PlannedAnimeChange | null {
-  if (relatedTitles.length === 0) return null;
+  // One show is not a franchise. Callers filter for this too; enforced here so
+  // the rule holds wherever the planner is used.
+  if (members.length < 2) return null;
+
+  // Earliest first, so the title list on the review screen reads in the order
+  // the owner watched them.
+  const ordered = [...members].sort(
+    (a, b) => (a.seasonYear ?? Number.POSITIVE_INFINITY) - (b.seasonYear ?? Number.POSITIVE_INFINITY),
+  );
 
   return {
     kind: 'series_hint',
+    // No single row owns a franchise proposal — it is about a SET.
     animeId: null,
-    title: entry.titleRomaji,
-    payload: { mediaId: entry.mediaId, relatedIds: entry.relatedIds, relatedTitles },
+    title: suggestedTitle,
+    payload: {
+      anilistParentId,
+      seriesTitle: suggestedTitle,
+      mediaIds: ordered.map((member) => member.mediaId),
+      titles: ordered.map((member) => member.titleRomaji),
+    },
   };
 }
 

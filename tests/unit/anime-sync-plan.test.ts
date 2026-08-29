@@ -140,7 +140,11 @@ describe('planLinkedAnimeChanges — linking', () => {
       kind: 'link',
       animeId: 'row-1',
       title: 'Shingeki no Kyojin',
-      payload: { anilistMediaId: 16498 },
+      // `matchedTitle` rides along for display only. A link can now come from a
+      // TITLE match on a hand-added show, and "matched to #16498" is
+      // unverifiable — the review screen shows both titles side by side so a
+      // wrong match can be caught, which is why it needs approving at all.
+      payload: { anilistMediaId: 16498, matchedTitle: 'Shingeki no Kyojin' },
     });
   });
 
@@ -170,21 +174,60 @@ describe('planNewAnimeChange', () => {
 });
 
 describe('planSeriesHint', () => {
-  it('is advisory and never pre-selected', () => {
+  const members = [
+    { mediaId: 16498, titleRomaji: 'Shingeki no Kyojin', seasonYear: 2013 },
+    { mediaId: 99147, titleRomaji: 'Shingeki no Kyojin Season 3', seasonYear: 2018 },
+    { mediaId: 25777, titleRomaji: 'Shingeki no Kyojin Season 2', seasonYear: 2017 },
+  ];
+
+  it('is never pre-selected', () => {
     // Series membership decides how the library COUNTS and GROUPS, and a
-    // relation graph is not reliable enough to make that call unattended.
+    // relation graph is sure about sequels and much less sure about recaps,
+    // compilation films and side stories.
     expect(defaultSelected('series_hint')).toBe(false);
     expect(defaultSelected('new_anime')).toBe(true);
     expect(defaultSelected('field_update')).toBe(true);
     expect(defaultSelected('link')).toBe(true);
   });
 
-  it('is null when there is nothing related', () => {
-    expect(planSeriesHint(entry(), [])).toBeNull();
+  it('refuses to call one show a franchise', () => {
+    expect(planSeriesHint([members[0]!], 'Shingeki no Kyojin', 16498)).toBeNull();
+    expect(planSeriesHint([], 'Anything', 1)).toBeNull();
   });
 
-  it('names the related titles so the owner can judge it', () => {
-    const hint = planSeriesHint(entry({ relatedIds: [25777] }), ['Shingeki no Kyojin Season 2']);
-    expect(hint?.payload.relatedTitles).toEqual(['Shingeki no Kyojin Season 2']);
+  it('carries what the COMMIT needs to actually do the work', () => {
+    // The first version of this staged an advisory note that applied nothing —
+    // a checkbox that counted toward "Apply N selected changes" and then did
+    // nothing at all.
+    const hint = planSeriesHint(members, 'Shingeki no Kyojin', 16498);
+    expect(hint?.payload.anilistParentId).toBe(16498);
+    expect(hint?.payload.seriesTitle).toBe('Shingeki no Kyojin');
+    expect(hint?.payload.mediaIds).toHaveLength(3);
+  });
+
+  it('lists the members in airing order, which is watching order', () => {
+    const hint = planSeriesHint(members, 'Shingeki no Kyojin', 16498);
+    expect(hint?.payload.titles).toEqual([
+      'Shingeki no Kyojin',
+      'Shingeki no Kyojin Season 2',
+      'Shingeki no Kyojin Season 3',
+    ]);
+    expect(hint?.payload.mediaIds).toEqual([16498, 25777, 99147]);
+  });
+
+  it('belongs to no single row, because it is about a SET', () => {
+    expect(planSeriesHint(members, 'Shingeki no Kyojin', 16498)?.animeId).toBeNull();
+  });
+
+  it('sorts an undated member last rather than ahead of season one', () => {
+    const hint = planSeriesHint(
+      [
+        { mediaId: 2, titleRomaji: 'Special', seasonYear: null },
+        { mediaId: 1, titleRomaji: 'Season 1', seasonYear: 2013 },
+      ],
+      'Show',
+      1,
+    );
+    expect(hint?.payload.titles).toEqual(['Season 1', 'Special']);
   });
 });

@@ -454,6 +454,18 @@ These are verified, not folklore. Do not "fix" them back.
   page, not by any check. The same pattern is used ALL OVER this codebase for
   `exactOptionalPropertyTypes` (and is correct for that), so the risk is specific: when a conditional
   spread introduces a prop name you have not used on that component before, confirm the prop exists.
+- **A "staged but applies nothing" change kind is a checkbox that lies.** Anime's `series_hint` shipped
+  as an advisory item excluded from the commit by an `APPLIES_NOTHING` set — so the owner could tick
+  it, watch it count toward "Apply N selected changes", press Apply, and have nothing happen. If a
+  proposal is worth rendering with a checkbox, approving it has to DO the thing; if it genuinely
+  applies nothing, it is a note and must not be selectable. The same review screen already had the
+  right shape for a risky-but-real change: stage it, default it UNSELECTED, and show enough detail
+  (every member title, not a count) for the owner to judge it.
+- **A comment deferring work "until X exists" is a TODO that outlives X.** `advanceAnimeSyncAction`
+  skipped every unlinked row because "there is no manual-add form yet, so there is no unlinked row to
+  title-match — that lands with the form it exists for." The form landed one milestone later and this
+  did not, leaving hand-added shows permanently unlinkable. When deferring to a future change, grep
+  for the deferral when that change lands — or do not defer.
 - **`PageHeader` has no `subtitle` prop, and FOUR call sites passed one anyway — through a
   conditional spread, which bypasses the excess-property check.** This is the same mechanism the
   entry below records for `InlineEditField.hint`, hit again at a bigger scale: the Games sync review

@@ -270,10 +270,31 @@ export async function listAnilistIdMap(ownerId: string): Promise<Map<number, str
   );
 }
 
+/**
+ * AniList media id → the series that show is filed under, or `null`.
+ *
+ * Distinct from `listAnilistIdMap` (media id → row id) because the sync's
+ * franchise proposals need to know whether a show is ALREADY grouped, not
+ * which row it is. A show with no AniList id cannot appear in a relation-graph
+ * proposal at all, so those rows are excluded here.
+ */
+export async function listSeriesMembership(ownerId: string): Promise<Map<number, string | null>> {
+  const rows = await getDb()
+    .select({ anilistMediaId: animeTable.anilistMediaId, seriesId: animeTable.seriesId })
+    .from(animeTable)
+    .where(and(eq(animeTable.ownerId, ownerId), isNotNull(animeTable.anilistMediaId)));
+
+  return new Map(
+    rows.flatMap((row) => (row.anilistMediaId === null ? [] : [[row.anilistMediaId, row.seriesId] as const])),
+  );
+}
+
 export interface AnimeSeriesRow {
   readonly id: string;
   readonly title: string;
+  /** An OVERRIDE. Null means "show the earliest season's cover" — see `seriesCover`. */
   readonly coverUrl: string | null;
+  readonly notes: string | null;
   readonly anilistParentId: number | null;
 }
 
@@ -283,6 +304,7 @@ export async function listSeries(ownerId: string): Promise<AnimeSeriesRow[]> {
       id: animeSeries.id,
       title: animeSeries.title,
       coverUrl: animeSeries.coverUrl,
+      notes: animeSeries.notes,
       anilistParentId: animeSeries.anilistParentId,
     })
     .from(animeSeries)
@@ -392,6 +414,62 @@ export async function listAnimeStatRows(ownerId: string): Promise<AnimeStatRow[]
     source: row.source as AnimeSource | null,
     season: row.season as AnimeSeason | null,
   }));
+}
+
+/** A series plus the members the Series screen renders it from. Nothing is aggregated in SQL — see below. */
+export interface SeriesWithMembers {
+  readonly series: AnimeSeriesRow;
+  readonly members: Anime[];
+}
+
+/**
+ * Every series, each with its members.
+ *
+ * ONE QUERY FOR THE SERIES, ONE FOR EVERY MEMBER — not one query per series.
+ * A franchise list is a page that trivially becomes N+1, and the grouping is a
+ * `Map` build over rows this app already knows are a few hundred at most.
+ *
+ * NOTHING IS AGGREGATED HERE. Episode totals, time watched and the airing span
+ * all come from `seriesTotals` in the pure domain module, at render time —
+ * which is the same "never store a total" invariant, extended to "never
+ * compute it in a second place either". A SQL `sum()` here would be a fourth
+ * implementation of episodesWatched, drifting the moment `repeat_count`'s
+ * meaning is revisited.
+ *
+ * A series with NO members is still returned. It is a real state — the owner
+ * can make one and file nothing into it, or empty it — and hiding it would
+ * leave a row nothing on screen can reach or delete.
+ */
+export async function listSeriesWithMembers(ownerId: string): Promise<SeriesWithMembers[]> {
+  const db = getDb();
+
+  const [series, members] = await Promise.all([
+    db
+      .select({
+        id: animeSeries.id,
+        title: animeSeries.title,
+        coverUrl: animeSeries.coverUrl,
+        notes: animeSeries.notes,
+        anilistParentId: animeSeries.anilistParentId,
+      })
+      .from(animeSeries)
+      .where(eq(animeSeries.ownerId, ownerId))
+      .orderBy(asc(animeSeries.title)),
+
+    db
+      .select()
+      .from(animeTable)
+      .where(and(eq(animeTable.ownerId, ownerId), isNotNull(animeTable.seriesId)))
+      .orderBy(sql`${animeTable.seasonYear} asc nulls last`, asc(animeTable.titleRomaji)),
+  ]);
+
+  const bySeries = new Map<string, Anime[]>();
+  for (const row of members) {
+    if (row.seriesId === null) continue;
+    bySeries.set(row.seriesId, [...(bySeries.get(row.seriesId) ?? []), rowToAnime(row)]);
+  }
+
+  return series.map((row) => ({ series: row, members: bySeries.get(row.id) ?? [] }));
 }
 
 /** Most recently watched first — what the library's "recent" ordering reads. */

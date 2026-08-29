@@ -25,6 +25,7 @@ export async function getSeries(ownerId: string, id: string): Promise<AnimeSerie
       id: animeSeries.id,
       title: animeSeries.title,
       coverUrl: animeSeries.coverUrl,
+      notes: animeSeries.notes,
       anilistParentId: animeSeries.anilistParentId,
     })
     .from(animeSeries)
@@ -50,6 +51,7 @@ export async function createSeries(
       id: animeSeries.id,
       title: animeSeries.title,
       coverUrl: animeSeries.coverUrl,
+      notes: animeSeries.notes,
       anilistParentId: animeSeries.anilistParentId,
     });
 
@@ -57,10 +59,47 @@ export async function createSeries(
   return row;
 }
 
-export async function renameSeries(ownerId: string, id: string, title: string): Promise<void> {
+/** The fields a series owns and the owner may edit. `anilist_parent_id` is identity and is not among them. */
+export type EditableSeriesField = 'title' | 'coverUrl' | 'notes';
+
+/**
+ * Writes one field.
+ *
+ * An EXHAUSTIVE SWITCH rather than a computed key, the same rule
+ * `updateAnimeFieldAction` and `fieldPatch` both follow: `{ [field]: value }`
+ * would typecheck just as well and is exactly what makes an arbitrary column
+ * name possible later.
+ *
+ * `title` is the one field that cannot be nulled — a series must always have a
+ * name — which the action above enforces before this is reached.
+ */
+export async function updateSeriesField(
+  ownerId: string,
+  id: string,
+  field: EditableSeriesField,
+  value: string | null,
+): Promise<void> {
+  const patch: Partial<typeof animeSeries.$inferInsert> = {};
+  switch (field) {
+    case 'title':
+      if (value === null) throw new AnimeSeriesNotFoundError();
+      patch.title = value;
+      break;
+    case 'coverUrl':
+      patch.coverUrl = value;
+      break;
+    case 'notes':
+      patch.notes = value;
+      break;
+    default: {
+      const exhaustive: never = field;
+      throw new Error(`Refusing to write an unknown series field: ${String(exhaustive)}`);
+    }
+  }
+
   const result = await getDb()
     .update(animeSeries)
-    .set({ title, updatedAt: new Date() })
+    .set({ ...patch, updatedAt: new Date() })
     .where(and(eq(animeSeries.ownerId, ownerId), eq(animeSeries.id, id)))
     .returning({ id: animeSeries.id });
 

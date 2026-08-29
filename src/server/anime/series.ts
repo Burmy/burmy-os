@@ -122,6 +122,107 @@ export function seriesCover(
   return [...members].sort(compareByAiring).find((row) => row.coverUrl !== null)?.coverUrl ?? null;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Grouping seasons from AniList's relation graph
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The projection the grouping needs: an entry and the media ids it is related to. */
+export interface RelatedMedia {
+  readonly mediaId: number;
+  readonly relatedIds: readonly number[];
+}
+
+/**
+ * Connected components over AniList's prequel/sequel/parent edges.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY COMPONENTS AND NOT PAIRS.
+ *
+ * AniList records relations pairwise: season 1 knows season 2, season 2 knows
+ * seasons 1 and 3. Proposing each PAIR would ask the owner to approve the same
+ * franchise three times and, worse, could file the same show into two different
+ * series depending on approval order. A component is the franchise, proposed
+ * once.
+ *
+ * UNDIRECTED, deliberately. `seriesRelatedIds` already narrowed the edges to
+ * the relation types that chain seasons (PREQUEL/SEQUEL/PARENT), and among
+ * those, direction carries no information a grouping needs — "A is a sequel of
+ * B" and "B is a prequel of A" describe one franchise either way.
+ *
+ * ONLY IDS PRESENT IN `entries` PARTICIPATE. AniList happily points at media
+ * the owner has never listed; following those would grow a component through
+ * shows that are not in the library and are not being proposed.
+ *
+ * Components of one are dropped — a show related to nothing the owner has is
+ * not a franchise, it is a show.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Deterministic: each component is returned with its ids ascending, and the
+ * components themselves ordered by their smallest id, so two runs over the same
+ * snapshot stage byte-identical proposals.
+ */
+export function groupRelatedMedia(entries: readonly RelatedMedia[]): number[][] {
+  const present = new Set(entries.map((entry) => entry.mediaId));
+  const parent = new Map<number, number>();
+
+  const find = (id: number): number => {
+    let root = id;
+    while ((parent.get(root) ?? root) !== root) root = parent.get(root) ?? root;
+    // Path compression, so a long season chain does not walk the whole way twice.
+    let cursor = id;
+    while (cursor !== root) {
+      const next = parent.get(cursor) ?? cursor;
+      parent.set(cursor, root);
+      cursor = next;
+    }
+    return root;
+  };
+
+  const union = (a: number, b: number): void => {
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA === rootB) return;
+    // Smaller id wins, purely so the result is deterministic.
+    if (rootA < rootB) parent.set(rootB, rootA);
+    else parent.set(rootA, rootB);
+  };
+
+  for (const entry of entries) parent.set(entry.mediaId, entry.mediaId);
+  for (const entry of entries) {
+    for (const related of entry.relatedIds) {
+      if (present.has(related)) union(entry.mediaId, related);
+    }
+  }
+
+  const components = new Map<number, number[]>();
+  for (const entry of entries) {
+    const root = find(entry.mediaId);
+    components.set(root, [...(components.get(root) ?? []), entry.mediaId]);
+  }
+
+  return [...components.values()]
+    .filter((ids) => ids.length > 1)
+    .map((ids) => [...ids].sort((a, b) => a - b))
+    .sort((a, b) => (a[0] ?? 0) - (b[0] ?? 0));
+}
+
+/**
+ * The stable identity of a franchise, derived from its members.
+ *
+ * The SMALLEST media id in the component. AniList ids are issued roughly in
+ * chronological order, so this is usually the original season — but what
+ * actually matters is that it is a pure function of the set: the same franchise
+ * produces the same id on every run, which is what makes
+ * `anime_series.anilist_parent_id` able to resolve the same series rather than
+ * creating a second one. A title cannot do that job (it is a heuristic and the
+ * owner can rename it), which is the same `dedupe_key` vs `merchant_key`
+ * distinction Finance documents.
+ */
+export function seriesIdentityFor(mediaIds: readonly number[]): number | null {
+  if (mediaIds.length === 0) return null;
+  return Math.min(...mediaIds);
+}
+
 /**
  * A franchise name from one season's title — "Attack on Titan Season 3 Part 2"
  * becomes "Attack on Titan".

@@ -12,11 +12,21 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 
-import { getDb } from '@/server/db';
-import { anime as animeTable, animeSyncChanges, animeSyncRuns } from '@/server/db/schema';
-import type { AnimeSyncChangeKind, PlannedAnimeChange } from '@/server/anime/sync-plan';
+import { type Db, getDb } from '@/server/db';
+
+/**
+ * The handle inside a `db.transaction(...)` callback.
+ *
+ * Drizzle does not export this shape under a usable name, and it is not `Db` —
+ * a transaction handle has `rollback()` and its own nested `transaction()`
+ * (a real SAVEPOINT). Derived from the callback's own parameter so it tracks
+ * the driver rather than being asserted.
+ */
+type DbTransaction = Parameters<Parameters<Db['transaction']>[0]>[0];
+import { anime as animeTable, animeSeries, animeSyncChanges, animeSyncRuns } from '@/server/db/schema';
+import type { PlannedAnimeChange } from '@/server/anime/sync-plan';
 import { SYNCABLE_ANIME_FIELDS, defaultSelected } from '@/server/anime/sync-plan';
 import {
   isAnimeFormat,
@@ -282,8 +292,6 @@ function newAnimeValues(ownerId: string, payload: Record<string, unknown>): type
 }
 
 /** `series_hint` is advisory and applies nothing — a separate guard, not a re-derivation of the staging default. */
-const APPLIES_NOTHING: ReadonlySet<AnimeSyncChangeKind> = new Set(['series_hint']);
-
 const COMMIT_ORDER: Record<string, number> = { link: 0, field_update: 1, new_anime: 2, series_hint: 3 };
 
 export interface AnimeCommitResult {
@@ -315,6 +323,107 @@ export interface AnimeCommitResult {
  * silently never matches.
  * ─────────────────────────────────────────────────────────────────────────────
  */
+/**
+ * Files a franchise's shows into one series, creating the series if needed.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FIND-OR-CREATE ON `anilist_parent_id`, NOT ON THE TITLE.
+ *
+ * The id is a pure function of the franchise's members (`seriesIdentityFor`),
+ * so approving the same hint in a later run resolves the SAME series rather
+ * than creating a second one beside it. The title cannot do that job: it comes
+ * from a heuristic and the owner can rename it, and either would let the next
+ * run miss and insert a duplicate franchise. This is the `dedupe_key` versus
+ * `merchant_key` distinction, in a second place.
+ *
+ * A TITLE COLLISION FALLS BACK TO THE EXISTING SERIES rather than failing. The
+ * owner may already have made "Attack on Titan" by hand, with no parent id;
+ * `anime_series_owner_title_idx` would reject the insert, and the right answer
+ * is plainly to use the one they made — so it is adopted, and stamped with the
+ * parent id so the next run finds it by id.
+ *
+ * NEVER MOVES A SHOW THAT IS ALREADY IN A SERIES. If the owner has filed a
+ * season somewhere by hand, a relation graph does not get to overrule that.
+ * Only rows with `series_id IS NULL` are touched.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *
+ * Returns whether anything actually moved, so an approved hint that turns out
+ * to be a no-op is not counted as an applied change.
+ */
+async function applySeriesHint(
+  tx: DbTransaction,
+  ownerId: string,
+  payload: Record<string, unknown>,
+): Promise<boolean> {
+  const parentId = payload.anilistParentId;
+  const title = payload.seriesTitle;
+  const mediaIds = payload.mediaIds;
+
+  if (typeof parentId !== 'number' || !Number.isInteger(parentId)) return false;
+  if (typeof title !== 'string' || title.trim() === '') return false;
+  if (!Array.isArray(mediaIds)) return false;
+
+  const ids = mediaIds.filter((id): id is number => typeof id === 'number' && Number.isInteger(id));
+  if (ids.length < 2) return false;
+
+  const [existing] = await tx
+    .select({ id: animeSeries.id })
+    .from(animeSeries)
+    .where(and(eq(animeSeries.ownerId, ownerId), eq(animeSeries.anilistParentId, parentId)))
+    .limit(1);
+
+  let seriesId = existing?.id ?? null;
+
+  if (seriesId === null) {
+    try {
+      // A SAVEPOINT, so a title collision does not poison the whole commit —
+      // the same shape `new_anime`'s insert uses and for the same reason.
+      await tx.transaction(async (savepoint) => {
+        const [row] = await savepoint
+          .insert(animeSeries)
+          .values({ ownerId, title: title.trim(), anilistParentId: parentId })
+          .returning({ id: animeSeries.id });
+        seriesId = row?.id ?? null;
+      });
+    } catch (error) {
+      if (!isUniqueViolation(error)) throw error;
+
+      // The owner already has a series with this name. Adopt it, and stamp the
+      // parent id on so a later run resolves it by id instead of racing the
+      // title again.
+      const [byTitle] = await tx
+        .select({ id: animeSeries.id })
+        .from(animeSeries)
+        .where(and(eq(animeSeries.ownerId, ownerId), sql`lower(${animeSeries.title}) = lower(${title.trim()})`))
+        .limit(1);
+
+      if (!byTitle) return false;
+      seriesId = byTitle.id;
+      await tx
+        .update(animeSeries)
+        .set({ anilistParentId: parentId, updatedAt: new Date() })
+        .where(and(eq(animeSeries.ownerId, ownerId), eq(animeSeries.id, byTitle.id)));
+    }
+  }
+
+  if (seriesId === null) return false;
+
+  const moved = await tx
+    .update(animeTable)
+    .set({ seriesId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(animeTable.ownerId, ownerId),
+        inArray(animeTable.anilistMediaId, ids),
+        // Never overrule a filing the owner made by hand.
+        isNull(animeTable.seriesId),
+      ),
+    )
+    .returning({ id: animeTable.id });
+
+  return moved.length > 0;
+}
+
 export async function commitAnimeSyncRun(ownerId: string, runId: string): Promise<AnimeCommitResult> {
   return getDb().transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext('burmy_anime_sync_commit'), hashtext(${runId}))`);
@@ -352,9 +461,16 @@ export async function commitAnimeSyncRun(ownerId: string, runId: string): Promis
 
     for (const change of ordered) {
       if (!change.selected) continue;
-      if (APPLIES_NOTHING.has(change.kind as AnimeSyncChangeKind)) continue;
 
       const payload = (change.payload ?? {}) as Record<string, unknown>;
+
+      // LAST in `COMMIT_ORDER`, and that ordering is load-bearing: a franchise
+      // can contain shows this very run is inserting, so the media ids only
+      // resolve to rows after every `new_anime` above has run.
+      if (change.kind === 'series_hint') {
+        if (await applySeriesHint(tx, ownerId, payload)) applied += 1;
+        continue;
+      }
 
       if (change.kind === 'new_anime') {
         const values = newAnimeValues(ownerId, payload);

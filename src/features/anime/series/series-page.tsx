@@ -13,7 +13,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatCardGrid } from '@/components/ui/stat-card-grid';
 import { toast } from '@/components/ui/toast';
-import { deleteSeriesAction, renameSeriesAction } from '@/features/anime/anime-actions';
+import { deleteSeriesAction, updateSeriesFieldAction } from '@/features/anime/anime-actions';
 import type { PickableAnime } from './anime-picker-dialog';
 import { SeriesMembersPanel } from './series-members-panel';
 import { formatRuntime } from '@/server/anime/runtime';
@@ -111,20 +111,51 @@ export function SeriesPage({
               <Image src={cover} alt="" fill sizes="200px" className="object-cover" />
             )}
           </div>
-          {/* Says where the art came from when it was not chosen. Without this
-              the cover looks stored, and the owner would go looking for a
-              field to change that does not exist on this page. */}
+          {/* Says where the art came from when it was not chosen, and now
+              names the field that changes it — this used to point at a control
+              the page did not have. */}
           {series.coverUrl === null && cover !== null ? (
-            <p className="text-muted-foreground text-xs">Showing the earliest season&apos;s cover.</p>
+            <p className="text-muted-foreground text-xs">
+              Showing the earliest season&apos;s cover. Set a Cover URL to override it.
+            </p>
           ) : null}
         </div>
 
         <div className="min-w-0 space-y-6">
-          <InlineEditField
-            label="Series name"
-            value={series.title}
-            onSave={(value) => renameSeriesAction(series.id, value)}
-          />
+          <div className="space-y-0.5">
+            <InlineEditField
+              label="Series name"
+              value={series.title}
+              onSave={(value) => updateSeriesFieldAction(series.id, 'title', value)}
+            />
+
+            {/* The cover OVERRIDE, which had a column and no way to set it.
+                Deliberately last of the two and described by its own hint,
+                because leaving it empty is the normal answer — the earliest
+                season's art is right for almost every franchise, and this
+                exists for the ones with key art belonging to no single
+                season. */}
+            <InlineEditField
+              label="Cover URL"
+              value={series.coverUrl ?? ''}
+              {...(series.coverUrl === null
+                ? {}
+                : {
+                    displayValue: 'Custom image',
+                    hint: 'Overriding the earliest season\u2019s cover. Clear it to go back.',
+                  })}
+              placeholder="Using a season's cover"
+              onSave={(value) => updateSeriesFieldAction(series.id, 'coverUrl', value)}
+            />
+
+            <InlineEditField
+              label="Notes"
+              value={series.notes ?? ''}
+              multiline
+              placeholder="Nothing yet"
+              onSave={(value) => updateSeriesFieldAction(series.id, 'notes', value)}
+            />
+          </div>
 
           <StatCardGrid>
             <StatCard label="Shows" value={String(totals.showCount)} />

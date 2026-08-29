@@ -170,7 +170,11 @@ export function AnimeSyncReview({
   const disableApply = pending || committing || selectedCount === 0;
 
   return (
-    <div className="space-y-8">
+    // `pb-20` is clearance for the sticky action bar below. Without it the
+    // bar — which is opaque and pinned to the bottom of the viewport — sits
+    // permanently over the last row of the last group, and there is no amount
+    // of scrolling that reveals it.
+    <div className="space-y-8 pb-20">
       {newShows.length > 0 ? (
         <ChangeGroup
           title={`New shows (${newShows.length})`}
@@ -255,13 +259,17 @@ export function AnimeSyncReview({
       ) : null}
 
       {links.length > 0 ? (
-        <ChangeGroup title="Links" description="Matched to an AniList entry for the first time.">
+        <ChangeGroup
+          title="Links"
+          description="Matched to an AniList entry for the first time — a show you added by hand, found by its title. Check the match before applying: linking the wrong entry lets later syncs overwrite this show with another one's progress."
+        >
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">Select</TableHead>
-                <TableHead>Title</TableHead>
-                <TableHead>AniList entry</TableHead>
+                <TableHead>Your title</TableHead>
+                <TableHead>AniList title</TableHead>
+                <TableHead>Entry</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -269,6 +277,13 @@ export function AnimeSyncReview({
                 <TableRow key={change.id}>
                   <SelectCell change={change} disabled={pending} onChange={setSelected} />
                   <TableCell className="font-medium">{change.title}</TableCell>
+                  {/* BOTH titles, side by side. "Matched to #16498" is
+                      unverifiable; "Frieren → Sousou no Frieren" is the only
+                      rendering that lets the owner catch a wrong match, which
+                      is the whole reason this needs approving at all. */}
+                  <TableCell className="text-muted-foreground">
+                    {typeof change.payload.matchedTitle === 'string' ? change.payload.matchedTitle : '—'}
+                  </TableCell>
                   <TableCell className="text-muted-foreground tabular">
                     {formatMediaId(change.payload.anilistMediaId)}
                   </TableCell>
@@ -281,25 +296,45 @@ export function AnimeSyncReview({
 
       {seriesHints.length > 0 ? (
         <ChangeGroup
-          title="Series suggestions"
-          description="AniList says these are related. Advisory only — applying nothing, and unselected until you say otherwise."
+          title="Series to group"
+          description="AniList says these seasons belong together. Approving one files them under a single series — unticked by default, because a relation graph is sure about sequels and much less sure about recaps and side stories."
         >
           <Table>
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">Select</TableHead>
-                <TableHead>Show</TableHead>
-                <TableHead>Related to</TableHead>
+                <TableHead>Series</TableHead>
+                <TableHead>Would group</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {seriesHints.map((change) => (
-                <TableRow key={change.id}>
-                  <SelectCell change={change} disabled={pending} onChange={setSelected} />
-                  <TableCell className="font-medium">{change.title}</TableCell>
-                  <TableCell className="text-muted-foreground">{formatRelatedTitles(change.payload)}</TableCell>
-                </TableRow>
-              ))}
+              {seriesHints.map((change) => {
+                const titles = groupedTitles(change.payload);
+                return (
+                  <TableRow key={change.id}>
+                    <SelectCell change={change} disabled={pending} onChange={setSelected} />
+                    <TableCell className="font-medium">{change.title}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {/* Every title, one per line, not a joined run. This is
+                          the only information the owner has to judge the
+                          proposal on, and a franchise with a recap film wrongly
+                          attached is exactly what they are being asked to
+                          catch — so it has to be readable, not scannable. */}
+                      {titles.length === 0 ? (
+                        '—'
+                      ) : (
+                        <ul className="space-y-0.5">
+                          {titles.map((title) => (
+                            <li key={title} className="truncate">
+                              {title}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </ChangeGroup>
@@ -469,9 +504,9 @@ function formatMediaId(value: unknown): string {
   return id === null ? '—' : `#${id}`;
 }
 
-function formatRelatedTitles(payload: Record<string, unknown>): string {
-  const titles = Array.isArray(payload.relatedTitles)
-    ? payload.relatedTitles.filter((title): title is string => typeof title === 'string')
+/** The shows a franchise proposal would file together, in airing order as staged. */
+function groupedTitles(payload: Record<string, unknown>): string[] {
+  return Array.isArray(payload.titles)
+    ? payload.titles.filter((title): title is string => typeof title === 'string')
     : [];
-  return titles.length > 0 ? titles.join(' · ') : '—';
 }

@@ -61,7 +61,7 @@ function member(overrides: Partial<Member> & { readonly id: string }): Member {
   };
 }
 
-const SERIES = { id: 'aot', title: 'Attack on Titan', coverUrl: null, anilistParentId: null };
+const SERIES = { id: 'aot', title: 'Attack on Titan', coverUrl: null, notes: null, anilistParentId: null };
 
 const MEMBERS: Member[] = [
   member({ id: 's1', titleRomaji: 'Season 1', episodes: 25, progress: 25, seasonYear: 2013 }),

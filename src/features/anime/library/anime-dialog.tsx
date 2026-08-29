@@ -24,11 +24,14 @@ import { ANIME_FORMATS, ANIME_STATUSES, FORMAT_LABELS, STATUS_LABELS } from '@/s
  * Burmy directly, so this is the path that matters after the import — not a
  * fallback for when the sync fails.
  *
- * DELIBERATELY SHORT. Title, status, format, episode count, episode length,
- * progress and year: enough to make the row's own numbers correct, which is
- * all the library and the stats read. Studio, genres, synopsis and dates are
- * left to inline editing on the show's page, where there is room for them and
- * where the owner is already looking at the entry. A dialog that asks for
+ * DELIBERATELY SHORT, but not shorter than the stats need. Title, status,
+ * format, episode count, episode length, progress, year, studio and genres.
+ *
+ * Studio and genres are here for a specific reason rather than completeness:
+ * they are what the Stats page's two largest charts are built from, and a show
+ * added without them is invisible in both. Everything a chart needs is worth
+ * asking for once; synopsis, dates and notes are not, and are left to inline
+ * editing on the show's page where there is room. A dialog that asks for
  * eighteen fields before it will save anything is a dialog people avoid.
  *
  * A hand-added row carries no `anilistMediaId`, so a later sync leaves it
@@ -138,13 +141,29 @@ export function AnimeDialog({
             </div>
           </div>
 
-          {/* Said in the form, not learned afterwards: without an episode
-              length there is no time-watched figure for this show anywhere in
-              the app, and a blank stat is confusing in a way a one-line
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="studio">Studio</Label>
+              <Input id="studio" name="studio" maxLength={300} placeholder="Optional" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="genre">Genres</Label>
+              {/* Comma-separated, matching how the column is stored and split
+                  at read time — the same shape `games.genre` uses. Said in the
+                  placeholder, because a bare "Genres" box invites one genre. */}
+              <Input id="genre" name="genre" maxLength={300} placeholder="Action, Drama" />
+            </div>
+          </div>
+
+          {/* Said in the form, not learned afterwards. Both of these are
+              fields whose absence is invisible later: no episode length means
+              no time-watched figure anywhere in the app, and no studio or
+              genres means this show is missing from the two largest charts on
+              the Stats page. A blank stat is confusing in a way a one-line
               warning is not. */}
           <p className="text-muted-foreground text-xs">
-            Episode length is what makes time-watched figures possible — leave it blank and this show
-            counts episodes only.
+            Episode length is what makes time-watched figures possible; studio and genres are what put
+            this show in the stats. All three can be filled in later from the show&apos;s own page.
           </p>
 
           <div className="flex justify-end gap-2">
