@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { toast } from '@/components/ui/toast';
 import { STATUS_LABELS, isAnimeStatus } from '@/server/anime/taxonomy';
 import type { AnimeSyncChange, AnimeSyncRun } from '@/server/db/anime/sync';
-import { commitAnimeSyncRunAction, setAnimeSyncChangeSelectedAction } from './sync-actions';
+import { commitAnimeSyncRunAction, importAnimeActivityAction, setAnimeSyncChangeSelectedAction } from './sync-actions';
 
 /**
  * `new_anime` changes at or above this count get a prominent, amber header.
@@ -57,6 +57,7 @@ export function AnimeSyncReview({
   const [changes, setChanges] = useState(initialChanges);
   const [pending, startTransition] = useTransition();
   const [committing, setCommitting] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   function patchChange(changeId: string, patch: Partial<AnimeSyncChange>): void {
     setChanges((prev) => prev.map((change) => (change.id === changeId ? { ...change, ...patch } : change)));
@@ -107,7 +108,36 @@ export function AnimeSyncReview({
         } already existed and ${outcome.skipped === 1 ? 'was' : 'were'} skipped.`,
       );
     }
-    router.push('/anime/library');
+
+    await finish('/anime/library');
+  }
+
+  /**
+   * Imports the watch log, then leaves.
+   *
+   * AFTER the commit and never before it: a log row needs an `anime.id`, and
+   * the shows this run just created did not exist a moment ago.
+   *
+   * BEST-EFFORT — the library is already correct without it, so a failed feed
+   * reports itself and undoes nothing, the same contract
+   * `advanceSyncEnrichmentAction` holds in the Games engine. The navigation
+   * happens either way, which is why it lives in `finally`.
+   */
+  async function finish(to: string): Promise<void> {
+    setImporting(true);
+    try {
+      const log = await importAnimeActivityAction();
+      if (log.ok && log.imported > 0) {
+        toast.success(`${log.imported} watch-log ${log.imported === 1 ? 'entry' : 'entries'} imported`);
+      } else if (!log.ok) {
+        toast.error(log.error);
+      }
+    } catch {
+      toast.error('The watch log could not be imported. Your library is still up to date.');
+    } finally {
+      setImporting(false);
+      router.push(to);
+    }
   }
 
   if (changes.length === 0) {
@@ -117,8 +147,15 @@ export function AnimeSyncReview({
         <p className="text-muted-foreground">
           This sync found no changes — your library already matches AniList.
         </p>
-        <Button size="sm" onClick={() => router.push('/anime/library')}>
-          Back to library
+        {/* The watch log still imports on THIS path, and that is not
+            symmetry for its own sake. A run with no library changes is a run
+            that ends here, and it is exactly the case where new activity can
+            still exist — a rewatch, a status change, or an episode another
+            device already reported. Hanging the import off the commit alone
+            would mean the log silently stopped updating the moment the
+            library caught up. */}
+        <Button size="sm" onClick={() => void finish('/anime/library')} disabled={importing}>
+          {importing ? 'Importing your watch log…' : 'Back to library'}
         </Button>
       </div>
     );
@@ -270,7 +307,11 @@ export function AnimeSyncReview({
 
       <div className="bg-background sticky bottom-0 flex items-center gap-3 border-t py-3">
         <Button onClick={commit} disabled={disableApply}>
-          {committing ? 'Applying…' : `Apply ${selectedCount} selected change${selectedCount === 1 ? '' : 's'}`}
+          {importing
+            ? 'Importing your watch log…'
+            : committing
+              ? 'Applying…'
+              : `Apply ${selectedCount} selected change${selectedCount === 1 ? '' : 's'}`}
         </Button>
       </div>
     </div>

@@ -19,8 +19,10 @@ import {
 } from '@/features/anime/anime-actions';
 import { InlineEditField } from '@/components/ui/inline-edit-row';
 import type { PickableAnime } from '@/features/anime/series/anime-picker-dialog';
+import { WatchLogList } from '@/features/anime/log/watch-log-list';
 import { formatAiring } from '@/server/anime/taxonomy';
 import type { Anime } from '@/server/db/anime/anime';
+import type { WatchLogEntry } from '@/server/db/anime/watch-log';
 import { AnimeDetails } from './anime-details';
 import { AnimeSummaryPanel } from './anime-summary-panel';
 
@@ -41,11 +43,14 @@ export function AnimePage({
   anime,
   series,
   seriesOptions,
+  history,
 }: {
   readonly anime: Anime;
   readonly series: { readonly id: string; readonly title: string } | null;
   /** Every series in the library, for the "Part of" picker. */
   readonly seriesOptions: readonly PickableAnime[];
+  /** This show's own watch-log entries, newest first. Empty is a normal state. */
+  readonly history: readonly WatchLogEntry[];
 }): React.ReactElement {
   const router = useRouter();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -141,6 +146,18 @@ export function AnimePage({
           />
         </div>
       </div>
+
+      {/* Shown only when there IS history. An empty section on every
+          hand-added show, and on every show watched before AniList's activity
+          feed reaches, would be a permanent blank panel explaining nothing —
+          the Log tab is where the feed's limits are stated once. */}
+      {history.length === 0 ? null : (
+        <div className="mt-8 min-w-0">
+          <h2 className="text-muted-foreground mb-2 text-xs font-medium">History</h2>
+          {/* `showTitles={false}` — the title is already the page heading. */}
+          <WatchLogList entries={history} showTitles={false} />
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmingDelete}

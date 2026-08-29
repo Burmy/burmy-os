@@ -15,9 +15,12 @@ import { describe, expect, it, vi } from 'vitest';
 const setAnimeSyncChangeSelectedAction = vi.fn(async () => ({ ok: true as const }));
 const commitAnimeSyncRunAction = vi.fn(async () => ({ ok: true as const, applied: 0, created: 0, skipped: 0 }));
 
+const importAnimeActivityAction = vi.fn(async () => ({ ok: true as const, imported: 0, skipped: 0 }));
+
 vi.mock('@/features/anime/sync/sync-actions', () => ({
   setAnimeSyncChangeSelectedAction,
   commitAnimeSyncRunAction,
+  importAnimeActivityAction,
 }));
 
 const push = vi.fn();
@@ -63,6 +66,36 @@ describe('AnimeSyncReview — the empty branch', () => {
     expect(screen.getByText('Nothing to review.')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Apply/ })).not.toBeInTheDocument();
+  });
+
+  it('STILL imports the watch log on the way out', async () => {
+    // A run with no library changes is a run that ends here, and it is exactly
+    // the case where new activity can still exist — a rewatch, a status change,
+    // an episode another device already reported. Hanging the import off the
+    // commit alone would make the log stop updating once the library caught up.
+    importAnimeActivityAction.mockClear();
+    const user = userEvent.setup();
+    render(<AnimeSyncReview run={makeRun()} changes={[]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Back to library' }));
+
+    expect(importAnimeActivityAction).toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith('/anime/library');
+  });
+
+  it('leaves anyway when the log import fails', async () => {
+    // Best-effort: the library is already correct, so a failed feed must not
+    // strand the owner on a review screen with nothing left to review.
+    importAnimeActivityAction.mockRejectedValueOnce(new Error('feed down'));
+    const user = userEvent.setup();
+    render(<AnimeSyncReview run={makeRun()} changes={[]} />);
+
+    await user.click(screen.getByRole('button', { name: 'Back to library' }));
+
+    expect(toastError).toHaveBeenCalledWith(
+      'The watch log could not be imported. Your library is still up to date.',
+    );
+    expect(push).toHaveBeenCalledWith('/anime/library');
   });
 });
 

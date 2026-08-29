@@ -190,17 +190,17 @@ export function buildMonthlyGrid(
   };
 }
 
-export const MONTH_ABBREVIATIONS = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-] as const;
+/**
+ * Re-exported, no longer defined here.
+ *
+ * It moved to `src/lib/format-date.ts` because the dependency ran the wrong
+ * way: that module is declared shared ("framework-free helpers usable from
+ * BOTH server and client") and yet imported this one, so every module that
+ * wanted `formatHumanDate` — Games' release dates, now Anime's watch log —
+ * pulled a Finance domain module in behind it. Twelve month names are not a
+ * fact about money.
+ *
+ * The re-export keeps every existing `@/server/finance/grid` import working;
+ * nothing in Finance had to change.
+ */
+export { MONTH_ABBREVIATIONS } from '@/lib/format-date';

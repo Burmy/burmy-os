@@ -11,8 +11,9 @@ import {
   planLinkedAnimeChanges,
   planNewAnimeChange,
 } from '@/server/anime/sync-plan';
-import { anilistConfigured, fetchAnimeList } from '@/server/db/anime/anilist-client';
-import { countAnime, listAnimeChunk, listLinkedAnilistIds } from '@/server/db/anime/anime';
+import { anilistConfigured, fetchActivities, fetchAnimeList } from '@/server/db/anime/anilist-client';
+import { countAnime, listAnimeChunk, listAnilistIdMap, listLinkedAnilistIds } from '@/server/db/anime/anime';
+import { insertWatchLogEntries } from '@/server/db/anime/watch-log';
 import {
   AnimeSyncRunAlreadyCommittedError,
   AnimeSyncRunNotFoundError,
@@ -179,6 +180,76 @@ export async function advanceAnimeSyncAction(
     }
     return { error: message };
   }
+}
+
+/**
+ * Imports the AniList activity feed into `anime_watch_log`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WRITES DIRECTLY. Nothing here is staged for approval, and that is the same
+ * carve-out trophies get in `psn-actions.ts`: a dated fact about the past has
+ * no owner-authored counterpart to overwrite, so a review step would be asking
+ * the owner to ratify reality. Everything the sync PROPOSES still goes through
+ * the review screen.
+ *
+ * RUN AFTER THE COMMIT, NOT BEFORE. A log row needs an `anime.id`, and the
+ * shows a first sync creates do not exist until the owner applies the run — so
+ * importing first would silently drop every activity for a new show. The button
+ * calls this once the commit succeeds.
+ *
+ * An activity for a show that is STILL not in the library is skipped rather
+ * than creating one. AniList's feed reaches back further than the list does
+ * (a removed entry keeps its activity), and inventing a library row from a log
+ * line would resurrect a show the owner deliberately deleted.
+ *
+ * NEVER FAILS THE SYNC. Like `advanceSyncEnrichmentAction` in the Games engine,
+ * this is a best-effort extra: the library is already correct without it, and a
+ * failed feed must not make a successful sync look broken.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export async function importAnimeActivityAction(): Promise<
+  { readonly ok: true; readonly imported: number; readonly skipped: number } | { readonly ok: false; readonly error: string }
+> {
+  const owner = await requireOwner();
+
+  if (!anilistConfigured()) {
+    return { ok: false, error: 'AniList is not configured. Set ANILIST_USERNAME to your AniList username.' };
+  }
+
+  const activities = await fetchActivities();
+  if (activities === null) {
+    return { ok: false, error: 'Could not read your AniList activity feed. The library itself is up to date.' };
+  }
+
+  const byMediaId = await listAnilistIdMap(owner.userId);
+
+  let skipped = 0;
+  const rows = activities.flatMap((activity) => {
+    const animeId = byMediaId.get(activity.mediaId);
+    if (animeId === undefined) {
+      skipped += 1;
+      return [];
+    }
+
+    return [
+      {
+        animeId,
+        anilistActivityId: activity.activityId,
+        // AniList stamps activities in whole seconds since the epoch.
+        watchedAt: new Date(activity.createdAt * 1000),
+        episode: activity.progress,
+        // `progress` when an episode number came through, `status` for a bare
+        // "completed"/"dropped" entry. Stored as text, so an unknown future
+        // kind degrades instead of failing the import.
+        kind: activity.progress === null ? 'status' : 'progress',
+      },
+    ];
+  });
+
+  const imported = await insertWatchLogEntries(owner.userId, rows);
+
+  revalidatePath('/anime', 'layout');
+  return { ok: true, imported, skipped };
 }
 
 export async function setAnimeSyncChangeSelectedAction(

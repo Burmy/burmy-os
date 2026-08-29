@@ -10,7 +10,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, count, desc, eq, gt, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, isNotNull, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { anime as animeTable, animeSeries } from '@/server/db/schema';
@@ -252,6 +252,23 @@ export async function listLinkedAnilistIds(ownerId: string): Promise<Set<number>
 // ─────────────────────────────────────────────────────────────────────────────
 // Series
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * AniList media id → this library's row id, for the activity import.
+ *
+ * A map rather than the `Set` `listLinkedAnilistIds` returns: the import needs
+ * to know WHICH row an activity belongs to, not merely that one exists.
+ */
+export async function listAnilistIdMap(ownerId: string): Promise<Map<number, string>> {
+  const rows = await getDb()
+    .select({ id: animeTable.id, anilistMediaId: animeTable.anilistMediaId })
+    .from(animeTable)
+    .where(and(eq(animeTable.ownerId, ownerId), isNotNull(animeTable.anilistMediaId)));
+
+  return new Map(
+    rows.flatMap((row) => (row.anilistMediaId === null ? [] : [[row.anilistMediaId, row.id] as const])),
+  );
+}
 
 export interface AnimeSeriesRow {
   readonly id: string;

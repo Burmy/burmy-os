@@ -5,9 +5,13 @@ import { AnimePage } from '@/features/anime/show/anime-page';
 import { isUuid } from '@/lib/uuid';
 import { requireOwner } from '@/server/auth/owner';
 import { type Anime, type AnimeSeriesRow, getAnime, listSeries } from '@/server/db/anime/anime';
+import { type WatchLogEntry, listWatchLogForAnime } from '@/server/db/anime/watch-log';
 import { AnimeNotFoundError } from '@/server/db/anime/errors';
 
 export const metadata: Metadata = { title: 'Show — Burmy' };
+
+/** How many history entries this page shows. The Log tab holds the complete record. */
+const HISTORY_LIMIT = 100;
 
 /**
  * The per-show page. A sibling of `(tabs)/` and `sync/[runId]/` rather than
@@ -37,8 +41,15 @@ export default async function AnimeDetailPage({
   // rejects the shape outright rather than letting it look like it works.
   let anime: Anime;
   let allSeries: AnimeSeriesRow[];
+  let history: WatchLogEntry[];
   try {
-    [anime, allSeries] = await Promise.all([getAnime(owner.userId, id), listSeries(owner.userId)]);
+    [anime, allSeries, history] = await Promise.all([
+      getAnime(owner.userId, id),
+      listSeries(owner.userId),
+      // Capped: a 1,000-episode show's full history is not something anyone
+      // reads to the bottom of, and the Log tab holds the complete record.
+      listWatchLogForAnime(owner.userId, id, HISTORY_LIMIT),
+    ]);
   } catch (error) {
     if (error instanceof AnimeNotFoundError) notFound();
     throw error;
@@ -51,6 +62,7 @@ export default async function AnimeDetailPage({
       anime={anime}
       series={series === null ? null : { id: series.id, title: series.title }}
       seriesOptions={allSeries.map((row) => ({ id: row.id, title: row.title }))}
+      history={history}
     />
   );
 }
