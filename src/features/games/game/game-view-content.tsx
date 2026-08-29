@@ -14,6 +14,8 @@ import {
 } from '@/features/games/play-years-panel';
 import { GAME_OWNERSHIPS, OWNERSHIP_LABELS } from '@/server/games/taxonomy';
 import type { GameOwnership } from '@/server/games/taxonomy';
+import type { CollectionTrophySummary } from '@/server/games/collections';
+import { CollectionField } from '@/features/games/collections/collection-field';
 import { InlineEditField, InlineEditSelect } from './inline-edit-row';
 
 /**
@@ -75,6 +77,7 @@ export function GameDetailsContent({
   firstPlayedYear,
   achievementsUnlocked,
   achievementsTotal,
+  trophyRollup,
   steamOwned,
   notes,
   hoursTenths,
@@ -95,6 +98,11 @@ export function GameDetailsContent({
   readonly firstPlayedYear: number | null;
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
+  /**
+   * Present only on a COLLECTION row: what its members add up to, or its own
+   * unsplit lump when none of them carries anything yet. See `rollUpTrophies`.
+   */
+  readonly trophyRollup?: CollectionTrophySummary;
   readonly steamOwned: boolean;
   readonly notes: string | null;
   readonly hoursTenths: number | null;
@@ -119,6 +127,16 @@ export function GameDetailsContent({
   const ownedByCollection = isCollectionMember;
   const collectionHint = 'From the collection';
 
+  // A collection reports its members' sum, read-only; the members are where
+  // the numbers are edited. `unsplit` means no member carries anything yet,
+  // so the collection's own imported lump is still the best figure there is —
+  // shown, and labelled as covering the whole set rather than one game.
+  const summedFromMembers = trophyRollup !== undefined && !trophyRollup.unsplit && trophyRollup.unlocked !== null;
+  const unsplitLump = trophyRollup?.unsplit === true;
+  const memberSumHint = 'Added up from the games in this collection';
+  const rolledUnlocked = summedFromMembers ? trophyRollup.unlocked : achievementsUnlocked;
+  const rolledTotal = summedFromMembers ? trophyRollup.total : achievementsTotal;
+
   return (
     <div className="space-y-4">
       <Section>
@@ -126,15 +144,10 @@ export function GameDetailsContent({
             rule), so a row that holds games gets no picker at all rather
             than a disabled control implying it might one day be allowed. */}
         {isCollection ? null : (
-          <InlineEditSelect
-            label="Part of"
-            value={collection?.id ?? ''}
-            displayValue={collection?.title ?? ''}
-            options={[
-              { value: '', label: 'Not in a collection' },
-              ...collectionOptions.map((option) => ({ value: option.id, label: option.title })),
-            ]}
-            onSave={onSaveCollection}
+          <CollectionField
+            collection={collection}
+            options={collectionOptions}
+            onSave={(collectionId) => onSaveCollection(collectionId ?? '')}
           />
         )}
         <InlineEditSelect
@@ -186,20 +199,38 @@ export function GameDetailsContent({
             owner looking for a Steam link that does not exist. Steam wins
             when somehow both apply, since that is the one that actually
             rewrites the value on every sync. */}
+        {/* ACHIEVEMENTS ARE THE ONE FIELD A COLLECTION MEMBER OWNS.
+            Hours and price are the SET's — one purchase, one play time, and
+            no API can split either. Trophies are different, and PSN is the
+            evidence: `getUserTitles` returns a SEPARATE trophy list per
+            remastered game, each with its own platinum, while
+            `getUserPlayedGames` returns one cumulative playDuration for the
+            whole product. So a member is editable here and a collection
+            reports what its members add up to. See `rollUpTrophies`. */}
         <InlineEditField
           label="Achievements earned"
-          value={achievementsUnlocked === null ? '' : String(achievementsUnlocked)}
+          value={rolledUnlocked === null ? '' : String(rolledUnlocked)}
           placeholder="Not tracked"
-          disabled={steamOwned || ownedByCollection}
-          disabledHint={steamOwned ? 'From Steam' : collectionHint}
+          disabled={steamOwned || summedFromMembers}
+          {...(steamOwned
+            ? { disabledHint: 'From Steam' }
+            : summedFromMembers
+              ? { disabledHint: memberSumHint }
+              : {})}
           onSave={(value) => onSaveField('achievementsUnlocked', value)}
         />
         <InlineEditField
           label="Achievements total"
-          value={achievementsTotal === null ? '' : String(achievementsTotal)}
+          value={rolledTotal === null ? '' : String(rolledTotal)}
           placeholder="Not tracked"
-          disabled={steamOwned || ownedByCollection}
-          disabledHint={steamOwned ? 'From Steam' : collectionHint}
+          disabled={steamOwned || summedFromMembers}
+          {...(steamOwned
+            ? { disabledHint: 'From Steam' }
+            : summedFromMembers
+              ? { disabledHint: memberSumHint }
+              : unsplitLump
+                ? { hint: 'Covers the whole set — not yet split per game' }
+                : {})}
           onSave={(value) => onSaveField('achievementsTotal', value)}
         />
         {/* A play-year split apportions a game's OWN total across years. A

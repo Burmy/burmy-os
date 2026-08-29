@@ -71,12 +71,15 @@ import {
   getSyncRunLibrary,
   listSyncChanges,
 } from '@/server/db/games/sync';
-import { bestTitleMatchAmong } from '@/server/games/metadata';
 import { npServiceNameForPlatform } from '@/server/games/psn';
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
 import {
   dedupePlayedTitles,
+  planCollectionMemberTrophyChanges,
   planLinkedPsnGameChanges,
+  resolvePlayedTitle,
+  resolvePsnSyncTargets,
+  resolveTrophyTitle,
   planNewPsnGameChange,
   type StoredGameForPsnSync,
 } from '@/server/games/psn-plan';
@@ -142,63 +145,6 @@ function parsePsnSnapshot(value: unknown): PsnSnapshot {
     playedTitles: Array.isArray(record.playedTitles) ? (record.playedTitles as PsnPlayedTitle[]) : [],
     trophyTitles: Array.isArray(record.trophyTitles) ? (record.trophyTitles as PsnTrophyTitle[]) : [],
   };
-}
-
-/**
- * The played title this stored game resolves to against the run's snapshot,
- * or `null` when PSN does not own it. See the module header — STORED
- * `psnTitleId` always wins over a fresh match when present.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * AN UNLINKED PSP ROW NEVER FALLS THROUGH TO THE NAME MATCH
- *
- * `categoryToPlatform` (`src/server/games/psn.ts`) can never legitimately
- * resolve `'psp'` — PSN's trophy system postdates the PSP entirely, so no
- * response it returns is genuinely a PSP title. That means an UNLINKED
- * `platform === 'psp'` row can never have a real fresh match in PSN's
- * played-titles list — any name match it scores is necessarily a
- * COINCIDENCE, not a real link. Sony has re-released several PSP-era games
- * (e.g. "Persona 3 Portable") on PS4/PS5 under the IDENTICAL title, so
- * without this guard a plain name match against the whole list would
- * confidently — and wrongly — link the PSP row to that unrelated PS4/PS5
- * release, staging a `platform` flip straight through the very column
- * `categoryToPlatform` was hardened to protect. This is checked HERE,
- * before the fallback runs, rather than by filtering `playedTitles` by
- * platform for every game: doing it here keeps ps4/ps5 matching completely
- * unchanged and makes the PSP case a single, auditable early return. See
- * `tests/integration/games-psn-actions.test.ts`'s named collision test.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-function resolvePlayedTitle(
-  game: { readonly title: string; readonly platform: GamePlatform; readonly psnTitleId: string | null },
-  playedTitles: readonly PsnPlayedTitle[],
-): PsnPlayedTitle | null {
-  if (game.psnTitleId !== null) {
-    return playedTitles.find((entry) => entry.titleId === game.psnTitleId) ?? null;
-  }
-  if (game.platform === 'psp') return null;
-  return bestTitleMatchAmong(game.title, playedTitles, (entry) => entry.name)?.candidate ?? null;
-}
-
-/**
- * The trophy title this stored game resolves to, or `null` when no
- * confident match exists. STORED `psnNpCommunicationId` always wins over a
- * fresh match when present; otherwise the match is BY NAME against the
- * resolved played title's own name (PSN's own naming, more likely to agree
- * with its trophy list than the owner's possibly-edited stored title) —
- * falling back to the stored title only when no played title resolved at
- * all. `bestTitleMatchAmong`'s `SIMILARITY_FLOOR` is never bypassed.
- */
-function resolveTrophyTitle(
-  game: { readonly title: string; readonly psnNpCommunicationId: string | null },
-  playedTitle: PsnPlayedTitle | null,
-  trophyTitles: readonly PsnTrophyTitle[],
-): PsnTrophyTitle | null {
-  if (game.psnNpCommunicationId !== null) {
-    return trophyTitles.find((entry) => entry.npCommunicationId === game.psnNpCommunicationId) ?? null;
-  }
-  const nameToMatch = playedTitle?.name ?? game.title;
-  return bestTitleMatchAmong(nameToMatch, trophyTitles, (entry) => entry.name)?.candidate ?? null;
 }
 
 /**
@@ -358,10 +304,19 @@ export async function advancePsnSyncAction(runId: string): Promise<PsnSyncProgre
 
     const changes: PlannedChange[] = [];
     for (const game of chunk) {
-      const played = resolvePlayedTitle(game, playedTitles);
-      if (played === null) continue; // PSN does not own this game — stage nothing, move on.
-
-      const trophy = resolveTrophyTitle(game, played, trophyTitles);
+      // ─────────────────────────────────────────────────────────────────────
+      // A COLLECTION MEMBER IS TROPHY-ONLY, AND NEVER REACHES A NAME MATCH.
+      //
+      // It is in this chunk at all only because it carries its own
+      // `psnNpCommunicationId` (see `PSN_SYNC_SCOPE`). Skipping
+      // `resolvePlayedTitle` for it is what keeps the original blindness rule
+      // intact: with no played title there is no hours, platform or
+      // lastPlayedAt value in existence to propose, so the SET's play time
+      // cannot be written onto one of its titles and counted twice.
+      // ─────────────────────────────────────────────────────────────────────
+      const targets = resolvePsnSyncTargets(game, playedTitles, trophyTitles);
+      if (targets === null) continue; // PSN has nothing for this game — stage nothing, move on.
+      const { played, trophy } = targets;
 
       const stored: StoredGameForPsnSync = {
         id: game.id,
@@ -378,7 +333,11 @@ export async function advancePsnSyncAction(runId: string): Promise<PsnSyncProgre
         playYearTenths: playYearSums.get(game.id) ?? null,
       };
 
-      changes.push(...planLinkedPsnGameChanges(stored, played, trophy));
+      changes.push(
+        ...(played === null
+          ? planCollectionMemberTrophyChanges(stored, trophy)
+          : planLinkedPsnGameChanges(stored, played, trophy)),
+      );
 
       // ─────────────────────────────────────────────────────────────────────
       // TROPHIES ARE WRITTEN HERE, DIRECTLY — NOT STAGED AS A PROPOSED CHANGE.

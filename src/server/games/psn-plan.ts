@@ -35,7 +35,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { normalizeGameTitle } from './metadata';
+import { bestTitleMatchAmong, normalizeGameTitle } from './metadata';
 import type { PsnPlayedTitle, PsnTrophyTitle } from './psn';
 import type { PlannedChange, SyncChangeKind } from './sync-plan';
 import type { GamePlatform } from './taxonomy';
@@ -197,28 +197,74 @@ export function planLinkedPsnGameChanges(
     );
   }
 
-  if (trophyTitle !== null) {
-    if (trophyTitle.earned !== stored.achievementsUnlocked) {
-      changes.push(
-        describe('field_update', {
-          field: 'achievementsUnlocked',
-          from: stored.achievementsUnlocked,
-          to: trophyTitle.earned,
-        }),
-      );
-    }
-    if (trophyTitle.total !== stored.achievementsTotal) {
-      changes.push(
-        describe('field_update', { field: 'achievementsTotal', from: stored.achievementsTotal, to: trophyTitle.total }),
-      );
-    }
-    // See the module header — PSN, and only PSN, may write this column.
-    if (trophyTitle.platinum !== stored.platinum) {
-      changes.push(describe('field_update', { field: 'platinum', from: stored.platinum, to: trophyTitle.platinum }));
-    }
+  if (trophyTitle !== null) changes.push(...trophyFieldChanges(describe, stored, trophyTitle));
+
+  return changes;
+}
+
+/** The three trophy columns a PSN trophy title can propose. Shared with `planCollectionMemberTrophyChanges`, which proposes ONLY these. */
+function trophyFieldChanges(
+  describe: (kind: SyncChangeKind, payload: Record<string, unknown>) => PlannedChange,
+  stored: StoredGameForPsnSync,
+  trophyTitle: PsnTrophyTitle,
+): PlannedChange[] {
+  const changes: PlannedChange[] = [];
+
+  if (trophyTitle.earned !== stored.achievementsUnlocked) {
+    changes.push(
+      describe('field_update', {
+        field: 'achievementsUnlocked',
+        from: stored.achievementsUnlocked,
+        to: trophyTitle.earned,
+      }),
+    );
+  }
+  if (trophyTitle.total !== stored.achievementsTotal) {
+    changes.push(
+      describe('field_update', { field: 'achievementsTotal', from: stored.achievementsTotal, to: trophyTitle.total }),
+    );
+  }
+  // See the module header — PSN, and only PSN, may write this column.
+  if (trophyTitle.platinum !== stored.platinum) {
+    changes.push(describe('field_update', { field: 'platinum', from: stored.platinum, to: trophyTitle.platinum }));
   }
 
   return changes;
+}
+
+/**
+ * TROPHIES, AND NOTHING ELSE, FOR A TITLE INSIDE A COLLECTION.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A collection member is otherwise invisible to both sync engines, because a
+ * name match would write the SET's hours onto one of its titles and count the
+ * same play time twice. That rule was written once and applied to everything,
+ * and for hours and price it is exactly right.
+ *
+ * It is wrong for trophies, and PSN is the evidence: `getUserPlayedGames`
+ * returns ONE entry for The Nathan Drake Collection with one cumulative
+ * `playDuration`, while `getUserTitles` returns THREE, one per remastered
+ * game, each with its own `npCommunicationId` and its own platinum. The
+ * trophies really do belong to the individual titles.
+ *
+ * So a member participates, but only through its OWN `psnNpCommunicationId` —
+ * never through `resolvePlayedTitle`, never through a name match. That is what
+ * makes this safe: with no played title in play, there is no hours value, no
+ * platform and no `lastPlayedAt` to propose, so the double-count the original
+ * rule prevents remains impossible by construction rather than by care.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function planCollectionMemberTrophyChanges(
+  stored: StoredGameForPsnSync,
+  trophyTitle: PsnTrophyTitle | null,
+): PlannedChange[] {
+  if (trophyTitle === null) return [];
+
+  return trophyFieldChanges(
+    (kind, payload) => ({ kind, gameId: stored.id, title: stored.title, payload }),
+    stored,
+    trophyTitle,
+  );
 }
 
 /**
@@ -249,4 +295,109 @@ export function planNewPsnGameChange(playedTitle: PsnPlayedTitle, trophyTitle: P
   };
 
   return { kind: 'new_game', gameId: null, title: playedTitle.name, payload };
+}
+
+/**
+ * The played title this stored game resolves to against the run's snapshot,
+ * or `null` when PSN does not own it. See the module header — STORED
+ * `psnTitleId` always wins over a fresh match when present.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AN UNLINKED PSP ROW NEVER FALLS THROUGH TO THE NAME MATCH
+ *
+ * `categoryToPlatform` (`src/server/games/psn.ts`) can never legitimately
+ * resolve `'psp'` — PSN's trophy system postdates the PSP entirely, so no
+ * response it returns is genuinely a PSP title. That means an UNLINKED
+ * `platform === 'psp'` row can never have a real fresh match in PSN's
+ * played-titles list — any name match it scores is necessarily a
+ * COINCIDENCE, not a real link. Sony has re-released several PSP-era games
+ * (e.g. "Persona 3 Portable") on PS4/PS5 under the IDENTICAL title, so
+ * without this guard a plain name match against the whole list would
+ * confidently — and wrongly — link the PSP row to that unrelated PS4/PS5
+ * release, staging a `platform` flip straight through the very column
+ * `categoryToPlatform` was hardened to protect. This is checked HERE,
+ * before the fallback runs, rather than by filtering `playedTitles` by
+ * platform for every game: doing it here keeps ps4/ps5 matching completely
+ * unchanged and makes the PSP case a single, auditable early return. See
+ * `tests/integration/games-psn-actions.test.ts`'s named collision test.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export function resolvePlayedTitle(
+  game: { readonly title: string; readonly platform: GamePlatform; readonly psnTitleId: string | null },
+  playedTitles: readonly PsnPlayedTitle[],
+): PsnPlayedTitle | null {
+  if (game.psnTitleId !== null) {
+    return playedTitles.find((entry) => entry.titleId === game.psnTitleId) ?? null;
+  }
+  if (game.platform === 'psp') return null;
+  return bestTitleMatchAmong(game.title, playedTitles, (entry) => entry.name)?.candidate ?? null;
+}
+
+/**
+ * The trophy title this stored game resolves to, or `null` when no
+ * confident match exists. STORED `psnNpCommunicationId` always wins over a
+ * fresh match when present; otherwise the match is BY NAME against the
+ * resolved played title's own name (PSN's own naming, more likely to agree
+ * with its trophy list than the owner's possibly-edited stored title) —
+ * falling back to the stored title only when no played title resolved at
+ * all. `bestTitleMatchAmong`'s `SIMILARITY_FLOOR` is never bypassed.
+ */
+export function resolveTrophyTitle(
+  game: { readonly title: string; readonly psnNpCommunicationId: string | null },
+  playedTitle: PsnPlayedTitle | null,
+  trophyTitles: readonly PsnTrophyTitle[],
+): PsnTrophyTitle | null {
+  if (game.psnNpCommunicationId !== null) {
+    return trophyTitles.find((entry) => entry.npCommunicationId === game.psnNpCommunicationId) ?? null;
+  }
+  const nameToMatch = playedTitle?.name ?? game.title;
+  return bestTitleMatchAmong(nameToMatch, trophyTitles, (entry) => entry.name)?.candidate ?? null;
+}
+
+/**
+ * WHICH PSN DATA THIS STORED GAME SHOULD BE PLANNED AGAINST, or `null` to skip it.
+ *
+ * The whole member/non-member decision lives here, in a pure function, rather
+ * than inline in the sync loop — because the property it enforces is the one
+ * that must not silently regress:
+ *
+ *   A COLLECTION MEMBER NEVER RESOLVES A PLAYED TITLE.
+ *
+ * A member reaches the sync only by carrying its own `psnNpCommunicationId`
+ * (`PSN_SYNC_SCOPE`), and here it is matched by that identifier alone. It never
+ * goes near `bestTitleMatchAmong`, so it cannot score against its own
+ * collection's played title, so there is no hours/platform/lastPlayedAt value
+ * in existence for the planner to propose. The set's play time therefore cannot
+ * be written onto one of its titles and counted twice — by construction, not by
+ * remembering to check.
+ *
+ * Living in the sync loop, that branch was untestable: the loop needs a
+ * database, a run snapshot and PSN. A mutation flipping `isMember` to `false`
+ * passed the entire suite.
+ */
+export function resolvePsnSyncTargets(
+  game: {
+    readonly title: string;
+    readonly platform: GamePlatform;
+    readonly psnTitleId: string | null;
+    readonly psnNpCommunicationId: string | null;
+    /** Non-null for a title inside a collection. */
+    readonly collectionId: string | null;
+  },
+  playedTitles: readonly PsnPlayedTitle[],
+  trophyTitles: readonly PsnTrophyTitle[],
+): { readonly played: PsnPlayedTitle | null; readonly trophy: PsnTrophyTitle | null } | null {
+  if (game.collectionId !== null) {
+    // Identifier only. No name match, no played title, ever.
+    const trophy =
+      game.psnNpCommunicationId === null
+        ? null
+        : (trophyTitles.find((entry) => entry.npCommunicationId === game.psnNpCommunicationId) ?? null);
+    return trophy === null ? null : { played: null, trophy };
+  }
+
+  const played = resolvePlayedTitle(game, playedTitles);
+  if (played === null) return null; // PSN does not own this game.
+
+  return { played, trophy: resolveTrophyTitle(game, played, trophyTitles) };
 }

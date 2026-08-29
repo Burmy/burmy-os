@@ -165,3 +165,113 @@ describe('GameTable open feedback', () => {
     expect(screen.queryByRole('row', { busy: true })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Selection mode, used by the library's "Add to collection" bulk bar.
+ *
+ * The rule worth pinning is that selecting and OPENING are different intents
+ * on the same row: in selection mode the row toggles, but the title link
+ * still navigates — otherwise turning the mode on would leave no way to reach
+ * a game's page from the table at all.
+ */
+describe('GameTable selection', () => {
+  const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
+  const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
+
+  it('renders no checkbox column at all unless selection is wired up', () => {
+    render(<GameTable openingId={null} groups={[solo()]} onOpen={vi.fn()} />);
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+  });
+
+  it('offers a checkbox for the collection and for each member', () => {
+    render(
+      <GameTable
+        openingId={null}
+        groups={[{ game: collection, members }]}
+        onOpen={vi.fn()}
+        selectedIds={[]}
+        onToggleSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Select Nathan Drake Collection' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select Drake 1' })).toBeInTheDocument();
+  });
+
+  it('reflects which rows are already selected', () => {
+    render(
+      <GameTable
+        openingId={null}
+        groups={[{ game: collection, members }]}
+        onOpen={vi.fn()}
+        selectedIds={['uc1']}
+        onToggleSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Select Drake 1' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select Nathan Drake Collection' })).not.toBeChecked();
+  });
+
+  it('toggles rather than navigating when the row is clicked in selection mode', async () => {
+    const onOpen = vi.fn();
+    const onToggleSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <GameTable
+        openingId={null}
+        groups={[solo()]}
+        onOpen={onOpen}
+        selectedIds={[]}
+        onToggleSelect={onToggleSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole('row', { name: /Elden Ring/ }));
+
+    expect(onToggleSelect).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('still opens the game from the title link while selecting', async () => {
+    // Without this, switching on selection mode strands the owner: every row
+    // toggles and nothing reaches a game's page.
+    const onOpen = vi.fn();
+    const onToggleSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <GameTable
+        openingId={null}
+        groups={[solo()]}
+        onOpen={onOpen}
+        selectedIds={[]}
+        onToggleSelect={onToggleSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Elden Ring' }));
+
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
+    expect(onToggleSelect).not.toHaveBeenCalled();
+  });
+
+  it('toggles from the checkbox without also firing the row', async () => {
+    const onOpen = vi.fn();
+    const onToggleSelect = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <GameTable
+        openingId={null}
+        groups={[solo()]}
+        onOpen={onOpen}
+        selectedIds={[]}
+        onToggleSelect={onToggleSelect}
+      />,
+    );
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select Elden Ring' }));
+
+    expect(onToggleSelect).toHaveBeenCalledTimes(1);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+});

@@ -1,7 +1,6 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ExternalLink, Loader2, Trash2 } from 'lucide-react';
 import { useEffect, useState, useTransition } from 'react';
@@ -14,10 +13,8 @@ import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
 import type { PlayYearDraft } from '@/features/games/play-years-panel';
-import { RatingStars } from '@/components/games/rating-stars';
-import { StatusBadge } from '@/components/games/status-badge';
 import type { CollectionMember, Game } from '@/server/db/games/games';
-import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import { rollUpTrophies } from '@/server/games/collections';
 import type { Trophy } from '@/server/games/trophies';
 import type { GameSuggestion } from '@/server/games/metadata';
 import {
@@ -29,6 +26,7 @@ import {
   updateGamePlayYearsAction,
 } from '../game-actions';
 import { searchGameMetadataAction } from '../metadata-actions';
+import { CollectionMembersPanel } from '@/features/games/collections/collection-members-panel';
 import { GameDetailsContent } from './game-view-content';
 import { GameSummaryPanel } from './game-summary-panel';
 import { TrophiesSection } from './trophies-section';
@@ -59,6 +57,7 @@ export function GamePage({
   members,
   collection,
   collectionOptions,
+  collectionCandidates,
 }: {
   readonly game: Game;
   /**
@@ -73,6 +72,8 @@ export function GamePage({
   readonly collection: { readonly id: string; readonly title: string } | null;
   /** Rows this game could be filed into — see `listCollectionOptions`. */
   readonly collectionOptions: readonly { readonly id: string; readonly title: string }[];
+  /** Games that could be added INTO this one — see `listCollectionCandidates`. The other direction. */
+  readonly collectionCandidates: readonly { readonly id: string; readonly title: string; readonly subtitle?: string }[];
 }): React.ReactElement {
   const router = useRouter();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -167,6 +168,7 @@ export function GamePage({
             firstPlayedYear={game.firstPlayedYear}
             achievementsUnlocked={game.achievementsUnlocked}
             achievementsTotal={game.achievementsTotal}
+            {...(isCollection ? { trophyRollup: rollUpTrophies(game, members) } : {})}
             steamOwned={steamOwned}
             notes={game.notes}
             hoursTenths={game.hoursTenths}
@@ -182,21 +184,22 @@ export function GamePage({
         </div>
       </div>
 
-      {isCollection ? (
+      {/* Shown once a row HOLDS games, and also on any row that could — a
+          collection only comes into existence when the first game is filed
+          into it, so a panel that appeared only for existing collections
+          would be unreachable for every set the owner has yet to build.
+          `isCollectionMember` is the one exclusion: a row inside a set
+          cannot itself hold one (the one-level rule). */}
+      {isCollectionMember ? null : (
         <div className="mt-8">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-muted-foreground text-xs font-medium">Games in this collection</h2>
-            <span className="text-muted-foreground text-xs">
-              {members.length} game{members.length === 1 ? '' : 's'}
-            </span>
-          </div>
-          {/* The hours, price and trophies above cover this whole set — one
-              purchase, one play time — so each row here shows only what is
-              genuinely its own: its art, its year, and the owner's rating of
-              that specific game. */}
-          <CollectionMembers members={members} />
+          <CollectionMembersPanel
+            collectionId={game.id}
+            collectionTitle={game.title}
+            members={members}
+            candidates={collectionCandidates}
+          />
         </div>
-      ) : null}
+      )}
 
       {/* Shown whenever the game is PSN/Steam-linked, even with zero stored
           rows — `TrophiesSection`'s empty state is what tells the owner to run
@@ -235,61 +238,6 @@ export function GamePage({
         onConfirm={remove}
       />
     </>
-  );
-}
-
-/**
- * The games inside a collection.
- *
- * A plain list of links, not cards: each row already has its own page (this
- * exact component, one level along), and the point here is to make the set's
- * contents scannable and reachable — not to rebuild the library gallery
- * inside a detail page.
- *
- * Deliberately shows NO hours, price or trophies. Those live on the
- * collection above and describe the whole set; repeating them per row would
- * either be a lie (each game did not cost £22.90) or a blank column on every
- * line. What IS shown is what genuinely belongs to the individual game: its
- * art, its platform, the year it was played, and the owner's own rating of
- * it — the fields the flattened import left empty and that this whole
- * feature exists to give back.
- */
-function CollectionMembers({ members }: { readonly members: readonly CollectionMember[] }): React.ReactElement {
-  return (
-    <ul className="bg-card divide-y rounded-md px-4">
-      {members.map((member) => (
-        <li key={member.id}>
-          <Link
-            href={`/games/${member.id}`}
-            className="hover:bg-muted/50 -mx-2 flex items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors"
-          >
-            <span className="bg-muted relative h-12 w-9 shrink-0 overflow-hidden rounded-md">
-              {member.coverUrl === null ? (
-                <span
-                  className="text-muted-foreground/50 flex h-full items-center justify-center text-xs font-semibold"
-                  aria-hidden
-                >
-                  {member.title.trim().charAt(0).toUpperCase()}
-                </span>
-              ) : (
-                <Image src={member.coverUrl} alt="" fill sizes="36px" className="object-cover" />
-              )}
-            </span>
-
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium">{member.title}</span>
-              <span className="text-muted-foreground block text-xs">
-                {PLATFORM_LABELS[member.platform]}
-                {member.firstPlayedYear === null ? '' : ` · ${member.firstPlayedYear}`}
-              </span>
-            </span>
-
-            <StatusBadge status={member.status} />
-            <RatingStars rating={member.rating} />
-          </Link>
-        </li>
-      ))}
-    </ul>
   );
 }
 

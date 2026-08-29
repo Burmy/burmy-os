@@ -11,10 +11,11 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
+import { trophyAdjustedRows } from '@/server/games/collections';
 import type { GameStatRow } from '@/server/games/stats';
 import type { GameOwnership, GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import {
@@ -315,12 +316,23 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), ne(gamesTable.status, 'wanted')));
 
-  return rows.map((row) => ({
-    ...row,
-    platform: row.platform as GamePlatform,
-    ownership: row.ownership as GameOwnership | null,
-    status: row.status as GameStatus,
-  }));
+  // TROPHIES ARE ADJUSTED HERE, AT THE SAME BOUNDARY `wanted` IS FILTERED,
+  // and for the same reason its own doc comment gives: six call sites is six
+  // chances to forget one, and a stat function added later would silently
+  // miss the rule. A collection whose members carry their own trophies stops
+  // contributing its (now superseded) lump, so no achievement is counted
+  // twice — see `trophyAdjustedRows` for the double-count this prevents.
+  //
+  // HOURS AND MONEY ARE NOT TOUCHED. A member carries NULL for both, so those
+  // sums are already correct and the collection is genuinely where they live.
+  return trophyAdjustedRows(
+    rows.map((row) => ({
+      ...row,
+      platform: row.platform as GamePlatform,
+      ownership: row.ownership as GameOwnership | null,
+      status: row.status as GameStatus,
+    })),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -503,6 +515,15 @@ export interface CollectionMember {
   readonly status: GameStatus;
   readonly rating: number | null;
   readonly firstPlayedYear: number | null;
+  /**
+   * A member's OWN trophies. Carried because trophies, unlike hours and price,
+   * genuinely belong to the individual title — PSN gives the Nathan Drake
+   * Collection three separate trophy lists and one cumulative playDuration.
+   * The collection's page sums these; see `rollUpTrophies`.
+   */
+  readonly achievementsUnlocked: number | null;
+  readonly achievementsTotal: number | null;
+  readonly platinum: boolean;
 }
 
 /** The games inside one collection, alphabetical — a boxed set has a running order, but the database does not know it. */
@@ -519,6 +540,9 @@ export async function listCollectionMembers(
       status: gamesTable.status,
       rating: gamesTable.rating,
       firstPlayedYear: gamesTable.firstPlayedYear,
+      achievementsUnlocked: gamesTable.achievementsUnlocked,
+      achievementsTotal: gamesTable.achievementsTotal,
+      platinum: gamesTable.platinum,
     })
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), eq(gamesTable.collectionId, collectionId)))
@@ -616,6 +640,84 @@ export async function setGameCollection(
   if (!updated[0]) throw new GameNotFoundError();
 }
 
+/**
+ * Files SEVERAL games into one collection at once — the collection page's
+ * "Add games" picker and the library's multi-select both land here.
+ *
+ * Every id is validated against the same one-level rule a single filing goes
+ * through, and the whole batch is one transaction: filing eight games and
+ * having the fifth fail must not leave four filed and four not, with no
+ * indication of where it stopped. Either the set the owner picked is in, or
+ * nothing moved and the error names the game that blocked it.
+ *
+ * Already-filed rows are not an error and are not rewritten — re-adding a
+ * game that is already in this collection is a no-op, so the picker can show
+ * current members as checked without every confirm re-writing them.
+ */
+export async function setCollectionForGames(
+  ownerId: string,
+  gameIds: readonly string[],
+  collectionId: string,
+): Promise<number> {
+  if (gameIds.length === 0) return 0;
+
+  for (const gameId of gameIds) {
+    await assertCollectionTargetValid(ownerId, gameId, collectionId);
+  }
+
+  const updated = await getDb()
+    .update(gamesTable)
+    .set({ collectionId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        inArray(gamesTable.id, [...gameIds]),
+        // `IS DISTINCT FROM`, not `<>` — a NULL `collection_id` (the normal
+        // case for a game being filed for the first time) makes `<>` NULL,
+        // which is not true, and the row would never be updated at all.
+        sql`${gamesTable.collectionId} is distinct from ${collectionId}`,
+      ),
+    )
+    .returning({ id: gamesTable.id });
+
+  return updated.length;
+}
+
+/**
+ * Games that could be added to `collectionId` — the "Add games" picker's list.
+ *
+ * Three exclusions, each for its own reason:
+ *   · the collection itself       — a row cannot contain itself
+ *   · rows already inside ANOTHER collection — moving one silently out of the
+ *     set it is in is not what "add" means; the owner removes it there first
+ *   · rows that hold games of their own — the one-level rule
+ *
+ * Rows already in THIS collection are deliberately included, so the picker can
+ * render them checked rather than making the current members invisible.
+ */
+export async function listCollectionCandidates(
+  ownerId: string,
+  collectionId: string,
+): Promise<{ readonly id: string; readonly title: string; readonly platform: GamePlatform }[]> {
+  const holdsGames = getDb()
+    .select({ id: gamesTable.collectionId })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), isNotNull(gamesTable.collectionId)));
+
+  return getDb()
+    .select({ id: gamesTable.id, title: gamesTable.title, platform: gamesTable.platform })
+    .from(gamesTable)
+    .where(
+      and(
+        eq(gamesTable.ownerId, ownerId),
+        ne(gamesTable.id, collectionId),
+        or(isNull(gamesTable.collectionId), eq(gamesTable.collectionId, collectionId)),
+        notInArray(gamesTable.id, holdsGames),
+      ),
+    )
+    .orderBy(asc(gamesTable.title));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sync — shared scoping
 // ─────────────────────────────────────────────────────────────────────────────
@@ -653,6 +755,27 @@ export async function setGameCollection(
  * ─────────────────────────────────────────────────────────────────────────────
  */
 const NOT_A_COLLECTION_MEMBER = isNull(gamesTable.collectionId);
+
+/**
+ * THE ONE EXCEPTION, AND IT IS PSN-ONLY: TROPHIES.
+ *
+ * A member joins the PSN sync when — and only when — it already carries its
+ * OWN `psn_np_communication_id`. That link is what makes it safe: the sync
+ * reaches it by identifier, never by name, so `bestTitleMatchAmong` never sees
+ * a member and cannot score it against its own collection's played title. With
+ * no played title resolved there is no hours value, no platform and no
+ * `lastPlayedAt` to write, so the double-count the rule above exists to prevent
+ * stays impossible by construction. See `planCollectionMemberTrophyChanges`.
+ *
+ * Steam keeps the blanket rule. Steam achievements hang off an `appid`, a
+ * member of a boxed set does not have one, and Steam has no equivalent of
+ * PSN's several-trophy-lists-per-product shape — so there is nothing here for
+ * it to gain and a name match to lose by.
+ */
+const PSN_SYNC_SCOPE = or(
+  NOT_A_COLLECTION_MEMBER,
+  and(isNotNull(gamesTable.collectionId), isNotNull(gamesTable.psnNpCommunicationId)),
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Steam sync (src/features/games/sync/sync-actions.ts)
@@ -767,6 +890,8 @@ export interface PsnSyncGame {
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
   readonly platinum: boolean;
+  /** Non-null for a title inside a collection — trophy-only, see `PSN_SYNC_SCOPE`. */
+  readonly collectionId: string | null;
 }
 
 function rowToPsnSyncGame(row: {
@@ -781,11 +906,13 @@ function rowToPsnSyncGame(row: {
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
   readonly platinum: boolean;
+  readonly collectionId: string | null;
 }): PsnSyncGame {
   return {
     id: row.id,
     title: row.title,
     platform: row.platform as GamePlatform,
+    collectionId: row.collectionId,
     psnTitleId: row.psnTitleId,
     psnNpCommunicationId: row.psnNpCommunicationId,
     hoursTenths: row.hoursTenths,
@@ -803,7 +930,7 @@ export async function countPsnGames(ownerId: string): Promise<number> {
     .select({ n: sql<number>`count(*)::int` })
     .from(gamesTable)
     .where(
-      and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS), NOT_A_COLLECTION_MEMBER),
+      and(eq(gamesTable.ownerId, ownerId), inArray(gamesTable.platform, PSN_PLATFORMS), PSN_SYNC_SCOPE),
     );
 
   return rows[0]?.n ?? 0;
@@ -824,7 +951,7 @@ export async function listPsnGamesChunk(
   const filters = [
     eq(gamesTable.ownerId, ownerId),
     inArray(gamesTable.platform, PSN_PLATFORMS),
-    NOT_A_COLLECTION_MEMBER,
+    PSN_SYNC_SCOPE,
   ];
   if (afterId !== null) filters.push(gt(gamesTable.id, afterId));
 
@@ -841,6 +968,9 @@ export async function listPsnGamesChunk(
       achievementsUnlocked: gamesTable.achievementsUnlocked,
       achievementsTotal: gamesTable.achievementsTotal,
       platinum: gamesTable.platinum,
+      // The sync engine has to know a member from a standalone row: a member
+      // is trophy-only and must never reach `resolvePlayedTitle`.
+      collectionId: gamesTable.collectionId,
     })
     .from(gamesTable)
     .where(and(...filters))
@@ -872,6 +1002,11 @@ export async function listPsnGamesForMatching(
     readonly psnTitleId: string | null;
   }[]
 > {
+  // STILL FULLY BLIND TO MEMBERS, unlike the two reads above, and the
+  // asymmetry is the point: this is the NAME-matching path. A member joins the
+  // sync only by its own trophy-list identifier; letting one in here would let
+  // it score against its collection's played title and "claim" it, hiding a
+  // genuinely unmatched PSN game from the new-game step.
   const rows = await getDb()
     .select({
       id: gamesTable.id,

@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { PsnPlayedTitle, PsnTrophyTitle } from '@/server/games/psn';
 import {
   dedupePlayedTitles,
+  planCollectionMemberTrophyChanges,
   planLinkedPsnGameChanges,
+  resolvePsnSyncTargets,
   planNewPsnGameChange,
   type StoredGameForPsnSync,
 } from '@/server/games/psn-plan';
@@ -321,5 +323,160 @@ describe('dedupePlayedTitles', () => {
 
   it('returns [] for an empty list', () => {
     expect(dedupePlayedTitles([])).toEqual([]);
+  });
+});
+
+/**
+ * The trophy-only path for a title inside a collection.
+ *
+ * The rule this has to keep intact: a member is otherwise invisible to both
+ * sync engines so the SET's hours can never be written onto one of its titles
+ * and counted twice. Trophies are the one exception, because PSN itself gives
+ * The Nathan Drake Collection three separate trophy lists and only one
+ * cumulative playDuration. So what matters most below is everything this
+ * planner REFUSES to propose.
+ */
+describe('planCollectionMemberTrophyChanges', () => {
+  const member = (overrides: Partial<StoredGameForPsnSync> = {}): StoredGameForPsnSync =>
+    stored({
+      id: 'uc1',
+      title: "Uncharted: Drake's Fortune Remastered",
+      psnTitleId: null,
+      psnNpCommunicationId: 'NPWR07784_00',
+      hoursTenths: null,
+      firstPlayedYear: null,
+      lastPlayedAt: null,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
+      platinum: false,
+      ...overrides,
+    });
+
+  it('proposes the three trophy columns and nothing else', () => {
+    const changes = planCollectionMemberTrophyChanges(
+      member(),
+      trophyTitle({ npCommunicationId: 'NPWR07784_00', name: "Uncharted: Drake's Fortune", earned: 48, total: 48 }),
+    );
+
+    expect(changes.map((c) => c.payload.field)).toEqual([
+      'achievementsUnlocked',
+      'achievementsTotal',
+      'platinum',
+    ]);
+  });
+
+  it('NEVER proposes hours, and that is the whole safety property', () => {
+    // Hours are the SET's — one purchase, one play time, no API can split
+    // them. A member gaining an hours proposal is the double-count the
+    // collection-blindness rule exists to prevent.
+    const changes = planCollectionMemberTrophyChanges(member(), trophyTitle());
+    expect(changes.some((c) => c.payload.field === 'hoursTenths')).toBe(false);
+  });
+
+  it('never proposes platform, lastPlayedAt, firstPlayedYear or a psnTitleId link', () => {
+    const changes = planCollectionMemberTrophyChanges(member(), trophyTitle());
+    const fields = changes.map((c) => c.payload.field);
+
+    expect(fields).not.toContain('platform');
+    expect(fields).not.toContain('lastPlayedAt');
+    expect(fields).not.toContain('firstPlayedYear');
+    // A member has no played title at all, so there is nothing to link it to.
+    expect(changes.some((c) => c.kind === 'link')).toBe(false);
+    expect(changes.some((c) => c.kind === 'reconcile')).toBe(false);
+  });
+
+  it('proposes nothing at all when PSN has no trophy list for it', () => {
+    expect(planCollectionMemberTrophyChanges(member(), null)).toEqual([]);
+  });
+
+  it('proposes nothing when the stored counts already match', () => {
+    const changes = planCollectionMemberTrophyChanges(
+      member({ achievementsUnlocked: 48, achievementsTotal: 48, platinum: true }),
+      trophyTitle({ earned: 48, total: 48, platinum: true }),
+    );
+    expect(changes).toEqual([]);
+  });
+
+  it('carries the member’s own id and title, not its collection’s', () => {
+    const [change] = planCollectionMemberTrophyChanges(member(), trophyTitle({ earned: 48, total: 48 }));
+    expect(change?.gameId).toBe('uc1');
+    expect(change?.title).toBe("Uncharted: Drake's Fortune Remastered");
+  });
+});
+
+/**
+ * The member/non-member decision, extracted from the sync loop precisely so it
+ * could be tested. While it lived inline in a Server Action a mutation that
+ * flipped every member into a full name-matched sync passed the entire suite.
+ */
+describe('resolvePsnSyncTargets', () => {
+  const NDC_PLAYED = playedTitle({
+    titleId: 'CUSA02320_00',
+    name: 'Uncharted: The Nathan Drake Collection',
+    hoursTenths: 442,
+  });
+  const DF_TROPHIES = trophyTitle({
+    npCommunicationId: 'NPWR07784_00',
+    name: "Uncharted: Drake's Fortune Remastered",
+    earned: 48,
+    total: 48,
+  });
+
+  const memberRow = {
+    title: "Uncharted: Drake's Fortune Remastered",
+    platform: 'ps4' as const,
+    psnTitleId: null,
+    psnNpCommunicationId: 'NPWR07784_00',
+    collectionId: 'ndc',
+  };
+
+  it('gives a member its own trophy list and NO played title', () => {
+    expect(resolvePsnSyncTargets(memberRow, [NDC_PLAYED], [DF_TROPHIES])).toEqual({
+      played: null,
+      trophy: DF_TROPHIES,
+    });
+  });
+
+  it('refuses to name-match a member against its own collection’s played title', () => {
+    // THE PROPERTY. "Uncharted: Drake's Fortune Remastered" scores well
+    // against "Uncharted: The Nathan Drake Collection", and a match would
+    // stage the SET's 44.2h onto one of its three titles — the double-count
+    // the collection-blindness rule exists to prevent.
+    const result = resolvePsnSyncTargets(memberRow, [NDC_PLAYED], [DF_TROPHIES]);
+    expect(result?.played).toBeNull();
+  });
+
+  it('skips a member with no trophy list of its own rather than falling back to a name match', () => {
+    expect(
+      resolvePsnSyncTargets({ ...memberRow, psnNpCommunicationId: null }, [NDC_PLAYED], [DF_TROPHIES]),
+    ).toBeNull();
+  });
+
+  it('skips a member whose stored trophy id is not in this run’s snapshot', () => {
+    expect(resolvePsnSyncTargets(memberRow, [NDC_PLAYED], [])).toBeNull();
+  });
+
+  it('still resolves a standalone game the normal way', () => {
+    const standalone = {
+      title: 'Bloodborne',
+      platform: 'ps4' as const,
+      psnTitleId: 'CUSA00552_00',
+      psnNpCommunicationId: 'NPWR10388_00',
+      collectionId: null,
+    };
+    const result = resolvePsnSyncTargets(standalone, [playedTitle()], [trophyTitle()]);
+    expect(result?.played?.titleId).toBe('CUSA00552_00');
+    expect(result?.trophy?.npCommunicationId).toBe('NPWR10388_00');
+  });
+
+  it('skips a standalone game PSN does not own', () => {
+    const unowned = {
+      title: 'Some Physical PS2 Game',
+      platform: 'ps4' as const,
+      psnTitleId: null,
+      psnNpCommunicationId: null,
+      collectionId: null,
+    };
+    expect(resolvePsnSyncTargets(unowned, [NDC_PLAYED], [])).toBeNull();
   });
 });
