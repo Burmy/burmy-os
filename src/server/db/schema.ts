@@ -1270,3 +1270,275 @@ export const gameSyncChanges = pgTable(
   },
   (t) => [index('game_sync_changes_run_idx').on(t.runId)],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Anime
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Lifecycle, four states — deliberately fewer than AniList's six.
+ *
+ * AniList records CURRENT, PLANNING, COMPLETED, DROPPED, PAUSED and REPEATING.
+ * `PAUSED` folds into `watching` and `REPEATING` into `completed` at import,
+ * for the reason Games' own chip list shrank to one after real use: a status
+ * that describes a state you never filter by is a filter chip nobody presses.
+ * `repeat_count` still carries the rewatch signal, so folding REPEATING loses
+ * nothing that mattered.
+ */
+export const animeStatusEnum = pgEnum('anime_status', ['watching', 'completed', 'dropped', 'planning']);
+
+/** AniList's own `MediaFormat`, narrowed to the values an anime list actually contains. */
+export const animeFormatEnum = pgEnum('anime_format', ['tv', 'tv_short', 'movie', 'ova', 'ona', 'special', 'music']);
+
+export const animeSeasonEnum = pgEnum('anime_season', ['winter', 'spring', 'summer', 'fall']);
+
+/** What the show was adapted from — AniList's `MediaSource`, narrowed. `original` means nothing was adapted. */
+export const animeSourceEnum = pgEnum('anime_source', [
+  'original',
+  'manga',
+  'light_novel',
+  'visual_novel',
+  'video_game',
+  'novel',
+  'doujinshi',
+  'anime',
+  'other',
+]);
+
+export const animeSyncRunStatusEnum = pgEnum('anime_sync_run_status', [
+  'running',
+  'ready',
+  'committed',
+  'failed',
+]);
+
+/**
+ * A franchise wrapping several seasons — "Attack on Titan" holding Season 1,
+ * Season 2 and The Final Season.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS ITS OWN TABLE AND NOT A SELF-FK LIKE `games.collection_id`.
+ *
+ * Games models a boxed set as a `games` row that other rows point at, and that
+ * is right there: a boxed set is a real thing you bought, with one price and
+ * one play time. A SERIES is not. Nobody watched "Attack on Titan" — they
+ * watched its seasons. A series has no episode count, no progress, no status
+ * and no watch date, so a self-FK would mean every series row carrying half a
+ * dozen columns that mean nothing, plus a rule in every aggregate to exclude
+ * them.
+ *
+ * A separate table makes that impossible by construction: a series can never
+ * be counted as a show, because it is not in the `anime` table at all. That is
+ * the whole reason it was chosen over the shape Games uses.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const animeSeries = pgTable(
+  'anime_series',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    coverUrl: text('cover_url'),
+    /** The AniList media id this series was derived from, when the relations graph proposed it. */
+    anilistParentId: integer('anilist_parent_id'),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('anime_series_owner_title_idx').on(t.ownerId, sql`lower(${t.title})`),
+    index('anime_series_owner_idx').on(t.ownerId),
+  ],
+);
+
+/**
+ * One watchable entry — a season, a movie, an OVA. The unit AniList tracks and
+ * the unit the owner counts.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NEITHER TOTAL EPISODES NOR TOTAL TIME IS STORED.
+ *
+ * `progress` (episodes into the current watch) and `repeat_count` are the
+ * stored facts. Everything else is arithmetic:
+ *
+ *   episodes watched = progress + repeat_count x episodes
+ *   minutes watched  = episodes watched x duration_minutes
+ *
+ * Both live in `src/server/anime/runtime.ts` and nowhere else — the same
+ * containment rule `money.ts` and `hours.ts` already hold. `duration_minutes`
+ * is AniList's per-episode AVERAGE, not a measurement, which is why time
+ * watched is presented as an estimate and never as a figure to reconcile
+ * against.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const anime = pgTable(
+  'anime',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    /**
+     * SET NULL, never cascade: deleting a series must leave its seasons in the
+     * library as standalone entries. Same decision, same reasoning, as
+     * `games.collection_id`.
+     */
+    seriesId: uuid('series_id').references(() => animeSeries.id, { onDelete: 'set null' }),
+    /** AniList's `Media.id`. Resolve the match once, persist the external id — the rule `steam_appid` follows. */
+    anilistMediaId: integer('anilist_media_id'),
+    titleRomaji: text('title_romaji').notNull(),
+    titleEnglish: text('title_english'),
+    format: animeFormatEnum('format'),
+    status: animeStatusEnum('status').notNull().default('planning'),
+    /** How many episodes the show HAS. Null for an airing show AniList has no final count for. */
+    episodes: smallint('episodes'),
+    /** How many episodes into the CURRENT watch. Stored truth; never a total. */
+    progress: smallint('progress').notNull().default(0),
+    /** Completed rewatches. AniList's `repeat`. */
+    repeatCount: smallint('repeat_count').notNull().default(0),
+    /** AniList's per-episode average, in minutes. */
+    durationMinutes: smallint('duration_minutes'),
+    season: animeSeasonEnum('season'),
+    seasonYear: smallint('season_year'),
+    studio: text('studio'),
+    /** Comma-joined, split at read time — exactly how `games.genre` is stored. */
+    genre: text('genre'),
+    source: animeSourceEnum('source'),
+    synopsis: text('synopsis'),
+    coverUrl: text('cover_url'),
+    notes: text('notes'),
+    /** Calendar facts, not instants — the same `mode: 'string'` reasoning as `games.release_date`. */
+    startedAt: date('started_at', { mode: 'string' }),
+    completedAt: date('completed_at', { mode: 'string' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('anime_owner_title_idx').on(t.ownerId, sql`lower(${t.titleRomaji})`),
+    // Unique WHEN PRESENT — the same partial-index shape the four Games
+    // external-id indexes use, so an unlinked row never collides with another.
+    uniqueIndex('anime_owner_anilist_id_idx')
+      .on(t.ownerId, t.anilistMediaId)
+      .where(sql`${t.anilistMediaId} is not null`),
+    index('anime_owner_idx').on(t.ownerId),
+    index('anime_owner_status_idx').on(t.ownerId, t.status),
+    index('anime_owner_series_idx').on(t.ownerId, t.seriesId).where(sql`${t.seriesId} is not null`),
+  ],
+);
+
+/**
+ * A dated entry in the watch log — "watched episode 7 of Frieren, 12 Aug".
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * IMPORTED, NOT DERIVED, AND IT DOES NOT FEED `anime.progress`.
+ *
+ * Burmy cannot observe watching: the streaming site is AniList's client, not
+ * Burmy's. These rows come from AniList's own public activity feed, which is
+ * the only record of WHEN anything happened that exists at all.
+ *
+ * `progress` stays the authoritative episode count and this table stays a
+ * journal beside it, for the same reason `games.hours_tenths` is authoritative
+ * while `game_play_years` only says which years: deriving the total from the
+ * log would mean a sync had nowhere to write it, and the log is only ever as
+ * complete as the feed AniList chose to keep.
+ *
+ * `anilist_activity_id` unique-when-present is what makes a re-sync an UPSERT
+ * rather than a second copy of every entry — the same job
+ * `game_trophies_owner_game_source_external_idx` does for trophies.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+export const animeWatchLog = pgTable(
+  'anime_watch_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    animeId: uuid('anime_id')
+      .notNull()
+      .references(() => anime.id, { onDelete: 'cascade' }),
+    anilistActivityId: integer('anilist_activity_id'),
+    watchedAt: timestamp('watched_at', { withTimezone: true }).notNull(),
+    /** The episode reached. Null for a status-only entry ("marked completed"). */
+    episode: smallint('episode'),
+    /** `progress` | `status` — what kind of event AniList recorded. Text, not an enum: AniList may add kinds and an unknown one must degrade, not fail an import. */
+    kind: text('kind').notNull().default('progress'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('anime_watch_log_owner_activity_idx')
+      .on(t.ownerId, t.anilistActivityId)
+      .where(sql`${t.anilistActivityId} is not null`),
+    index('anime_watch_log_owner_watched_idx').on(t.ownerId, t.watchedAt.desc()),
+    index('anime_watch_log_owner_anime_idx').on(t.ownerId, t.animeId, t.watchedAt.desc()),
+  ],
+);
+
+/**
+ * One AniList sync run. Its own table rather than a reuse of
+ * `game_sync_runs`, and that is a deliberate refusal to generalise.
+ *
+ * `src/server/db/games/sync.ts` types `fieldUpdatePatch` and `linkFieldPatch`
+ * as `Partial<typeof games.$inferInsert>` and inserts into `games` — the whole
+ * commit path is bound to that table. Making it serve two tables would mean a
+ * generic column-patching layer over arbitrary schemas, which is precisely the
+ * speculative abstraction CLAUDE.md forbids, in the one place where getting it
+ * wrong writes to the wrong table. The SHAPE is copied; the code is not.
+ */
+export const animeSyncRuns = pgTable(
+  'anime_sync_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    status: animeSyncRunStatusEnum('status').notNull().default('running'),
+    /** Display only — see `last_anime_id`. Never a termination condition. */
+    cursor: integer('cursor').notNull().default(0),
+    total: integer('total').notNull().default(0),
+    /**
+     * The keyset bookmark, and DELIBERATELY NOT A FOREIGN KEY. An
+     * `ON DELETE SET NULL` would silently rewind an in-progress run to the very
+     * beginning when a row it had already passed was deleted. This is a
+     * pagination bookmark, not a reference — the same decision, for the same
+     * reason, as `game_sync_runs.last_game_id`.
+     */
+    lastAnimeId: uuid('last_anime_id'),
+    /** The AniList response, fetched ONCE at run start and matched against for every chunk. */
+    snapshot: jsonb('snapshot'),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('anime_sync_runs_owner_status_idx').on(t.ownerId, t.status)],
+);
+
+/**
+ * One proposed change staged by a run. NOTHING HERE HAS BEEN WRITTEN to
+ * `anime` — that happens only when the owner approves the run.
+ *
+ * `payload` carries both the proposed value and the one it would replace, so
+ * the review screen shows a real before/after rather than just a target.
+ */
+export const animeSyncChanges = pgTable(
+  'anime_sync_changes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => animeSyncRuns.id, { onDelete: 'cascade' }),
+    /** Null for `new_anime`, which by definition has no library row yet. */
+    animeId: uuid('anime_id').references(() => anime.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    selected: boolean('selected').notNull().default(true),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('anime_sync_changes_run_idx').on(t.runId)],
+);
