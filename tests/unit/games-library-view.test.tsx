@@ -244,10 +244,10 @@ describe('LibraryView', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^PS5, \d/i }));
     expect(galleryTitles()).not.toContain('Daxter');
 
-    await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^PS5, \d/i }));
     expect(galleryTitles()).toContain('Daxter');
   });
 
@@ -256,7 +256,7 @@ describe('LibraryView', () => {
 
     expect(screen.queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole('button', { name: /^ps5\d/i }));
+    await userEvent.click(screen.getByRole('button', { name: /^PS5, \d/i }));
     await userEvent.click(screen.getByRole('button', { name: /^clear$/i }));
 
     expect(screen.queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();

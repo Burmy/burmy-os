@@ -129,7 +129,7 @@ export function PsnSyncButton({ configured }: { readonly configured: boolean }):
       // link's one-line caveat about needing an active browser session —
       // lives in Settings; this stays just enough to be self-explanatory
       // in place, with a real clickable link rather than only naming the var.
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled title="Set PSN_NPSSO to enable PlayStation sync.">
           <RefreshCw className="size-4" aria-hidden />
           Sync with PlayStation
@@ -143,7 +143,7 @@ export function PsnSyncButton({ configured }: { readonly configured: boolean }):
 
   if (state.phase === 'token_expired') {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled title="Your PSN_NPSSO token expired — paste a new one.">
           <RefreshCw className="size-4" aria-hidden />
           Sync with PlayStation

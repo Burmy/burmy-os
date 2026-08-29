@@ -173,7 +173,7 @@ test.describe('transactions ledger', () => {
     // meant, fails with a readable message, and still catches an accidental
     // addition — a new module is expected to update this line.
     const mainNav = page.getByRole('navigation', { name: 'Main' });
-    await expect(mainNav.getByRole('link')).toHaveText(['Finance', 'Games', 'Settings']);
+    await expect(mainNav.getByRole('link')).toHaveText(['Finance', 'Games', 'Anime', 'Settings']);
     await expect(mainNav.getByRole('link', { name: 'Transactions' })).toHaveCount(0);
     await page.getByRole('link', { name: 'Transactions' }).click();
     await expect(page).toHaveURL(/\/finance\/transactions$/);

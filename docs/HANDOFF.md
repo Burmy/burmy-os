@@ -135,8 +135,12 @@ These were all found the hard way. Do not rediscover them.
   time; do not migrate the column.
 - `Record<GameStatus, …>` maps are exhaustive — typecheck forces every status
   surface when the enum changes. That's deliberate.
-- `src/lib/format-date.ts` imports from `@/server/finance/grid`. **Games must
-  never use it** — `CLAUDE.md` forbids the two modules importing each other.
+- `src/lib/format-date.ts` **used to** import from `@/server/finance/grid`,
+  which made it unusable from Games. Fixed 2026-08-29 by moving
+  `MONTH_ABBREVIATIONS` into `src/lib/` and re-exporting it from Finance: the
+  dependency ran the wrong way, since `src/lib/` is the shared layer. Any module
+  may use `formatHumanDate` now. The rule that still holds is the original one —
+  **nothing in `src/lib/` may import from `src/server/{finance,games,anime}/`**.
 
 ---
 

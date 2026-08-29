@@ -27,7 +27,7 @@ import { toast } from '@/components/ui/toast';
 import { EmptyState } from '@/components/finance/empty-state';
 import { InlineEditText } from '@/components/finance/inline-edit-text';
 import { Money } from '@/components/finance/money';
-import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
+import { StatusBadge, type StatusTone } from '@/components/ui/status-badge';
 import { formatHumanDate } from '@/lib/format-date';
 import { useNavigate } from '@/lib/use-navigate';
 import type { FinanceCategory } from '@/server/db/finance/categories';

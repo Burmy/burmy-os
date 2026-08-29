@@ -23,6 +23,10 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: 'https', hostname: 'images.igdb.com' },
       { protocol: 'https', hostname: 'image.api.playstation.com' },
+      // AniList cover art. `s4` is the CDN host the API's `coverImage` URLs
+      // currently use — confirm against one real response before trusting it,
+      // the same caveat this list already carries for the PSN host.
+      { protocol: 'https', hostname: 's4.anilist.co' },
     ],
   },
 

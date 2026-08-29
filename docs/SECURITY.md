@@ -333,20 +333,26 @@ Plaid, no bank APIs, no OAuth to a financial institution, no scraping, no stored
 Statements arrive as a file the owner picks in the browser. Nothing in `src/server/finance/` or
 `src/server/db/finance/` calls `fetch`.
 
-The Games module calls three third-party APIs, and every one of them is confined to `src/server/db/games/`:
+Games calls three third-party APIs, each confined to `src/server/db/games/`; Anime calls one,
+confined to `src/server/db/anime/anilist-client.ts`. Those four files are the whole outbound surface
+of this application:
 
 | Destination | Sends | Credential |
 | --- | --- | --- |
 | IGDB (auth via Twitch OAuth) | Game titles for lookup | `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` |
 | Steam Web API | The owner's SteamID and app ids | `STEAM_API_KEY`/`STEAM_ID` |
 | PlayStation Network | The owner's account context | `PSN_NPSSO` |
+| AniList (GraphQL, unauthenticated) | The owner's public AniList username | `ANILIST_USERNAME` |
 
-Three properties hold for all of them:
+The same three properties hold for all of them:
 
-- **No Finance data ever crosses these boundaries.** The two modules share no data path.
+- **No Finance data ever crosses these boundaries.** Finance shares no data path with Games or Anime;
+  the only thing any of them have in common is the owner row and the auth boundary.
 - **Every one is optional and fails soft** — a missing credential, timeout, non-200 or malformed JSON
   yields `[]`/`null`, never a throw. The full test suite must pass with none of them set. A third party
-  being down or slow can degrade a Games feature; it cannot break a page or affect Finance.
+  being down or slow can degrade a Games or Anime feature; it cannot break a page or affect Finance.
+  AniList is the one that needs no credential at all — the owner's profile is public, so
+  `ANILIST_USERNAME` is a username and not a secret, and there is nothing to expire or revoke.
 - **PSN's is an UNOFFICIAL API** reached with a browser-derived token (`PSN_NPSSO`) that expires roughly
   every two months. It is the least trustworthy dependency in the project: undocumented, unversioned,
   and revocable without notice. It is treated accordingly — an expired token surfaces a specific

@@ -39,7 +39,12 @@ function GameLink({ gameId, title }: { readonly gameId: string; readonly title: 
   );
 }
 
-/** A short, coarse "how long ago" — Games-local, for the same reason `relative-time.ts` is. */
+/**
+ * A short, coarse "how long ago" for a trophy date. Distinct from
+ * `src/lib/relative-time.ts` on purpose: that one phrases a wall-clock gap in
+ * minutes/hours for a sync that just ran, while this one only ever deals in
+ * whole days and reads off an ISO date string with no time in it at all.
+ */
 function earnedAgo(iso: string, now: Date): string {
   const days = Math.floor((now.getTime() - new Date(iso).getTime()) / 86_400_000);
   if (days <= 0) return 'today';

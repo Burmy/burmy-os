@@ -48,6 +48,26 @@ export function PageHeader({
   readonly meta?: React.ReactNode;
   readonly actions?: React.ReactNode;
   readonly className?: string;
+  /**
+   * A TRIPWIRE, not a prop. Never pass this.
+   *
+   * `subtitle` was removed for the reasons above, and FOUR call sites went on
+   * passing it — three written after the removal, one of them the Games sync
+   * review screen, whose "Nothing below has been saved yet" line has therefore
+   * never once rendered. Every one of them used a conditional spread
+   * (`{...(cond ? { subtitle: x } : {})}`), which bypasses TypeScript's
+   * excess-property check entirely: the prop compiles, lints, and silently
+   * does nothing. CLAUDE.md records this exact class of bug from the M12
+   * collections work.
+   *
+   * Declaring it `never` closes the hole. A direct literal was always an error;
+   * now a conditional spread carrying a real value is one too, and the fix is
+   * named right here rather than discovered by noticing a missing line.
+   *
+   * Short factual text (an airing year, a platform) goes in `meta`. Prose does
+   * not go in this component at all — render it as its own paragraph below.
+   */
+  readonly subtitle?: never;
 }): React.ReactElement {
   return (
     <div className={cn('flex flex-wrap items-center justify-between gap-4', className)}>

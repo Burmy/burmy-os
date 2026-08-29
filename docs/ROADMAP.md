@@ -1113,7 +1113,11 @@ the app on real data, fixed and shipped in rounds. Recorded because the *reasons
 
 ---
 
-## The Games module — the second, and final, product module
+## The Games module — the second product module
+
+*(Titled "the second, and final, product module" until 2026-08-29, when the owner asked for Anime and
+the rule was amended. See the Anime section below; the half of the rule that survived is the one about
+not building a shared module framework.)*
 
 Merged as `674af16`. Roughly 50 commits of work, built on a `feat/game-tracker` branch, replacing a
 manually-maintained spreadsheet of ~185 games the same way Finance replaced one of transactions.
@@ -1245,13 +1249,131 @@ Two findings, both in `docs/ARCHITECTURE.md`, "Perceived performance":
 
 ---
 
+## The Anime module (2026-08-29) — the third product module
+
+*(Deliberately not titled "and final". The Games section above carried that claim for a day and it
+did not survive contact with the owner. What is permanent is the coupling rule, not the count.)*
+
+The owner asked for an anime library alongside Finance and Games: everything watched, a page per
+show, stats, and a dated log, migrating from AniList and then maintained by hand. CLAUDE.md forbade a
+third module by name; that rule was **amended deliberately** rather than broken quietly, and the
+half that survives is the load-bearing half — **no shared module framework**. See `docs/ANIME.md`,
+which is canonical for this domain.
+
+### M1 — Data, and a sync that is reachable
+
+Schema (five enums, five tables), `taxonomy.ts`, `runtime.ts`, `anilist.ts`, the one HTTP boundary,
+the sync run/change tables, the chunked walk, the review screen, the Settings entry, and the library.
+
+- **`ANILIST_USERNAME` is the whole configuration.** No token, no OAuth, nothing that expires — the
+  owner's profile is public. Same soft-failure contract as IGDB/Steam/PSN, and the suite passes with
+  it unset.
+- **Done is an empty chunk, never `cursor >= total`**, on the client as well as the server. The
+  comparison has two reproduced failure modes in the Games engine and is the defect, not a shortcut.
+- **A progress DECREASE is staged and flagged, never applied silently and never blocked.** It is the
+  one field change that can destroy something real, so the review screen renders it in amber and says
+  what it does.
+- `getLastAnimeSyncTime` counts `ready` as synced, not only `committed`: a run that finds nothing to
+  change commits nothing, and calling that "never synced" would make a current library read as stale.
+
+### M2 — Library, show pages and series
+
+Gallery/table toggle, filters, a manual add form, multi-select bulk filing, the show page with
+inline editing everywhere, and the series page.
+
+- **A series is its own TABLE, not a self-reference like a Games collection.** A franchise is not
+  something you watched — no episode count, no status, nothing to record — and the separate table
+  buys the counting rule for free: nothing that reads `anime` can return a series, so unlike Games
+  there is no `countableGames` equivalent to remember at each call site.
+- Membership is editable from **both ends**, plus a bulk path in the table view.
+- Dissolving a series returns its shows to the library (`ON DELETE SET NULL`), and the dialog says so.
+- `inline-edit-row`, the searchable picker and the tone-based `StatusBadge` were PROMOTED into
+  `src/components/ui/` rather than copied. Each had zero knowledge of the module it lived in.
+
+### M3 — Stats
+
+Totals and time, studios and genres, format and source, airing era, and a leaderboard — all computed
+at read time.
+
+- **Time watched is always an estimate and always says so.** `duration` is an average AniList
+  publishes, not a measurement.
+- **Completion rate is over shows STARTED.** A watchlist of 300 things not begun says nothing about
+  follow-through, and `null` renders as `—` rather than 0%.
+- **The airing-era chart is by the year a show AIRED**, so a rewatch never moves a bar.
+
+### M4 — The watch log
+
+`anime_watch_log`, the activity import, the Log tab and a per-show History section.
+
+- **Written directly, never staged** — the same carve-out trophies get. A dated fact about the past
+  has no owner-authored counterpart to overwrite.
+- **A re-sync is an upsert** on the partial unique index, with the predicate repeated in the conflict
+  target. Verified against real Postgres: two full syncs, 4 rows, 4 distinct activities, unchanged.
+- **The watermark states where the log begins**, because a truncated history otherwise reads exactly
+  like missing data.
+
+### Completeness pass — five things the milestones had left half-done
+
+Reviewed against the code rather than against the plan, after the owner asked for
+a full feature rather than a set of milestones that each stopped at the boundary.
+Every one of these was live in `main`-bound work and every one was a real hole.
+
+| Left half-done | Now |
+| --- | --- |
+| `planSeriesHint` was **never called**. AniList's relation graph was fetched and thrown away, `anilist_parent_id` was never written, and the review screen had a group that could not render. Had it rendered, `APPLIES_NOTHING` meant ticking it counted toward "Apply N selected changes" and did nothing. | The sync takes connected components over the relation graph and proposes each franchise once. Approving one find-or-creates the series and files its members. It never re-proposes a group that is already complete, and never moves a show the owner filed by hand. |
+| A hand-added show could **never** link to AniList. The walk skipped every row with no media id, under a comment deferring the work "to the form it exists for" — a form that was then built two milestones later. | `src/server/anime/matching.ts`, deliberately far stricter than the Games matcher: a hard ordinal gate ("Shingeki no Kyojin" can never match "…Season 2", whatever the score), then exact-or-0.9. The review screen shows the owner's title beside AniList's, because "#16498" is uncheckable. |
+| Franchises were **unreachable** — a link in the library's table or a filter dropdown you had to already know to open. | `/anime/series`, a fourth tab, listing every franchise with its span, totals and member seasons. Searchable by a SEASON's name, which is how anyone looks for one. |
+| `anime_series.cover_url` and `.notes` existed with **no way to set either** — the cover override's own comment described a case the UI could not serve. | Both inline-editable on the series page, through one exhaustive-switch action. `anilist_parent_id` stays uneditable: it is identity. |
+| The add-show dialog's schema accepted `studio` and `genre` and **rendered no inputs**, so a hand-added show was invisible in the two largest charts on the Stats page. | Both asked for, and the form says why they matter. |
+
+Also fixed while there: the sticky Apply bar on both sync review screens had no
+clearance beneath it, so the last row of the last group sat permanently under an
+opaque bar with no amount of scrolling revealing it.
+
+### Bugs and traps found during the Anime module
+
+Every one of these was invisible to typecheck, lint and the test suite, and appeared only when the
+app was run in a real browser — the discipline this project adopted after the Finance dashboard
+shipped two bugs behind 1,267 green tests.
+
+| Found | Fix |
+| --- | --- |
+| `PageHeader` has no `subtitle` prop and four call sites passed one through a conditional spread; the Games sync screen's explanatory line had **never rendered** | All four fixed, and `subtitle?: never` added so even the spread form is a type error |
+| `ROW_CLASS` used a bare `1fr` grid track, whose min-content floor stopped `truncate` engaging — a show page ran to 422px on a 390px viewport | `minmax(0,1fr)`; the grid twin of the documented `min-w-0` rule |
+| Settings ran to 528px at 390px because a disabled sync button and its "Needs …" hint never wrapped — **pre-existing on the Steam and PSN rows** | `flex-wrap` on all three |
+| `StatCardGridSkeleton` claimed to match `StatCardGrid`'s columns and did not, so every skeleton→content swap reflowed | Classes copied verbatim |
+| A sync with NOTHING to review never imported the watch log | The "Nothing to review" path imports on its way out too |
+| A log row's accessible name came out `"FrierenEpisode 48:15 PM"` — sibling nodes joined each TRIMMED, the second time this class of bug appeared | Explicit `aria-label`, confirmed by reading computed names off the running page |
+| `src/lib/format-date.ts` imported `MONTH_ABBREVIATIONS` from `@/server/finance/grid`, putting a Finance import in every other module's bundle | Constant moved into `src/lib/`; Finance re-exports it, so no Finance call site changed |
+| An AniList custom list repeats an entry, which would have double-counted every stat | Media-id dedupe in `toListEntries`, mutation-verified |
+| A unique index on `(owner, lower(title_romaji))`, copied from Games without noticing Games has `platform` as a discriminator | Removed |
+| `FilterChip`'s accessible name read `"Watching2"` — a pre-existing defect in a primitive shared with Finance and Games | Fixed; six assertions across three suites updated |
+
+### Known gaps, carried forward honestly
+
+- **The AniList queries have never run against the live API.** The build environment rejects
+  `graphql.anilist.co`. The whole engine was verified end-to-end against a local stand-in answering at
+  that hostname — which proves the plumbing, not the field names. Expect corrections on first contact.
+- **`MediaList.repeat` semantics are unconfirmed** (is a third viewing `repeat: 2` or `3`?). It scales
+  every time-watched figure; pin the test to a real observed value.
+- **`ListActivity` retention is unknown**, which is why the log carries a watermark.
+- **Series grouping from `relations` will be partial**, which is why `series_hint` is advisory and
+  both ends of the manual picker exist.
+
+---
+
 ## ▶ RESUME HERE
 
-**State as of 2026-08-28:** deployed, live, and in daily use on real data. Both product modules —
-Finance and Games — are built. There is no next milestone; work is driven by what real use turns up,
-in the round-based shape established above.
+**State as of 2026-08-29:** deployed, live, and in daily use on real data. All three product
+modules — Finance, Games and Anime — are built. There is no next milestone; work is driven by what
+real use turns up, in the round-based shape established above.
 
-**The four things actually outstanding, in priority order:**
+**Anime's first real run has not happened yet, and it is the immediate next step:** set
+`ANILIST_USERNAME`, apply migrations `0017`/`0018`, and run a sync from Settings → Anime on a machine
+that can reach `graphql.anilist.co`. That first contact is what confirms the query field names and
+the `repeat` semantics — see "Known gaps" in the Anime section above.
+
+**The things actually outstanding, in priority order:**
 
 1. **No backup exists of the live database.** See `docs/DEPLOYMENT.md`, "Backup strategy". The restore
    procedure has only ever been verified against local dev, on a different Postgres major version, with
@@ -1297,7 +1419,7 @@ multi-currency logic · budgets and category limits.
 `/finance/monthly` rather than as a separate top-level destination. Games has its own equivalent on
 `/games`. Neither is a cross-module home screen, and neither should become one.
 
-**Every module that is not Finance or Games is permanently out of scope** — Notes, Files, Sheets,
+**Every module that is not Finance, Games or Anime is permanently out of scope** (Anime added 2026-08-29 by owner decision; see CLAUDE.md) — Notes, Files, Sheets,
 Inbox, Bookmarks, Garage, Receipts, Subscriptions. This is stronger than "deferred": CLAUDE.md forbids
 building them, forbids building abstractions in anticipation of them, and forbids a shared "module
 framework" for the two that exist. Finance and Games deliberately share nothing but generic UI

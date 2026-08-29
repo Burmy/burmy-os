@@ -1,5 +1,28 @@
-import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
-
+/**
+ * Month names, defined HERE rather than imported from `@/server/finance/grid`,
+ * where they used to live.
+ *
+ * `src/lib/` is the app's shared, framework-free layer — reaching from it into
+ * a product module inverted the dependency and put a Finance import in the
+ * Games and Anime bundles behind every use of `formatHumanDate` below.
+ * `src/server/games/release-date.ts` documents that exact constraint as its
+ * reason for not reusing this file. Finance re-exports the constant from here,
+ * so its own call sites are unchanged.
+ */
+export const MONTH_ABBREVIATIONS = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
+] as const;
 /**
  * "2026-05-02" -> "May 2, 2026". Parses the ISO string's parts directly
  * rather than going through `new Date(iso)` — that constructor treats a

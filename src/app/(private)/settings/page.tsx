@@ -3,6 +3,8 @@ import { Tag } from 'lucide-react';
 import Link from 'next/link';
 
 import { PageHeader } from '@/components/ui/page-header';
+import { AnimeSyncSection } from '@/features/anime/settings/anime-sync-section';
+import { getAnimeLastSyncedAtAction, isAnilistConfiguredAction } from '@/features/anime/sync/sync-actions';
 import { GamesSyncSection } from '@/features/games/settings/games-sync-section';
 import { getPsnTokenAgeAction, isPsnConfiguredAction } from '@/features/games/sync/psn-actions';
 import { getLastSyncedTimesAction, isSteamConfiguredAction } from '@/features/games/sync/sync-actions';
@@ -19,7 +21,7 @@ const FINANCE_LINKS = [
 /**
  * Settings belongs to Burmy-OS as a whole, not to Finance — this is why it is
  * a top-level destination in the sidebar rather than something reached
- * through Finance. Grouped by section (Finance, Games, General) rather than
+ * through Finance. Grouped by section (Finance, Games, Anime, General) rather than
  * one flat list, and General holds preferences that apply everywhere, not
  * to any one module — Theme today, currently also reachable from the
  * sidebar footer; both read/write the exact same cookie, so there is
@@ -46,13 +48,16 @@ const FINANCE_LINKS = [
  */
 export default async function SettingsPage(): Promise<React.ReactElement> {
   await requireOwner();
-  const [theme, steamConfigured, psnConfigured, lastSyncedTimes, psnTokenAge] = await Promise.all([
-    readTheme(),
-    isSteamConfiguredAction(),
-    isPsnConfiguredAction(),
-    getLastSyncedTimesAction(),
-    getPsnTokenAgeAction(),
-  ]);
+  const [theme, steamConfigured, psnConfigured, lastSyncedTimes, psnTokenAge, anilistConfigured, anilistLastSyncedAt] =
+    await Promise.all([
+      readTheme(),
+      isSteamConfiguredAction(),
+      isPsnConfiguredAction(),
+      getLastSyncedTimesAction(),
+      getPsnTokenAgeAction(),
+      isAnilistConfiguredAction(),
+      getAnimeLastSyncedAtAction(),
+    ]);
 
   return (
     <div className="space-y-8">
@@ -88,6 +93,14 @@ export default async function SettingsPage(): Promise<React.ReactElement> {
             psnLastSyncedAt={lastSyncedTimes.psn}
             psnTokenAge={psnTokenAge}
           />
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-muted-foreground text-xs font-semibold tracking-wide uppercase">Anime</h2>
+        <div className="mt-3 rounded-md bg-card px-4">
+          <h3 className="text-muted-foreground pt-3 text-xs font-medium">Sync</h3>
+          <AnimeSyncSection configured={anilistConfigured} lastSyncedAt={anilistLastSyncedAt} />
         </div>
       </div>
 

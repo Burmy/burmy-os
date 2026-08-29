@@ -3,14 +3,22 @@
 Private, single-user personal web application. Deployed to `app.burmy.me`. The public portfolio at
 `burmy.me` is a **separate** project and is not in this repository.
 
-**Two product modules: Finance and Games.** "OS" is a metaphor for a personal workspace — this is
-not an operating system and not a platform. Do not build Notes, Files, Sheets, Inbox, Bookmarks,
-Garage, Receipts or Subscriptions. Do not build abstractions in anticipation of them, and do not
-build a shared "module framework" for the two that exist — they deliberately share nothing but
-generic UI primitives and the owner auth boundary.
+**Three product modules: Finance, Games and Anime.** "OS" is a metaphor for a personal workspace —
+this is not an operating system and not a platform. Do not build Notes, Files, Sheets, Inbox,
+Bookmarks, Garage, Receipts or Subscriptions. Do not build abstractions in anticipation of them, and
+do not build a shared "module framework" for the three that exist — they deliberately share nothing
+but generic UI primitives and the owner auth boundary.
+
+*Anime was added on 2026-08-29 at the owner's request, amending a rule that previously said two
+modules and "do not build a third". The half of that rule that still stands is the load-bearing half:
+**no shared module framework, no generic module registry, no abstraction that two modules both
+instantiate.** Anime copies the SHAPE of Games and reuses `src/components/ui/`, the `(private)`
+layout, `getDb()`, `requireOwner()` and `src/proxy.ts` — and nothing else. Where a Games component
+and an Anime component look near-identical, they are two files whose constraints differ, not
+duplication waiting to be factored out.*
 
 `docs/FINANCE.md` is the canonical Finance-domain reference (money model, categorization, dedup,
-reconciliation); `docs/GAMES.md` is canonical for the Games domain. `docs/ARCHITECTURE.md`,
+reconciliation); `docs/GAMES.md` is canonical for the Games domain; `docs/ANIME.md` for Anime. `docs/ARCHITECTURE.md`,
 `docs/SECURITY.md`, `docs/DEPLOYMENT.md` and `docs/BACKUP_RESTORE.md` are canonical for their own
 areas. `docs/ROADMAP.md` is authoritative on current milestone status. If any of these disagree with
 the code, the code is authoritative — that's a bug to resolve, not a discrepancy to document around.
@@ -317,6 +325,14 @@ These are verified, not folklore. Do not "fix" them back.
   exactly like the AI-optional rule for Finance. IGDB replaced RAWG (2026-08-20): RAWG has no portrait
   cover art anywhere in its data model and its search response silently omits `developers`/
   `publishers`; see `docs/GAMES.md`, "Cover art — IGDB, and its soft-failure contract."
+- **`ANILIST_USERNAME` is optional, same contract as the IGDB and Steam credentials.**
+  `src/server/db/anime/anilist-client.ts` fails soft (`null`, never a throw) when it is unset, on a
+  network error, a timeout, a non-200 (429 included), a GraphQL `errors` body, or malformed JSON — and
+  the full test suite must pass without it, which `tests/unit/anime-anilist-client.test.ts` enforces by
+  asserting `fetch` is never CALLED rather than merely that the result is empty. `null` and `[]` mean
+  different things here and are kept apart deliberately: "the request failed" and "this list is empty"
+  are separate facts. AniList needs no auth because the owner's profile is public — if a private one
+  ever needs supporting, copy `psn-client.ts`'s three-way failure string, not a fourth `null`.
 - **`STEAM_API_KEY`/`STEAM_ID` are optional too, same contract as IGDB's pair above.**
   `src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing
   credentials, a network error, a timeout, a non-200, or malformed JSON, and the full test suite must
@@ -438,6 +454,43 @@ These are verified, not folklore. Do not "fix" them back.
   page, not by any check. The same pattern is used ALL OVER this codebase for
   `exactOptionalPropertyTypes` (and is correct for that), so the risk is specific: when a conditional
   spread introduces a prop name you have not used on that component before, confirm the prop exists.
+- **A "staged but applies nothing" change kind is a checkbox that lies.** Anime's `series_hint` shipped
+  as an advisory item excluded from the commit by an `APPLIES_NOTHING` set — so the owner could tick
+  it, watch it count toward "Apply N selected changes", press Apply, and have nothing happen. If a
+  proposal is worth rendering with a checkbox, approving it has to DO the thing; if it genuinely
+  applies nothing, it is a note and must not be selectable. The same review screen already had the
+  right shape for a risky-but-real change: stage it, default it UNSELECTED, and show enough detail
+  (every member title, not a count) for the owner to judge it.
+- **A comment deferring work "until X exists" is a TODO that outlives X.** `advanceAnimeSyncAction`
+  skipped every unlinked row because "there is no manual-add form yet, so there is no unlinked row to
+  title-match — that lands with the form it exists for." The form landed one milestone later and this
+  did not, leaving hand-added shows permanently unlinkable. When deferring to a future change, grep
+  for the deferral when that change lands — or do not defer.
+- **`PageHeader` has no `subtitle` prop, and FOUR call sites passed one anyway — through a
+  conditional spread, which bypasses the excess-property check.** This is the same mechanism the
+  entry below records for `InlineEditField.hint`, hit again at a bigger scale: the Games sync review
+  screen's "Nothing below has been saved yet" line had never once rendered. `PageHeader` now declares
+  `readonly subtitle?: never`, which makes even the spread form a type error (verified by compiling
+  one against it). Reach for that pattern whenever a prop is REMOVED from a widely-used component —
+  deleting it silently converts every straggler into dead markup, while `?: never` converts them into
+  compile errors that name the fix.
+- **A grid track written `1fr` has a min-content floor, exactly like a flex item's `min-width: auto`.**
+  `1fr` is `minmax(auto, 1fr)`, so a long unbreakable value inside it pushes the track past its share,
+  the `truncate` on the content never engages because its container was never constrained, and the page
+  scrolls sideways. `ROW_CLASS` in `src/components/ui/inline-edit-row.tsx` shipped this way and ran a
+  show page to 422px on a 390px viewport — measured in a real headless browser, invisible to every
+  static check. Write `minmax(0,1fr)`. Same family as the `min-w-0` rule above, and worth checking
+  BOTH whenever a page overflows: a chain can have one of each.
+- **A Server Component may not construct JSX inside a `try`/`catch`.**
+  `react-hooks/error-boundaries` rejects it outright, because React renders the component after the
+  function returns — an error thrown during its render escapes the `catch` anyway, so the shape looks
+  like it works and does not. Put the `await` in the `try`, assign to a `let`, and build the JSX after
+  it. `src/app/(private)/anime/[id]/page.tsx` shows the shape.
+- **jsdom implements no Pointer Events API, and Radix's `Select` TRIGGER calls `hasPointerCapture`.**
+  A test that CLICKS a select to open it throws `target.hasPointerCapture is not a function` from
+  inside Radix, which reads like a Radix bug rather than a missing browser API. Polyfilled in
+  `tests/setup/testing-library.ts` beside the `scrollIntoView` one, which covers the different
+  `defaultOpen` path and does not help here.
 - **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
   `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
   renders and reads correctly on screen, and `textContent` is right, but the computed name comes out
@@ -457,11 +510,19 @@ src/proxy.ts              Access JWT verification, security headers, CSP nonce
 src/app/                  routes; / redirects to /finance/monthly (the landing view)
 src/features/finance/     Finance UI
 src/features/games/       Games UI
-src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks)
-src/lib/                  framework-free helpers usable from BOTH server and client (uuid, use-navigate)
+src/features/anime/       Anime UI
+src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks),
+                          inline-edit-row.tsx, picker-dialog.tsx and status-badge.tsx — all three
+                          PROMOTED here once a second module needed them, never copied
+src/lib/                  framework-free helpers usable from BOTH server and client (uuid,
+                          use-navigate, relative-time, format-date). NOTHING here may import from
+                          src/server/{finance,games,anime}/ — that inverts the dependency and puts a
+                          product module in every other module's bundle.
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
+src/server/anime/         ANIME DOMAIN CORE — same rule
 src/server/db/games/      owner-scoped data access + the one HTTP boundary (igdb.ts)
+src/server/db/anime/      same, with anilist-client.ts as its one HTTP boundary
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only
@@ -469,7 +530,7 @@ scripts/                  migrate.mjs, provision-owner.mjs — plain host-run No
 docs/                     the approved plan and supporting documents
 ```
 
-**`src/server/finance/` and `src/server/games/` must stay framework-free.** Money math, merchant
+**`src/server/finance/`, `src/server/games/` and `src/server/anime/` must stay framework-free.** Money math, merchant
 normalization, deduplication, categorization and classification are all testable without a browser or
 a server; hours conversion, taxonomy and stats aggregation hold the same property for Games. That is
 what makes financial (and library) correctness verifiable — protect this boundary.

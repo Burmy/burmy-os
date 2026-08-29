@@ -68,10 +68,21 @@ export function FilterBarSkeleton(): React.ReactElement {
   );
 }
 
-/** Matches `StatCardGrid`'s own responsive column counts so nothing reflows when the real cards arrive. */
+/**
+ * Matches `StatCardGrid`'s own responsive column counts so nothing reflows
+ * when the real cards arrive.
+ *
+ * That sentence was here before and was NOT TRUE: this rendered
+ * `grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4` while
+ * `StatCardGrid` renders `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4`, so every
+ * skeleton→content swap re-laid the whole row out — one column becoming two on
+ * mobile, three becoming four at `lg`. The class list below is now copied from
+ * `stat-card-grid.tsx` exactly; if that one changes, this one has to change
+ * with it, which is the cost of a fallback that is a separate element.
+ */
 export function StatCardGridSkeleton({ count = 6 }: { readonly count?: number }): React.ReactElement {
   return (
-    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    <div className="grid auto-rows-fr grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
       {Array.from({ length: count }, (_, i) => (
         <Skeleton key={i} className="h-32 w-full" />
       ))}

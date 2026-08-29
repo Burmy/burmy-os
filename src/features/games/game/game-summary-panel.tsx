@@ -16,7 +16,7 @@ import { PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { PLATFORM_PICKER_OPTIONS } from '@/server/games/taxonomy';
 import { cn } from '@/lib/utils';
-import { InlineEditField, InlineEditSelect, ROW_CLASS } from './inline-edit-row';
+import { InlineEditField, InlineEditSelect, ROW_CLASS } from '@/components/ui/inline-edit-row';
 
 const STATUS_OPTIONS = [
   'backlog',
@@ -29,7 +29,7 @@ const STATUS_OPTIONS = [
  * The page's persistent left column — cover art plus the same "at a
  * glance" facts `GameCard` shows in the library gallery (platform, rating,
  * hours), every one of them independently inline-editable now (see
- * `inline-edit-row.tsx`'s own doc comment for why the whole page moved off
+ * `@/components/ui/inline-edit-row`'s own doc comment for why the whole page moved off
  * a single Edit/Save toggle).
  */
 export function GameSummaryPanel({

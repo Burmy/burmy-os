@@ -43,10 +43,18 @@ export default async function SyncRunPage({
       <PageHeader
         title={`Review ${run.source === 'psn' ? 'PlayStation' : 'Steam'} sync`}
         className="mt-2"
-        {...(run.status === 'ready'
-          ? { subtitle: 'Nothing below has been saved yet — review each change, then apply the ones you want.' }
-          : {})}
       />
+
+      {/* A real paragraph, not a `PageHeader` prop. This was written as
+          `{...(cond ? { subtitle } : {})}`, which compiles and lints and
+          renders nothing at all — `PageHeader` has no `subtitle`, and a
+          conditional spread bypasses TypeScript's excess-property check. The
+          line had never appeared. See `page-header.tsx`'s `subtitle?: never`. */}
+      {run.status === 'ready' ? (
+        <p className="text-muted-foreground mt-2 text-sm">
+          Nothing below has been saved yet — review each change, then apply the ones you want.
+        </p>
+      ) : null}
 
       <div className="mt-6">
         {run.status === 'ready' ? (

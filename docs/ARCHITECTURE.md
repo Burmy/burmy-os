@@ -192,9 +192,23 @@ instead of guessing now."*
 `server/games/` and `server/db/games/` plus a nav entry. Nothing generic had to be built for it, and
 nothing generic was.
 
-**What the two modules actually share, in full:** the `src/components/ui/` primitives (button, table,
-dialog, chip, stat card), the `(private)` layout and sidebar, `src/server/db/index.ts`'s connection,
-`requireOwner()`, and the CSP/header work in `src/proxy.ts`. That is the complete list.
+**What the modules actually share, in full:** the `src/components/ui/` primitives (button, table,
+dialog, chip, stat card, and — promoted there once a second module needed each — `inline-edit-row`,
+`picker-dialog` and the tone-based `status-badge`), the `src/lib/` helpers (`cn`, `useNavigate`,
+`format-date`, `relative-time`, `uuid`), the `(private)` layout and sidebar,
+`src/server/db/index.ts`'s connection, `requireOwner()`, and the CSP/header work in `src/proxy.ts`.
+That is the complete list.
+
+Promotion rather than duplication is the rule for a primitive with **zero knowledge of the module it
+started in**. Promoting one into `components/ui/` or `lib/` is not the shared module framework the
+rule forbids; one feature module importing another is, and the promotions are what make that
+unnecessary. The test is knowledge, not resemblance: a Games card and an Anime card resemble each
+other and encode different constraints, so they stay two files.
+
+`src/lib/` may never import from `src/server/{finance,games,anime}/`. It did once — `format-date.ts`
+took `MONTH_ABBREVIATIONS` from `@/server/finance/grid`, which put a Finance import in every other
+module's bundle behind an innocuous date helper, and is documented in `server/games/release-date.ts`
+as the reason that module refused to reuse it.
 
 **What they deliberately do NOT share, despite the surface similarity:** both count things, both
 aggregate, both have a stats page, both have a filterable table, both have a "sync/import then review
@@ -207,7 +221,13 @@ modelling neither well.
 
 **There is still no module registry, no plugin system, no generic repository.** CLAUDE.md now makes
 this a rule rather than a preference: do not build a shared module framework for the two that exist,
-and do not build a third module. Finance and Games are the product.
+and do not build a shared module framework for the modules that exist.
+
+**Amended 2026-08-29:** a third module, Anime, was added at the owner's request; this section
+previously read "and do not build a third module". The prohibition that survives is the one about
+COUPLING, not about count: no generic module registry, no abstraction two modules both instantiate,
+no shared feature layer. Anime shares `src/components/ui/`, the `(private)` layout, `getDb()`,
+`requireOwner()` and `src/proxy.ts` with the other two, and nothing beyond that.
 
 ---
 
