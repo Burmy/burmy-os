@@ -192,9 +192,23 @@ instead of guessing now."*
 `server/games/` and `server/db/games/` plus a nav entry. Nothing generic had to be built for it, and
 nothing generic was.
 
-**What the two modules actually share, in full:** the `src/components/ui/` primitives (button, table,
-dialog, chip, stat card), the `(private)` layout and sidebar, `src/server/db/index.ts`'s connection,
-`requireOwner()`, and the CSP/header work in `src/proxy.ts`. That is the complete list.
+**What the modules actually share, in full:** the `src/components/ui/` primitives (button, table,
+dialog, chip, stat card, and — promoted there once a second module needed each — `inline-edit-row`,
+`picker-dialog` and the tone-based `status-badge`), the `src/lib/` helpers (`cn`, `useNavigate`,
+`format-date`, `relative-time`, `uuid`), the `(private)` layout and sidebar,
+`src/server/db/index.ts`'s connection, `requireOwner()`, and the CSP/header work in `src/proxy.ts`.
+That is the complete list.
+
+Promotion rather than duplication is the rule for a primitive with **zero knowledge of the module it
+started in**. Promoting one into `components/ui/` or `lib/` is not the shared module framework the
+rule forbids; one feature module importing another is, and the promotions are what make that
+unnecessary. The test is knowledge, not resemblance: a Games card and an Anime card resemble each
+other and encode different constraints, so they stay two files.
+
+`src/lib/` may never import from `src/server/{finance,games,anime}/`. It did once — `format-date.ts`
+took `MONTH_ABBREVIATIONS` from `@/server/finance/grid`, which put a Finance import in every other
+module's bundle behind an innocuous date helper, and is documented in `server/games/release-date.ts`
+as the reason that module refused to reuse it.
 
 **What they deliberately do NOT share, despite the surface similarity:** both count things, both
 aggregate, both have a stats page, both have a filterable table, both have a "sync/import then review

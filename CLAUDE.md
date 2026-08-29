@@ -454,6 +454,31 @@ These are verified, not folklore. Do not "fix" them back.
   page, not by any check. The same pattern is used ALL OVER this codebase for
   `exactOptionalPropertyTypes` (and is correct for that), so the risk is specific: when a conditional
   spread introduces a prop name you have not used on that component before, confirm the prop exists.
+- **`PageHeader` has no `subtitle` prop, and FOUR call sites passed one anyway — through a
+  conditional spread, which bypasses the excess-property check.** This is the same mechanism the
+  entry below records for `InlineEditField.hint`, hit again at a bigger scale: the Games sync review
+  screen's "Nothing below has been saved yet" line had never once rendered. `PageHeader` now declares
+  `readonly subtitle?: never`, which makes even the spread form a type error (verified by compiling
+  one against it). Reach for that pattern whenever a prop is REMOVED from a widely-used component —
+  deleting it silently converts every straggler into dead markup, while `?: never` converts them into
+  compile errors that name the fix.
+- **A grid track written `1fr` has a min-content floor, exactly like a flex item's `min-width: auto`.**
+  `1fr` is `minmax(auto, 1fr)`, so a long unbreakable value inside it pushes the track past its share,
+  the `truncate` on the content never engages because its container was never constrained, and the page
+  scrolls sideways. `ROW_CLASS` in `src/components/ui/inline-edit-row.tsx` shipped this way and ran a
+  show page to 422px on a 390px viewport — measured in a real headless browser, invisible to every
+  static check. Write `minmax(0,1fr)`. Same family as the `min-w-0` rule above, and worth checking
+  BOTH whenever a page overflows: a chain can have one of each.
+- **A Server Component may not construct JSX inside a `try`/`catch`.**
+  `react-hooks/error-boundaries` rejects it outright, because React renders the component after the
+  function returns — an error thrown during its render escapes the `catch` anyway, so the shape looks
+  like it works and does not. Put the `await` in the `try`, assign to a `let`, and build the JSX after
+  it. `src/app/(private)/anime/[id]/page.tsx` shows the shape.
+- **jsdom implements no Pointer Events API, and Radix's `Select` TRIGGER calls `hasPointerCapture`.**
+  A test that CLICKS a select to open it throws `target.hasPointerCapture is not a function` from
+  inside Radix, which reads like a Radix bug rather than a missing browser API. Polyfilled in
+  `tests/setup/testing-library.ts` beside the `scrollIntoView` one, which covers the different
+  `defaultOpen` path and does not help here.
 - **An accessible name is computed by concatenating child nodes with each one TRIMMED, so an
   `sr-only` span cannot carry a leading separator.** `{title}<span class="sr-only"> — in {parent}</span>`
   renders and reads correctly on screen, and `textContent` is right, but the computed name comes out
@@ -474,8 +499,13 @@ src/app/                  routes; / redirects to /finance/monthly (the landing v
 src/features/finance/     Finance UI
 src/features/games/       Games UI
 src/features/anime/       Anime UI
-src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks)
-src/lib/                  framework-free helpers usable from BOTH server and client (uuid, use-navigate)
+src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks),
+                          inline-edit-row.tsx, picker-dialog.tsx and status-badge.tsx — all three
+                          PROMOTED here once a second module needed them, never copied
+src/lib/                  framework-free helpers usable from BOTH server and client (uuid,
+                          use-navigate, relative-time, format-date). NOTHING here may import from
+                          src/server/{finance,games,anime}/ — that inverts the dependency and puts a
+                          product module in every other module's bundle.
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
 src/server/anime/         ANIME DOMAIN CORE — same rule

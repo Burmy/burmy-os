@@ -112,8 +112,6 @@ export function AnimePage({
           status={anime.status}
           progress={anime.progress}
           episodes={anime.episodes}
-          repeatCount={anime.repeatCount}
-          durationMinutes={anime.durationMinutes}
           onSaveField={saveField}
         />
 
@@ -128,6 +126,8 @@ export function AnimePage({
             titleEnglish={anime.titleEnglish}
             format={anime.format}
             episodes={anime.episodes}
+            progress={anime.progress}
+            repeatCount={anime.repeatCount}
             durationMinutes={anime.durationMinutes}
             season={anime.season}
             seasonYear={anime.seasonYear}

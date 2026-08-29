@@ -1,10 +1,11 @@
 'use client';
 
-import { InlineEditField, InlineEditSelect } from '@/components/ui/inline-edit-row';
+import { InlineEditField, InlineEditSelect, ROW_CLASS } from '@/components/ui/inline-edit-row';
 import type { ActionResult } from '@/features/anime/action-result';
 import type { AnimeFieldKey } from '@/features/anime/anime-actions';
 import { SeriesField } from '@/features/anime/series/series-field';
 import type { PickableAnime } from '@/features/anime/series/anime-picker-dialog';
+import { episodesWatched, formatRuntime, minutesWatched } from '@/server/anime/runtime';
 import {
   ANIME_FORMATS,
   ANIME_SEASONS,
@@ -43,6 +44,8 @@ export function AnimeDetails({
   titleEnglish,
   format,
   episodes,
+  progress,
+  repeatCount,
   durationMinutes,
   season,
   seasonYear,
@@ -62,6 +65,8 @@ export function AnimeDetails({
   readonly titleEnglish: string | null;
   readonly format: AnimeFormat | null;
   readonly episodes: number | null;
+  readonly progress: number;
+  readonly repeatCount: number;
   readonly durationMinutes: number | null;
   readonly season: AnimeSeason | null;
   readonly seasonYear: number | null;
@@ -78,9 +83,52 @@ export function AnimeDetails({
   readonly onSaveSeries: (seriesId: string | null) => Promise<ActionResult>;
   readonly onCreateSeries: () => Promise<ActionResult>;
 }): React.ReactElement {
+  // Both computed at render, never stored — `runtime.ts` is the only place
+  // either conversion happens, the same containment rule `money.ts` holds.
+  const watched = episodesWatched(progress, repeatCount, episodes);
+  const minutes = minutesWatched(progress, repeatCount, episodes, durationMinutes);
+
   return (
     <div className="grid min-w-0 gap-x-8 gap-y-0.5 lg:grid-cols-2">
       <div className="min-w-0 space-y-0.5">
+        {/* Progress, rewatches and time watched live HERE rather than in the
+            summary panel beside the cover. They started there and the running
+            page settled it: a 9rem label column inside a 260px panel wrapped
+            "128 episodes watched in total" to four lines, while this column —
+            twice as wide — ended halfway up the page. */}
+        <InlineEditField
+          label="Progress"
+          value={String(progress)}
+          displayValue={episodes === null ? `${progress} episodes` : `${progress} / ${episodes}`}
+          onSave={(value) => onSaveField('progress', value)}
+        />
+
+        <InlineEditField
+          label="Rewatches"
+          value={String(repeatCount)}
+          displayValue={repeatCount === 0 ? 'None' : `${repeatCount}×`}
+          {...(repeatCount === 0 ? {} : { hint: `${watched} episodes watched in total` })}
+          onSave={(value) => onSaveField('repeatCount', value)}
+        />
+
+        <div className={ROW_CLASS}>
+          <span className="text-muted-foreground">Time watched</span>
+          <span>
+            {/* Always "≈", never a bare figure: `durationMinutes` is an average
+                AniList publishes, not a measurement of what was watched. */}
+            {minutes === null ? (
+              <span className="text-muted-foreground italic">Unknown</span>
+            ) : (
+              <>
+                ≈{formatRuntime(minutes)}
+                <span className="text-muted-foreground block text-xs">
+                  Estimated from an average episode length, not measured.
+                </span>
+              </>
+            )}
+          </span>
+        </div>
+
         <InlineEditField
           label="English title"
           value={titleEnglish ?? ''}
