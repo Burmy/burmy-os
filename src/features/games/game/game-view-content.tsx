@@ -16,7 +16,7 @@ import { GAME_OWNERSHIPS, OWNERSHIP_LABELS } from '@/server/games/taxonomy';
 import type { GameOwnership } from '@/server/games/taxonomy';
 import type { CollectionTrophySummary } from '@/server/games/collections';
 import { CollectionField } from '@/features/games/collections/collection-field';
-import { InlineEditField, InlineEditSelect } from './inline-edit-row';
+import { InlineEditField, InlineEditSelect } from '@/components/ui/inline-edit-row';
 
 /**
  * A group of related rows, separated from the previous group by a rule.
@@ -30,7 +30,7 @@ import { InlineEditField, InlineEditSelect } from './inline-edit-row';
  * It also used to carry `divide-y`, putting a rule under EVERY row — ten of
  * them stacked up on a page with nine fields. Those rules existed to bind a
  * label to a value that sat a full column-width away; now that
- * `inline-edit-row.tsx` puts the value directly beside its label, alignment
+ * `@/components/ui/inline-edit-row` puts the value directly beside its label, alignment
  * does that job and the rules were only noise. The group separators stay.
  */
 /**
@@ -64,7 +64,7 @@ function FullWidthRow({ children }: { readonly children: React.ReactNode }): Rea
 
 /**
  * The right column — every field independently
- * inline-editable (`inline-edit-row.tsx`). Replaces the old whole-page
+ * inline-editable (`@/components/ui/inline-edit-row`). Replaces the old whole-page
  * edit-mode form; `PageHeader`/`GameSummaryPanel` already carry the title
  * and Platform/Status/Rating/Hours/Platinum, so none of those repeat here.
  */

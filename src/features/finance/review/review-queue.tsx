@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
 import { Money } from '@/components/finance/money';
-import { StatusBadge, type StatusTone } from '@/components/finance/status-badge';
+import { StatusBadge, type StatusTone } from '@/components/ui/status-badge';
 import { useNavigate } from '@/lib/use-navigate';
 import type { FinanceCategory } from '@/server/db/finance/categories';
 import type { ReviewFilters, ReviewTransaction, StatusFacetCounts } from '@/server/db/finance/transactions';

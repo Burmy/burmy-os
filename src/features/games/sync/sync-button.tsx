@@ -95,12 +95,16 @@ export function SyncButton({ configured }: { readonly configured: boolean }): Re
 
   if (!configured) {
     return (
-      // Single line: the button plus a short, still-VISIBLE (never
-      // tooltip-only) hint naming both required vars, so a silently
-      // disabled button never leaves the owner guessing why sync does
-      // nothing. Full context — connection state, last synced — lives in
-      // Settings; this stays just enough to be self-explanatory in place.
-      <div className="flex items-center gap-2">
+      // The button plus a short, still-VISIBLE (never tooltip-only) hint
+      // naming both required vars, so a silently disabled button never leaves
+      // the owner guessing why sync does nothing. Full context — connection
+      // state, last synced — lives in Settings; this stays just enough to be
+      // self-explanatory in place.
+      //
+      // `flex-wrap`: one line wherever it fits, two on a phone. Without it
+      // this pair alone pushed Settings to 528px on a 390px viewport —
+      // measured, and it had been that way since the button moved here.
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled title="Set STEAM_API_KEY and STEAM_ID to enable Steam sync.">
           <RefreshCw className="size-4" aria-hidden />
           Sync with Steam

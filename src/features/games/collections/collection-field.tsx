@@ -6,7 +6,7 @@ import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
-import { ROW_CLASS } from '@/features/games/game/inline-edit-row';
+import { ROW_CLASS } from '@/components/ui/inline-edit-row';
 import { cn } from '@/lib/utils';
 import { GamePickerDialog, type PickableGame } from './game-picker-dialog';
 

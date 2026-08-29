@@ -14,24 +14,44 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
-import type { ActionResult } from '@/features/games/action-result';
 
 /**
- * Per-field inline editing for the game page — click a value, it becomes a
- * real control, it saves itself independently of every other field. This
- * replaces the previous round's whole-page Edit/Save/Cancel toggle: real
- * usage found clicking "Edit" to change one field, then having to find and
- * click "Save" for the whole page, was the wrong model. Same underlying
- * idea as Finance's `InlineEditText`
- * (`src/components/finance/inline-edit-text.tsx`) — click, edit, blur
- * commits — generalized here to also cover selects and a checkbox, and to
- * call a Server Action directly instead of a per-row callback prop, since
- * there's no parent list state to update afterward: `onSave` already calls
- * `revalidatePath`, and Next refreshes this page's own Server Component
- * with the new value automatically. No local mirroring of "the current
- * value" is needed — `value` is always read straight from the fresh `game`
- * prop one level up.
+ * Per-field inline editing — click a value, it becomes a real control, it
+ * saves itself independently of every other field. This replaced a whole-page
+ * Edit/Save/Cancel toggle on the game page: real usage found that changing one
+ * field, then hunting for a "Save" that committed the whole page, was the
+ * wrong model. Same underlying idea as Finance's `InlineEditText`
+ * (`src/components/finance/inline-edit-text.tsx`) — click, edit, blur commits
+ * — generalized here to cover selects too, and to call a Server Action
+ * directly instead of a per-row callback prop: `onSave` already calls
+ * `revalidatePath`, and Next refreshes the calling Server Component with the
+ * new value, so there is no parent list state to mirror.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THIS LIVED IN `src/features/games/game/` UNTIL ANIME NEEDED IT TOO.
+ *
+ * It has zero games imports and never had any — every prop is a string, a
+ * label, or a callback. Promoting a proven primitive into `components/ui/` is
+ * not the shared module framework CLAUDE.md forbids; a Games component
+ * importing from `features/anime/` (or the reverse) is what that rule is
+ * about, and this move is what makes it unnecessary.
+ *
+ * It declares its OWN minimal result type rather than importing one of the
+ * six `action-result.ts` modules, for the same reason: a shared primitive that
+ * imported a feature module's type would drag exactly the coupling the move
+ * exists to avoid. Every one of those types is structurally assignable to this
+ * one, so callers pass their own actions unchanged.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
+
+/**
+ * The minimum an inline edit needs back: did it work, and if not, what to say.
+ * Each module's own `ActionResult` satisfies this — Games' extra optional
+ * `field` is simply ignored here.
+ */
+export type InlineEditResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
 
 /**
  * One label/value row.
@@ -49,10 +69,23 @@ import type { ActionResult } from '@/features/games/action-result';
  * together — see `game-view-content.tsx`, which dropped `divide-y` in the
  * same change.
  */
-export const ROW_CLASS = 'grid grid-cols-[9rem_1fr] items-start gap-3 py-1.5 text-sm';
+/**
+ * `minmax(0,1fr)`, NOT `1fr` — and the difference is a real overflow bug, not
+ * pedantry. A bare `1fr` track is `minmax(auto, 1fr)`, so its floor is the
+ * content's own min-content width: a long unbreakable title ("Fullmetal
+ * Alchemist: Brotherhood") pushes the track past its share, the `truncate` on
+ * the value inside never engages because its container was never constrained,
+ * and the whole page scrolls sideways. Measured on a 390px viewport, where an
+ * anime show page ran to 422px until this was `minmax(0,1fr)`.
+ *
+ * Same family as the `min-w-0` rule CLAUDE.md records for flex chains — a grid
+ * track and a flex item both default to an `auto` minimum, and both need the
+ * override explicitly.
+ */
+export const ROW_CLASS = 'grid grid-cols-[9rem_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm';
 
 async function commit(
-  onSave: (value: string) => Promise<ActionResult>,
+  onSave: (value: string) => Promise<InlineEditResult>,
   value: string,
 ): Promise<boolean> {
   const result = await onSave(value);
@@ -88,7 +121,7 @@ export function InlineEditField({
    * but means something narrower than the label suggests".
    */
   readonly hint?: string;
-  readonly onSave: (value: string) => Promise<ActionResult>;
+  readonly onSave: (value: string) => Promise<InlineEditResult>;
 }): React.ReactElement {
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);
@@ -175,7 +208,7 @@ export function InlineEditSelect({
   /** Read-only, because the value is owned somewhere else (a Steam link, a collection). Mirrors `InlineEditField`. */
   readonly disabled?: boolean;
   readonly disabledHint?: string;
-  readonly onSave: (value: string) => Promise<ActionResult>;
+  readonly onSave: (value: string) => Promise<InlineEditResult>;
 }): React.ReactElement {
   const [editing, setEditing] = useState(false);
   const [pending, setPending] = useState(false);

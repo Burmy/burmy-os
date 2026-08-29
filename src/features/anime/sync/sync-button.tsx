@@ -77,7 +77,7 @@ export function AnimeSyncButton({ configured }: { readonly configured: boolean }
 
   if (!configured) {
     return (
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled title="Set ANILIST_USERNAME to enable AniList sync.">
           <RefreshCw className="size-4" aria-hidden />
           Sync with AniList

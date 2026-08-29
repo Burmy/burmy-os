@@ -35,7 +35,7 @@ export function GamesSyncSection({
 }): React.ReactElement {
   return (
     <ul className="mt-3 divide-y">
-      <li className="flex items-center justify-between gap-3 py-2 text-sm">
+      <li className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
         <div>
           <span className="font-medium">Steam</span>
           {steamConfigured ? (
@@ -53,7 +53,7 @@ export function GamesSyncSection({
         <SyncButton configured={steamConfigured} />
       </li>
 
-      <li className="flex items-center justify-between gap-3 py-2 text-sm">
+      <li className="flex flex-wrap items-center justify-between gap-3 py-2 text-sm">
         <div>
           <span className="font-medium">PlayStation</span>
           {psnConfigured ? (

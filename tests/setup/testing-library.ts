@@ -59,3 +59,27 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
 if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView === 'undefined') {
   Element.prototype.scrollIntoView = function scrollIntoView(): void {};
 }
+
+/**
+ * jsdom implements no Pointer Events API at all, so `hasPointerCapture`,
+ * `setPointerCapture` and `releasePointerCapture` are simply absent from
+ * `Element.prototype`.
+ *
+ * Radix's `Select` TRIGGER — as opposed to the `defaultOpen` content path the
+ * `scrollIntoView` polyfill above covers — calls `hasPointerCapture` in its
+ * `pointerdown` handler, so a test that CLICKS a select to open it throws
+ * `target.hasPointerCapture is not a function` from inside Radix, which reads
+ * like a Radix bug rather than a missing browser API. First hit by the anime
+ * library's Series filter, the app's first click-to-open `FilterSelect` under
+ * test; every earlier select test either used `defaultOpen` or never opened.
+ *
+ * Capture is a no-op here: these tests assert that a select opens and a choice
+ * commits, never which element is capturing the pointer.
+ */
+if (typeof Element !== 'undefined' && typeof Element.prototype.hasPointerCapture === 'undefined') {
+  Element.prototype.hasPointerCapture = function hasPointerCapture(): boolean {
+    return false;
+  };
+  Element.prototype.setPointerCapture = function setPointerCapture(): void {};
+  Element.prototype.releasePointerCapture = function releasePointerCapture(): void {};
+}

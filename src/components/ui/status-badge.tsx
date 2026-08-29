@@ -10,9 +10,17 @@ const TONE_CLASSES: Record<StatusTone, string> = {
 };
 
 /**
- * A small pill for row status — "Ready", "Needs attention", "Confirmed", and
- * so on. One shared shape so every table (import summary, review queue)
- * reads as the same visual language rather than each inventing its own.
+ * A small pill for row status — "Ready", "Needs attention", "Watching", and so
+ * on. One shared shape so every table in the app reads as the same visual
+ * language rather than each inventing its own.
+ *
+ * TONE-BASED, WHICH IS WHY IT IS SHARED. It knows nothing about what a status
+ * IS; the caller decides which of four tones a state deserves and supplies its
+ * own words. That is what let it move out of `components/finance/`, where it
+ * had lived without ever importing anything finance, once Anime needed the
+ * same pill. `components/games/status-badge.tsx` is a genuinely different
+ * component and stays where it is: it maps `GameStatus` values to colors and
+ * paints itself over box art, neither of which is generic.
  */
 export function StatusBadge({
   tone,

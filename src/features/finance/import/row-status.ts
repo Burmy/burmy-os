@@ -1,4 +1,4 @@
-import type { StatusTone } from '@/components/finance/status-badge';
+import type { StatusTone } from '@/components/ui/status-badge';
 import type { FinanceImportRowView } from '@/server/db/finance/imports';
 
 export type RowBucket = 'ready' | 'attention' | 'duplicate' | 'excluded';

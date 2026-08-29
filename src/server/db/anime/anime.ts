@@ -14,7 +14,7 @@ import { and, asc, count, desc, eq, gt, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { anime as animeTable, animeSeries } from '@/server/db/schema';
-import type { AnimeFormat, AnimeSeason, AnimeSource, AnimeStatus } from '@/server/anime/taxonomy';
+import { type AnimeFormat, type AnimeSeason, type AnimeSource, type AnimeStatus, formatAiring } from '@/server/anime/taxonomy';
 import { AnimeNotFoundError } from './errors';
 
 export interface Anime {
@@ -270,6 +270,71 @@ export async function listSeries(ownerId: string): Promise<AnimeSeriesRow[]> {
     .from(animeSeries)
     .where(eq(animeSeries.ownerId, ownerId))
     .orderBy(asc(animeSeries.title));
+}
+
+/**
+ * Every show filed under one series, with only the fields its panel shows.
+ *
+ * Ordered in SQL by airing date so the list is right even before
+ * `compareByAiring` re-sorts it — the two agree, and the pure function is what
+ * a test can pin. `nulls last` for the same reason `listAnime` needs it:
+ * Postgres floats NULLs to the top of an ASC ordering, which would put an
+ * undated special ahead of season one.
+ */
+export async function listSeriesMembers(ownerId: string, seriesId: string): Promise<Anime[]> {
+  const rows = await getDb()
+    .select()
+    .from(animeTable)
+    .where(and(eq(animeTable.ownerId, ownerId), eq(animeTable.seriesId, seriesId)))
+    .orderBy(
+      sql`${animeTable.seasonYear} asc nulls last`,
+      asc(animeTable.titleRomaji),
+    );
+
+  return rows.map(rowToAnime);
+}
+
+/**
+ * Shows that could be ADDED to a series — everything that is not already in
+ * one.
+ *
+ * ONE EXCLUSION, NOT GAMES' THREE. A show already filed under another series
+ * is left out, because moving it would silently empty a slot in a franchise
+ * the owner is not looking at; they remove it there first, deliberately. There
+ * is no self-exclusion to make (a series is not a show, so it can never be its
+ * own member) and no nesting rule to enforce (`series_id` points at
+ * `anime_series`, which has no parent of its own) — both of which Games needs
+ * because a collection IS a game row.
+ *
+ * Current members are passed back in by the caller as `selectedIds`, so they
+ * render checked rather than missing.
+ */
+export async function listSeriesCandidates(
+  ownerId: string,
+  seriesId: string,
+): Promise<{ readonly id: string; readonly title: string; readonly subtitle: string | null }[]> {
+  const rows = await getDb()
+    .select({
+      id: animeTable.id,
+      title: animeTable.titleRomaji,
+      season: animeTable.season,
+      seasonYear: animeTable.seasonYear,
+      seriesId: animeTable.seriesId,
+    })
+    .from(animeTable)
+    .where(
+      and(
+        eq(animeTable.ownerId, ownerId),
+        sql`(${animeTable.seriesId} is null or ${animeTable.seriesId} = ${seriesId})`,
+      ),
+    )
+    .orderBy(asc(animeTable.titleRomaji));
+
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    subtitle: formatAiring(row.season as AnimeSeason | null, row.seasonYear),
+  }));
 }
 
 /** Most recently watched first — what the library's "recent" ordering reads. */
