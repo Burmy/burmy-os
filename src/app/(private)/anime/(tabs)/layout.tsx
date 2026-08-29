@@ -2,7 +2,7 @@ import { SubNav } from '@/features/shell/nav';
 import { requireOwner } from '@/server/auth/owner';
 
 /**
- * The Anime screens that share a persistent tab bar.
+ * Library / Stats — the Anime screens that share a persistent tab bar.
  *
  * `requireOwner()` here is defense-in-depth alongside each page's own call. A
  * layout guard would not protect a page's Server Actions (see CLAUDE.md), so
@@ -13,7 +13,10 @@ export default async function AnimeTabsLayout({
 }: Readonly<{ children: React.ReactNode }>): Promise<React.ReactElement> {
   await requireOwner();
 
-  const links = [{ href: '/anime/library', label: 'Library' }];
+  const links = [
+    { href: '/anime/library', label: 'Library' },
+    { href: '/anime/stats', label: 'Stats' },
+  ];
 
   return (
     <div className="space-y-6">

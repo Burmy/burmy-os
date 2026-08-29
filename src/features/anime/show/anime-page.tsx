@@ -86,7 +86,7 @@ export function AnimePage({
       <PageHeader
         title={anime.titleRomaji}
         className="mt-2"
-        {...(airing === null ? {} : { subtitle: airing })}
+        meta={airing === null ? null : <span>{airing}</span>}
         actions={
           <Button type="button" variant="ghost" onClick={() => setConfirmingDelete(true)} disabled={deletePending}>
             <Trash2 className="size-4" />

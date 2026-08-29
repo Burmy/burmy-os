@@ -15,6 +15,7 @@ import { and, asc, count, desc, eq, gt, sql } from 'drizzle-orm';
 import { getDb } from '@/server/db';
 import { anime as animeTable, animeSeries } from '@/server/db/schema';
 import { type AnimeFormat, type AnimeSeason, type AnimeSource, type AnimeStatus, formatAiring } from '@/server/anime/taxonomy';
+import type { AnimeStatRow } from '@/server/anime/stats';
 import { AnimeNotFoundError } from './errors';
 
 export interface Anime {
@@ -334,6 +335,45 @@ export async function listSeriesCandidates(
     id: row.id,
     title: row.title,
     subtitle: formatAiring(row.season as AnimeSeason | null, row.seasonYear),
+  }));
+}
+
+/**
+ * The narrow projection the stats dashboard reads.
+ *
+ * Deliberately NOT `listAnime`: the dashboard needs fifteen columns and none of
+ * the long text, and shipping a few hundred synopses to a page that renders bar
+ * charts is bytes for nothing. Column-for-column what `AnimeStatRow` declares,
+ * so the two cannot drift into a runtime `undefined`.
+ */
+export async function listAnimeStatRows(ownerId: string): Promise<AnimeStatRow[]> {
+  const rows = await getDb()
+    .select({
+      id: animeTable.id,
+      titleRomaji: animeTable.titleRomaji,
+      titleEnglish: animeTable.titleEnglish,
+      status: animeTable.status,
+      format: animeTable.format,
+      source: animeTable.source,
+      episodes: animeTable.episodes,
+      progress: animeTable.progress,
+      repeatCount: animeTable.repeatCount,
+      durationMinutes: animeTable.durationMinutes,
+      season: animeTable.season,
+      seasonYear: animeTable.seasonYear,
+      studio: animeTable.studio,
+      genre: animeTable.genre,
+      coverUrl: animeTable.coverUrl,
+    })
+    .from(animeTable)
+    .where(eq(animeTable.ownerId, ownerId));
+
+  return rows.map((row) => ({
+    ...row,
+    status: row.status as AnimeStatus,
+    format: row.format as AnimeFormat | null,
+    source: row.source as AnimeSource | null,
+    season: row.season as AnimeSeason | null,
   }));
 }
 

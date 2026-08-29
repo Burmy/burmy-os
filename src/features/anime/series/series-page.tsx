@@ -88,7 +88,7 @@ export function SeriesPage({
       <PageHeader
         title={series.title}
         className="mt-2"
-        {...(span === null ? {} : { subtitle: span })}
+        meta={span === null ? null : <span>{span}</span>}
         actions={
           <Button type="button" variant="ghost" onClick={() => setConfirmingDelete(true)} disabled={deletePending}>
             <Trash2 className="size-4" />
