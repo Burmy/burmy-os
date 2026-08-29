@@ -1,6 +1,6 @@
 'use client';
 
-import { Gamepad2, Loader2, Settings, Table2 } from 'lucide-react';
+import { Gamepad2, Loader2, Settings, Table2, Tv } from 'lucide-react';
 import Link, { useLinkStatus } from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -47,14 +47,17 @@ function TabPending(): React.ReactElement | null {
 /**
  * Three destinations: Finance, Games, Settings.
  *
- * Finance and Games are the two product modules; Settings is separated from
+ * Finance, Games and Anime are the product modules; Settings is separated from
  * them by a rule below. There is no Home dashboard — each module's own landing
- * view IS its home. A fourth entry should require a real third module, not an
+ * view IS its home. Anime became a real third module on 2026-08-29 (see
+ * CLAUDE.md, which records the amendment and the coupling rule that survives
+ * it). A FIFTH entry should require a real fourth module, not an
  * anticipated one.
  */
 const LINKS = [
   { href: '/finance/monthly', label: 'Finance', Icon: Table2, match: '/finance' },
   { href: '/games/library', label: 'Games', Icon: Gamepad2, match: '/games' },
+  { href: '/anime/library', label: 'Anime', Icon: Tv, match: '/anime' },
   { href: '/settings', label: 'Settings', Icon: Settings, match: '/settings' },
 ] as const;
 

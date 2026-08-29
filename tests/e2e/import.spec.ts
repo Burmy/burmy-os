@@ -140,8 +140,8 @@ test.describe('import', () => {
     // Merchant memory has nothing for LARSEN'S yet, so exactly one row needs
     // attention — the whole point of the tabs: only the exception demands a
     // look.
-    await expect(page.getByRole('button', { name: 'Needs attention 1' })).toBeVisible();
-    await page.getByRole('button', { name: 'Needs attention 1' }).click();
+    await expect(page.getByRole('button', { name: 'Needs attention, 1' })).toBeVisible();
+    await page.getByRole('button', { name: 'Needs attention, 1' }).click();
     await expect(page.getByText("LARSEN'S #0366", { exact: false })).toBeVisible();
 
     const larsensRow = page.getByRole('row', { name: /LARSEN'S/ });
@@ -176,7 +176,7 @@ test.describe('import', () => {
     // pattern review.spec.ts's own banner check already uses.
     await expect(page.getByRole('status').filter({ hasText: 'already imported' })).toBeVisible();
 
-    const duplicateTab = page.getByRole('button', { name: `Duplicate ${DEPOSIT_TRANSACTION_COUNT}` });
+    const duplicateTab = page.getByRole('button', { name: `Duplicate, ${DEPOSIT_TRANSACTION_COUNT}` });
     await expect(duplicateTab).toBeVisible();
     await duplicateTab.click();
     await expect(page.getByText('Duplicate — already imported').first()).toBeVisible();
@@ -217,10 +217,10 @@ test.describe('import', () => {
     // itself is "Ready" — pre-filled, the owner never touches its category
     // select — which is exactly the point: memory narrows the exception list
     // by one row at a time as it learns, not all-or-nothing.
-    await expect(page.getByRole('button', { name: 'Ready 1' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Needs attention 11' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ready, 1' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Needs attention, 11' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Ready 1' }).click();
+    await page.getByRole('button', { name: 'Ready, 1' }).click();
     const larsensRow = page.getByRole('row', { name: /LARSEN'S/ });
     await expect(larsensRow.getByLabel(/^Category for/)).toHaveText('Dining');
     await expect(larsensRow.getByText('Ready — auto-categorized')).toBeVisible();

@@ -30,6 +30,12 @@ export function FilterChip({
       type="button"
       onClick={onClick}
       aria-pressed={active}
+      // An EXPLICIT name, because the computed one concatenates the label and
+      // the count with each child TRIMMED — "Watching2", with no separator.
+      // It reads wrong aloud and is impossible to query for by name. The
+      // visible label stays a prefix of this (WCAG 2.5.3). Same trap
+      // documented in CLAUDE.md for the game table's nested rows.
+      {...(count === undefined ? {} : { 'aria-label': `${label}, ${count}` })}
       className={cn(
         // Borderless: the resting chip carries a tonal fill, the active one
         // flips to full foreground/background contrast. Part of the app-wide
