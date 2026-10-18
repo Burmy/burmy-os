@@ -155,7 +155,12 @@ export function buildYearlyBreakdown(
   } {
     const existing = byYear.get(year);
     if (existing !== undefined) return existing;
-    const created = { startedCount: 0, playedGames: new Set<string>(), hoursTenths: 0, achievements: 0 };
+    const created = {
+      startedCount: 0,
+      playedGames: new Set<string>(),
+      hoursTenths: 0,
+      achievements: 0,
+    };
     byYear.set(year, created);
     return created;
   }
@@ -226,7 +231,9 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
     playingCount: games.filter((row) => row.status === 'playing').length,
     playedCount: games.filter((row) => row.status === 'played').length,
     averageRating:
-      rated.length === 0 ? null : rated.reduce((sum, row) => sum + (row.rating ?? 0), 0) / rated.length,
+      rated.length === 0
+        ? null
+        : rated.reduce((sum, row) => sum + (row.rating ?? 0), 0) / rated.length,
     platinumCount: rows.filter((row) => row.platinum).length,
     averageHoursTenthsPerGame:
       withHours.length === 0
@@ -235,8 +242,50 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
     averageMetacritic:
       withMetacritic.length === 0
         ? null
-        : withMetacritic.reduce((sum, row) => sum + (row.metacritic ?? 0), 0) / withMetacritic.length,
+        : withMetacritic.reduce((sum, row) => sum + (row.metacritic ?? 0), 0) /
+          withMetacritic.length,
   };
+}
+
+/**
+ * Trophy and achievement totals across the library, from the hand-entered
+ * `achievementsUnlocked` / `achievementsTotal` counts on each row — the same
+ * numbers the trophies-per-year chart and the "Most trophies" leaderboard
+ * read. There is no per-trophy table any more; these two counts ARE the
+ * trophy data.
+ *
+ * Rows arrive through `listGameStatRows`, which has already rolled a
+ * collection's members up into the collection row (`trophyAdjustedRows`), so
+ * summing the full set counts every trophy exactly once. A row with no count
+ * recorded contributes nothing — missing data, not zero — and `total` is
+ * `null` when NO row carries one, so a card can say "52 earned" rather than
+ * "52 of 0".
+ */
+export interface TrophyTotals {
+  readonly earned: number;
+  readonly total: number | null;
+  /** Rows with at least one earned trophy recorded. */
+  readonly gamesWithTrophies: number;
+}
+
+export function buildTrophyTotals(rows: readonly GameStatRow[]): TrophyTotals {
+  let earned = 0;
+  let total = 0;
+  let hasTotal = false;
+  let gamesWithTrophies = 0;
+
+  for (const row of rows) {
+    if (row.achievementsUnlocked !== null && row.achievementsUnlocked > 0) {
+      earned += row.achievementsUnlocked;
+      gamesWithTrophies += 1;
+    }
+    if (row.achievementsTotal !== null && row.achievementsTotal > 0) {
+      total += row.achievementsTotal;
+      hasTotal = true;
+    }
+  }
+
+  return { earned, total: hasTotal ? total : null, gamesWithTrophies };
 }
 
 /**
@@ -356,7 +405,10 @@ export function buildGenreDistribution(rows: readonly GameStatRow[]): Distributi
  * (or any future caller of `buildDistribution`) free to blow the chart back
  * up the same way genre once did.
  */
-export function capDistributionSlices(slices: readonly DistributionSlice[], limit: number): DistributionSlice[] {
+export function capDistributionSlices(
+  slices: readonly DistributionSlice[],
+  limit: number,
+): DistributionSlice[] {
   if (slices.length <= limit) return [...slices];
 
   const kept = slices.slice(0, limit);
@@ -382,13 +434,19 @@ export function capDistributionSlices(slices: readonly DistributionSlice[], limi
  * the max by `hoursTenths`. One attribution implementation, not two kept in
  * sync by hand.
  */
-export function findCallouts(rows: readonly GameStatRow[], yearlyRows: readonly YearlyBreakdownRow[]): Callouts {
+export function findCallouts(
+  rows: readonly GameStatRow[],
+  yearlyRows: readonly YearlyBreakdownRow[],
+): Callouts {
   const played = rows.filter((row) => (row.hoursTenths ?? 0) > 0);
 
   const developerHours = new Map<string, number>();
   for (const row of played) {
     if (row.developer === null || row.developer === '') continue;
-    developerHours.set(row.developer, (developerHours.get(row.developer) ?? 0) + (row.hoursTenths ?? 0));
+    developerHours.set(
+      row.developer,
+      (developerHours.get(row.developer) ?? 0) + (row.hoursTenths ?? 0),
+    );
   }
   const topDeveloperEntry = [...developerHours.entries()].sort((a, b) => b[1] - a[1])[0];
 
@@ -399,8 +457,13 @@ export function findCallouts(rows: readonly GameStatRow[], yearlyRows: readonly 
 
   return {
     topDeveloper:
-      topDeveloperEntry === undefined ? null : { name: topDeveloperEntry[0], hoursTenths: topDeveloperEntry[1] },
-    bestYear: bestYearRow === null ? null : { year: bestYearRow.year, hoursTenths: bestYearRow.hoursTenths },
+      topDeveloperEntry === undefined
+        ? null
+        : { name: topDeveloperEntry[0], hoursTenths: topDeveloperEntry[1] },
+    bestYear:
+      bestYearRow === null
+        ? null
+        : { year: bestYearRow.year, hoursTenths: bestYearRow.hoursTenths },
   };
 }
 

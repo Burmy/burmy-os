@@ -12,12 +12,11 @@ import {
   buildGenreDistribution,
   buildLeaderboard,
   buildLibrarySummary,
+  buildTrophyTotals,
   buildYearlyBreakdown,
   findCallouts,
 } from '@/server/games/stats';
-import type { CloseToPlatinumRow, CompletionSummary, EarnedTrophyRow } from '@/server/db/games/trophies';
 import { type GamePlatform, PLATFORM_LABELS } from '@/server/games/taxonomy';
-import { CloseToPlatinumList, RarestEarnedList, RecentlyEarnedList } from './trophy-sections';
 import { DistributionChart } from './charts/distribution-chart';
 import { GamesPerYearChart } from './charts/games-per-year-chart';
 import { HoursPerYearChart } from './charts/hours-per-year-chart';
@@ -64,24 +63,13 @@ export function GamesDashboard({
   rows,
   playYears,
   currentYear,
-  completion,
-  closeToPlatinum,
-  recentlyEarned,
-  rarestEarned,
-  now,
 }: {
   readonly rows: readonly GameStatRow[];
   readonly playYears: readonly PlayYearRow[];
   readonly currentYear: number;
-  /** All four aggregated in SQL by `server/db/games/trophies.ts` — nothing is counted here. */
-  readonly completion: CompletionSummary;
-  readonly closeToPlatinum: readonly CloseToPlatinumRow[];
-  readonly recentlyEarned: readonly EarnedTrophyRow[];
-  readonly rarestEarned: readonly EarnedTrophyRow[];
-  /** Read once by the page, like `currentYear`, so "3d ago" stays deterministic and testable. */
-  readonly now: Date;
 }): React.ReactElement {
   const summary = buildLibrarySummary(rows);
+  const trophies = buildTrophyTotals(rows);
   const financial = buildFinancialSummary(rows);
   const yearly = buildYearlyBreakdown(rows, playYears);
   const callouts = findCallouts(rows, yearly.rows);
@@ -91,7 +79,11 @@ export function GamesDashboard({
   // beside its own three titles, and its genre is counted twice. See
   // `countableGames`.
   const games = countableGames(rows);
-  const platforms = buildDistribution(games, (row) => row.platform, (key) => PLATFORM_LABELS[key as GamePlatform]);
+  const platforms = buildDistribution(
+    games,
+    (row) => row.platform,
+    (key) => PLATFORM_LABELS[key as GamePlatform],
+  );
   const genres = buildGenreDistribution(games);
 
   // OWNERSHIP is the exception, and follows the money rather than the count:
@@ -100,13 +92,19 @@ export function GamesDashboard({
   // ownership at all (it lives on the collection, like `priceCents`), so
   // passing the full set is both correct and self-limiting — a child
   // contributes nothing because `buildDistribution` skips null keys.
-  const ownership = buildDistribution(rows, (row) => row.ownership, (key) => (key === 'physical' ? 'Physical' : 'Digital'));
+  const ownership = buildDistribution(
+    rows,
+    (row) => row.ownership,
+    (key) => (key === 'physical' ? 'Physical' : 'Digital'),
+  );
 
   // Quality (rating, Metacritic) qualifies the library as a whole, so both
   // ride on the "Games" card rather than each standing alone.
   const qualityHintParts: string[] = [];
-  if (summary.averageRating !== null) qualityHintParts.push(`${summary.averageRating.toFixed(1)}★ avg rating`);
-  if (summary.averageMetacritic !== null) qualityHintParts.push(`${summary.averageMetacritic.toFixed(0)} avg Metacritic`);
+  if (summary.averageRating !== null)
+    qualityHintParts.push(`${summary.averageRating.toFixed(1)}★ avg rating`);
+  if (summary.averageMetacritic !== null)
+    qualityHintParts.push(`${summary.averageMetacritic.toFixed(0)} avg Metacritic`);
   const qualityHint = qualityHintParts.length === 0 ? undefined : qualityHintParts.join(' · ');
 
   // Average playtime qualifies total hours played, so it rides on that card.
@@ -116,7 +114,9 @@ export function GamesDashboard({
       : `${formatHours(hours(Math.round(summary.averageHoursTenthsPerGame)))} avg per game`;
 
   const avgPriceHint =
-    financial.averagePriceCents === null ? undefined : `${formatPriceCents(financial.averagePriceCents)} avg per game`;
+    financial.averagePriceCents === null
+      ? undefined
+      : `${formatPriceCents(financial.averagePriceCents)} avg per game`;
 
   return (
     <div className={SECTION_STACK}>
@@ -138,28 +138,34 @@ export function GamesDashboard({
           failure was silent — a headline number quietly becoming unreadable.
           Two rows of four give every card room for its value. */}
       <StatCardGrid>
-        <StatCard label="Games" value={String(summary.totalGames)} {...(qualityHint === undefined ? {} : { hint: qualityHint })} />
+        <StatCard
+          label="Games"
+          value={String(summary.totalGames)}
+          {...(qualityHint === undefined ? {} : { hint: qualityHint })}
+        />
         <StatCard
           label="Hours played"
           value={formatHours(hours(summary.totalHoursTenths))}
           {...(avgPlaytimeHint === undefined ? {} : { hint: avgPlaytimeHint })}
         />
-        <StatCard label="Platinums" value={String(summary.platinumCount)} hint={`of ${summary.totalGames} games`} />
-        {/* Trophy-grained, and it says so: every trophy counts equally, across
-            BOTH PlayStation and Steam. The hint is game-grained instead —
-            "how many games are finished" is a different question from "what
-            fraction of all trophies do I hold," and conflating them is how a
-            completion figure starts misleading. */}
         <StatCard
-          label="Completion"
-          value={completion.percent === null ? '—' : `${completion.percent}%`}
-          hint={
-            completion.trackedGames === 0
-              ? 'No trophies synced yet'
-              : `${completion.completeGames} complete · ${completion.trackedGames} tracked`
-          }
+          label="Platinums"
+          value={String(summary.platinumCount)}
+          hint={`of ${summary.totalGames} games`}
         />
-        <StatCard label="Backlog" value={String(summary.backlogCount)} hint={`${summary.playingCount} in progress`} />
+        {/* From the hand-entered earned/total counts on each game — the same
+            numbers the trophies-per-year chart and "Most trophies" read. A
+            game with no counts recorded contributes nothing, not zero. */}
+        <StatCard
+          label="Trophies earned"
+          value={trophies.earned.toLocaleString('en-US')}
+          hint={trophyHint(trophies)}
+        />
+        <StatCard
+          label="Backlog"
+          value={String(summary.backlogCount)}
+          hint={`${summary.playingCount} in progress`}
+        />
         <StatCard
           label="Total spend"
           value={formatPriceCents(financial.totalSpendCents)}
@@ -167,27 +173,24 @@ export function GamesDashboard({
         />
         <StatCard
           label="Cost per hour"
-          value={financial.costPerHourCents === null ? '—' : `${formatPriceCents(financial.costPerHourCents)}/hr`}
+          value={
+            financial.costPerHourCents === null
+              ? '—'
+              : `${formatPriceCents(financial.costPerHourCents)}/hr`
+          }
           hint={`${formatPriceCents(financial.backlogValueCents)} sitting in backlog`}
         />
       </StatCardGrid>
 
-      {/* Above `Year by year` deliberately: the hunt is current, the
-          year-by-year table is history, and history reads better underneath.
-          Rendered only when there is something to show — three empty-state
-          paragraphs side by side is more chrome than absent data deserves. */}
-      {closeToPlatinum.length > 0 || recentlyEarned.length > 0 || rarestEarned.length > 0 ? (
-        <Section title="Trophies">
-          <div className="grid gap-8 lg:grid-cols-3">
-            <CloseToPlatinumList rows={closeToPlatinum} />
-            <RecentlyEarnedList rows={recentlyEarned} now={now} />
-            <RarestEarnedList rows={rarestEarned} />
-          </div>
-        </Section>
-      ) : null}
-
-      <Section title="Year by year" description="Every number here is computed from your library, not stored.">
-        <YearlyBreakdownTable rows={yearly.rows} unattributedTenths={yearly.unattributedTenths} currentYear={currentYear} />
+      <Section
+        title="Year by year"
+        description="Every number here is computed from your library, not stored."
+      >
+        <YearlyBreakdownTable
+          rows={yearly.rows}
+          unattributedTenths={yearly.unattributedTenths}
+          currentYear={currentYear}
+        />
       </Section>
 
       <Section title="Trends">
@@ -213,7 +216,10 @@ export function GamesDashboard({
             <DistributionChart slices={ownership} emptyMessage="No ownership recorded yet." />
           </ChartBlock>
           <ChartBlock label="Genres">
-            <DistributionChart slices={genres} emptyMessage="No genres yet — add cover art to fill these in." />
+            <DistributionChart
+              slices={genres}
+              emptyMessage="No genres yet — add cover art to fill these in."
+            />
           </ChartBlock>
           <ChartBlock label="Ratings">
             <RatingDistributionChart rows={rows} />
@@ -227,8 +233,18 @@ export function GamesDashboard({
           box was the same "double box" problem the top row already fixed,
           just with a richer card instead of a plain StatCard. */}
       <div className="grid gap-5 lg:grid-cols-2">
-        <TopGames title="Most played" hint="By total hours" metric="hours" entries={buildLeaderboard(rows, 'hours', 3)} />
-        <TopGames title="Highest rated" hint="Your own rating" metric="rating" entries={buildLeaderboard(rows, 'rating', 3)} />
+        <TopGames
+          title="Most played"
+          hint="By total hours"
+          metric="hours"
+          entries={buildLeaderboard(rows, 'hours', 3)}
+        />
+        <TopGames
+          title="Highest rated"
+          hint="Your own rating"
+          metric="rating"
+          entries={buildLeaderboard(rows, 'rating', 3)}
+        />
         <TopGames
           title="Most trophies"
           hint="Achievements earned"
@@ -260,11 +276,20 @@ export function GamesDashboard({
         <StatCard
           label="Best year"
           value={callouts.bestYear === null ? '—' : String(callouts.bestYear.year)}
-          {...(callouts.bestYear === null ? {} : { hint: formatHours(hours(callouts.bestYear.hoursTenths)) })}
+          {...(callouts.bestYear === null
+            ? {}
+            : { hint: formatHours(hours(callouts.bestYear.hoursTenths)) })}
         />
       </StatCardGrid>
     </div>
   );
+}
+
+function trophyHint(trophies: ReturnType<typeof buildTrophyTotals>): string {
+  const games = `${trophies.gamesWithTrophies} game${trophies.gamesWithTrophies === 1 ? '' : 's'}`;
+  return trophies.total === null
+    ? `across ${games}`
+    : `of ${trophies.total.toLocaleString('en-US')} · ${games}`;
 }
 
 /**
@@ -274,7 +299,13 @@ export function GamesDashboard({
  * "Breakdown" alone, is the "too many boxes" complaint this redesign exists
  * to fix. One outer `Section` per group, plain labels for what's inside it.
  */
-function ChartBlock({ label, children }: { readonly label: string; readonly children: React.ReactNode }): React.ReactElement {
+function ChartBlock({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: React.ReactNode;
+}): React.ReactElement {
   return (
     <div>
       <h3 className="text-muted-foreground mb-2 text-xs font-medium">{label}</h3>

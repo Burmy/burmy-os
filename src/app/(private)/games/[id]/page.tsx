@@ -12,13 +12,12 @@ import {
   listCollectionOptions,
 } from '@/server/db/games/games';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
-import { listGameTrophies } from '@/server/db/games/trophies';
 
 export const metadata: Metadata = { title: 'Game — Burmy' };
 
 /**
  * The per-game edit page — everything that used to live in `GameDialog`'s
- * edit path plus a Trophies section read from `game_trophies`,
+ * edit path,
  * all in one place. A sibling of `(tabs)/` and `sync/[runId]/`, not nested
  * inside the tabs route group: the Library/Upcoming/Stats sub-nav belongs
  * to the three list-shaped screens, not a single-entity detail page — this
@@ -49,18 +48,13 @@ export default async function GameDetailPage({
     throw error;
   }
 
-  // Read here rather than fetched by the client: trophies are persisted by
-  // the syncs now, so they come down with the page instead of costing a ~1.5s
-  // PSN round trip after it has already rendered.
-  //
   // `members` is what makes this page a COLLECTION's page when it is one —
   // non-empty exactly when other games point at this row. `collectionOptions`
   // feeds the "Part of" picker and is fetched unconditionally rather than
   // only for non-collections: it is a two-column read over ~190 rows, and
   // branching the query on `members.length` would mean two round trips in
   // sequence for no measurable gain.
-  const [trophies, members, collectionOptions, candidates] = await Promise.all([
-    listGameTrophies(owner.userId, game.id),
+  const [members, collectionOptions, candidates] = await Promise.all([
     listCollectionMembers(owner.userId, game.id),
     listCollectionOptions(owner.userId, game.id),
     // The other direction: what could be added INTO this row. Fetched
@@ -73,9 +67,10 @@ export default async function GameDetailPage({
   // The collection this game sits IN, resolved from the options list already
   // in hand rather than a third query — `collectionId` always points at a row
   // that is itself collection-less, which is precisely what that list holds.
-  const collection = game.collectionId === null
-    ? null
-    : (collectionOptions.find((option) => option.id === game.collectionId) ?? null);
+  const collection =
+    game.collectionId === null
+      ? null
+      : (collectionOptions.find((option) => option.id === game.collectionId) ?? null);
 
   return (
     <div>
@@ -84,7 +79,6 @@ export default async function GameDetailPage({
       </Link>
       <GamePage
         game={game}
-        trophies={trophies}
         members={members}
         collection={collection}
         collectionOptions={collectionOptions}

@@ -9,6 +9,7 @@ import {
   buildFinancialSummary,
   buildGenreDistribution,
   buildLibrarySummary,
+  buildTrophyTotals,
   buildYearlyBreakdown,
   capDistributionSlices,
   findCallouts,
@@ -51,8 +52,20 @@ describe('buildYearlyBreakdown', () => {
     );
 
     expect(rows.map((r) => r.year)).toEqual([2023, 2022]);
-    expect(rows[0]).toMatchObject({ year: 2023, startedCount: 2, playedCount: 2, hoursTenths: 250, achievements: 8 });
-    expect(rows[1]).toMatchObject({ year: 2022, startedCount: 1, playedCount: 1, hoursTenths: 100, achievements: 5 });
+    expect(rows[0]).toMatchObject({
+      year: 2023,
+      startedCount: 2,
+      playedCount: 2,
+      hoursTenths: 250,
+      achievements: 8,
+    });
+    expect(rows[1]).toMatchObject({
+      year: 2022,
+      startedCount: 1,
+      playedCount: 1,
+      hoursTenths: 100,
+      achievements: 5,
+    });
   });
 
   it('excludes a game with no first-played year', () => {
@@ -289,7 +302,11 @@ describe('buildFinancialSummary', () => {
 describe('buildDistribution', () => {
   it('counts by key, largest first, and labels each slice', () => {
     const slices = buildDistribution(
-      [game({ id: 'a', platform: 'ps5' }), game({ id: 'b', platform: 'ps5' }), game({ id: 'c', platform: 'steam' })],
+      [
+        game({ id: 'a', platform: 'ps5' }),
+        game({ id: 'b', platform: 'ps5' }),
+        game({ id: 'c', platform: 'steam' }),
+      ],
       (g) => g.platform,
       (key) => key.toUpperCase(),
     );
@@ -301,7 +318,13 @@ describe('buildDistribution', () => {
   });
 
   it('skips rows whose key is null instead of inventing an "unknown" bucket', () => {
-    expect(buildDistribution([game({ genre: null })], (g) => g.genre, (k) => k)).toEqual([]);
+    expect(
+      buildDistribution(
+        [game({ genre: null })],
+        (g) => g.genre,
+        (k) => k,
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -356,7 +379,10 @@ describe('buildGenreDistribution', () => {
   });
 
   it('excludes a game with no genre recorded rather than bucketing it as "Unknown"', () => {
-    const slices = buildGenreDistribution([game({ genre: null }), game({ id: 'b', genre: 'Adventure' })]);
+    const slices = buildGenreDistribution([
+      game({ genre: null }),
+      game({ id: 'b', genre: 'Adventure' }),
+    ]);
     expect(slices).toEqual([{ key: 'Adventure', label: 'Adventure', count: 1, percent: 100 }]);
   });
 
@@ -509,13 +535,18 @@ describe('buildLeaderboard', () => {
   });
 
   it('honours the limit', () => {
-    const rows = [1, 2, 3, 4, 5].map((n) => game({ id: `g${n}`, title: `G${n}`, hoursTenths: n * 100 }));
+    const rows = [1, 2, 3, 4, 5].map((n) =>
+      game({ id: `g${n}`, title: `G${n}`, hoursTenths: n * 100 }),
+    );
     expect(buildLeaderboard(rows, 'hours', 3)).toHaveLength(3);
   });
 
   it('excludes unplayed games from the hours board rather than ranking them zero', () => {
     const top = buildLeaderboard(
-      [game({ id: 'a', title: 'Played', hoursTenths: 100 }), game({ id: 'b', title: 'Never', hoursTenths: 0 })],
+      [
+        game({ id: 'a', title: 'Played', hoursTenths: 100 }),
+        game({ id: 'b', title: 'Never', hoursTenths: 0 }),
+      ],
       'hours',
       3,
     );
@@ -524,7 +555,10 @@ describe('buildLeaderboard', () => {
 
   it('excludes unrated games from the rating board rather than treating null as zero', () => {
     const top = buildLeaderboard(
-      [game({ id: 'a', title: 'Rated', rating: 4 }), game({ id: 'b', title: 'Unrated', rating: null })],
+      [
+        game({ id: 'a', title: 'Rated', rating: 4 }),
+        game({ id: 'b', title: 'Unrated', rating: null }),
+      ],
       'rating',
       3,
     );
@@ -573,7 +607,11 @@ describe('buildLeaderboard', () => {
   });
 
   it('excludes an unplayed game from the value board rather than dividing by zero', () => {
-    const top = buildLeaderboard([game({ id: 'a', title: 'Shelf', priceCents: 6000, hoursTenths: 0 })], 'costPerHour', 3);
+    const top = buildLeaderboard(
+      [game({ id: 'a', title: 'Shelf', priceCents: 6000, hoursTenths: 0 })],
+      'costPerHour',
+      3,
+    );
     expect(top).toEqual([]);
   });
 
@@ -593,7 +631,10 @@ describe('buildLeaderboard', () => {
 
   it('falls back to the alphabet when the metric AND hours both tie', () => {
     const top = buildLeaderboard(
-      [game({ id: 'a', title: 'Zebra', hoursTenths: 500 }), game({ id: 'b', title: 'Alpha', hoursTenths: 500 })],
+      [
+        game({ id: 'a', title: 'Zebra', hoursTenths: 500 }),
+        game({ id: 'b', title: 'Alpha', hoursTenths: 500 }),
+      ],
       'hours',
       3,
     );
@@ -602,11 +643,23 @@ describe('buildLeaderboard', () => {
 
   it('carries the cover and platform through for rendering', () => {
     const top = buildLeaderboard(
-      [game({ id: 'a', title: 'X', hoursTenths: 100, coverUrl: 'https://example.invalid/x.jpg', platform: 'ps4' })],
+      [
+        game({
+          id: 'a',
+          title: 'X',
+          hoursTenths: 100,
+          coverUrl: 'https://example.invalid/x.jpg',
+          platform: 'ps4',
+        }),
+      ],
       'hours',
       3,
     );
-    expect(top[0]).toMatchObject({ id: 'a', coverUrl: 'https://example.invalid/x.jpg', platform: 'ps4' });
+    expect(top[0]).toMatchObject({
+      id: 'a',
+      coverUrl: 'https://example.invalid/x.jpg',
+      platform: 'ps4',
+    });
   });
 
   it('returns an empty board for an empty library', () => {
@@ -669,7 +722,13 @@ describe('collections', () => {
     member('drakes-fortune', "Uncharted: Drake's Fortune Remastered"),
     member('among-thieves', 'Uncharted 2: Among Thieves Remastered'),
     member('drakes-deception', "Uncharted 3: Drake's Deception Remastered"),
-    game({ id: 'elden-ring', title: 'Elden Ring', hoursTenths: 1360, priceCents: 5999, firstPlayedYear: 2022 }),
+    game({
+      id: 'elden-ring',
+      title: 'Elden Ring',
+      hoursTenths: 1360,
+      priceCents: 5999,
+      firstPlayedYear: 2022,
+    }),
   ];
 
   it('counts the titles inside a collection but not the collection itself', () => {
@@ -766,5 +825,38 @@ describe('collections', () => {
     expect(summary.totalGames).toBe(2);
     expect(summary.totalHoursTenths).toBe(300);
     expect(buildFinancialSummary(flat).totalSpendCents).toBe(3000);
+  });
+});
+
+describe('buildTrophyTotals', () => {
+  it('sums earned and total counts across rows and counts the games that have trophies', () => {
+    const rows = [
+      game({ id: 'a', achievementsUnlocked: 42, achievementsTotal: 50 }),
+      game({ id: 'b', achievementsUnlocked: 10, achievementsTotal: 30 }),
+      game({ id: 'c', achievementsUnlocked: null, achievementsTotal: null }),
+    ];
+    expect(buildTrophyTotals(rows)).toEqual({ earned: 52, total: 80, gamesWithTrophies: 2 });
+  });
+
+  it('reports a null total when no row carries one, so the card never reads "of 0"', () => {
+    expect(buildTrophyTotals([game({ achievementsUnlocked: 5, achievementsTotal: null })])).toEqual(
+      {
+        earned: 5,
+        total: null,
+        gamesWithTrophies: 1,
+      },
+    );
+  });
+
+  it('treats a zero earned count as no trophies rather than a game with trophies', () => {
+    expect(buildTrophyTotals([game({ achievementsUnlocked: 0, achievementsTotal: 20 })])).toEqual({
+      earned: 0,
+      total: 20,
+      gamesWithTrophies: 0,
+    });
+  });
+
+  it('is empty on an empty library', () => {
+    expect(buildTrophyTotals([])).toEqual({ earned: 0, total: null, gamesWithTrophies: 0 });
   });
 });

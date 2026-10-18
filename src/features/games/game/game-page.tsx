@@ -2,7 +2,7 @@
 
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { ExternalLink, Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { useEffect, useState, useTransition } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,6 @@ import type { ActionResult } from '@/features/games/action-result';
 import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import type { CollectionMember, Game } from '@/server/db/games/games';
 import { rollUpTrophies } from '@/server/games/collections';
-import type { Trophy } from '@/server/games/trophies';
 import type { GameSuggestion } from '@/server/games/metadata';
 import {
   applyMetadataSuggestionAction,
@@ -29,7 +28,6 @@ import { searchGameMetadataAction } from '../metadata-actions';
 import { CollectionMembersPanel } from '@/features/games/collections/collection-members-panel';
 import { GameDetailsContent } from './game-view-content';
 import { GameSummaryPanel } from './game-summary-panel';
-import { TrophiesSection } from './trophies-section';
 
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_MIN_LENGTH = 3;
@@ -53,19 +51,12 @@ const SEARCH_MIN_LENGTH = 3;
  */
 export function GamePage({
   game,
-  trophies,
   members,
   collection,
   collectionOptions,
   collectionCandidates,
 }: {
   readonly game: Game;
-  /**
-   * Read from `game_trophies` by the page's Server Component and handed down
-   * whole. This used to be fetched from PSN in a mount effect here, costing
-   * ~1.5s on every visit — see `trophies-section.tsx` for why that is gone.
-   */
-  readonly trophies: readonly Trophy[];
   /** The games INSIDE this one. Non-empty exactly when this row is a collection. */
   readonly members: readonly CollectionMember[];
   /** The collection this game sits in, or `null`. */
@@ -73,7 +64,11 @@ export function GamePage({
   /** Rows this game could be filed into — see `listCollectionOptions`. */
   readonly collectionOptions: readonly { readonly id: string; readonly title: string }[];
   /** Games that could be added INTO this one — see `listCollectionCandidates`. The other direction. */
-  readonly collectionCandidates: readonly { readonly id: string; readonly title: string; readonly subtitle?: string }[];
+  readonly collectionCandidates: readonly {
+    readonly id: string;
+    readonly title: string;
+    readonly subtitle?: string;
+  }[];
 }): React.ReactElement {
   const router = useRouter();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -117,7 +112,6 @@ export function GamePage({
       toast.error(result.error);
     });
   }
-
 
   return (
     <>
@@ -200,33 +194,6 @@ export function GamePage({
           />
         </div>
       )}
-
-      {/* Shown whenever the game is PSN/Steam-linked, even with zero stored
-          rows — `TrophiesSection`'s empty state is what tells the owner to run
-          a sync, and hiding the section entirely would leave nothing to say
-          that from. */}
-      {trophies.length > 0 || game.psnNpCommunicationId !== null || game.steamAppid !== null ? (
-        <div className="mt-8">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-muted-foreground text-xs font-medium">Trophies</h2>
-            {/* A real button, not the 12px grey link this used to be. Looking
-                up a trophy guide is the one thing you actually DO from this
-                section, so it gets the same solid treatment as Add game and
-                Export rather than hiding at the weight of a caption. */}
-            <Button asChild size="sm">
-              <a
-                href={`https://www.powerpyx.com/?s=${encodeURIComponent(game.title)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Find on PowerPyx
-                <ExternalLink className="size-3.5" aria-hidden />
-              </a>
-            </Button>
-          </div>
-          <TrophiesSection trophies={trophies} />
-        </div>
-      ) : null}
 
       <ConfirmDialog
         open={confirmingDelete}
