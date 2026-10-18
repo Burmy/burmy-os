@@ -326,25 +326,24 @@ managed services with no VPS, no SSH, no `ufw`, no self-managed network to reaso
   production moved to Netlify + Supabase; see `docs/DEPLOYMENT.md`, "Why the VPS was dropped," and git
   history if self-hosting is ever picked up again.
 
-### Outbound HTTP — three destinations, all Games, all optional
+### Outbound HTTP — two destinations, both optional
 
 **Finance makes no outbound requests at all.** "No bank connections, ever" is a CLAUDE.md invariant: no
 Plaid, no bank APIs, no OAuth to a financial institution, no scraping, no stored bank credentials.
 Statements arrive as a file the owner picks in the browser. Nothing in `src/server/finance/` or
 `src/server/db/finance/` calls `fetch`.
 
-Games calls three third-party APIs, each confined to `src/server/db/games/`; Anime calls one,
-confined to `src/server/db/anime/anilist-client.ts`. Those four files are the whole outbound surface
-of this application:
+Games calls one third-party API, confined to `src/server/db/games/igdb.ts`; Anime calls one,
+confined to `src/server/db/anime/anilist-client.ts`. Those two files are the whole outbound surface
+of this application. (Steam and PlayStation clients existed from August to 2026-10-18 and were
+removed with the syncs — see `docs/GAMES.md`, "What's deliberately out of scope".)
 
 | Destination | Sends | Credential |
 | --- | --- | --- |
 | IGDB (auth via Twitch OAuth) | Game titles for lookup | `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` |
-| Steam Web API | The owner's SteamID and app ids | `STEAM_API_KEY`/`STEAM_ID` |
-| PlayStation Network | The owner's account context | `PSN_NPSSO` |
 | AniList (GraphQL, unauthenticated) | The owner's public AniList username | `ANILIST_USERNAME` |
 
-The same three properties hold for all of them:
+The same two properties hold for both:
 
 - **No Finance data ever crosses these boundaries.** Finance shares no data path with Games or Anime;
   the only thing any of them have in common is the owner row and the auth boundary.
@@ -353,11 +352,6 @@ The same three properties hold for all of them:
   being down or slow can degrade a Games or Anime feature; it cannot break a page or affect Finance.
   AniList is the one that needs no credential at all — the owner's profile is public, so
   `ANILIST_USERNAME` is a username and not a secret, and there is nothing to expire or revoke.
-- **PSN's is an UNOFFICIAL API** reached with a browser-derived token (`PSN_NPSSO`) that expires roughly
-  every two months. It is the least trustworthy dependency in the project: undocumented, unversioned,
-  and revocable without notice. It is treated accordingly — an expired token surfaces a specific
-  message, never a retry loop, and nothing about the app depends on it working.
-
 ---
 
 ## Secrets
@@ -368,12 +362,13 @@ The same three properties hold for all of them:
   "Contains secret values" (Netlify's Secrets Controller) where applicable. Full policy, including which
   variable gets which scope, in `docs/DEPLOYMENT.md`, "Netlify environment-variable policy." None of
   them are ever written into `netlify.toml`, which is committed.
-- **Four required variables, plus five optional ones for Games.** `DATABASE_URL`, `OWNER_EMAIL`,
+- **Four required variables, plus three optional ones.** `DATABASE_URL`, `OWNER_EMAIL`,
   `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` are what the application needs to run.
-  `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`, `STEAM_API_KEY`/`STEAM_ID` and `PSN_NPSSO` are credentials for
-  the owner's personal accounts on three third-party platforms; every one is optional by contract, and
-  the full test suite must pass with none of them present. They get the same scoping and secret-marking
-  as the required four — an optional credential is still a credential.
+  `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` (Games cover art and the Upcoming feed) and `ANILIST_USERNAME`
+  (Anime) are optional by contract, and the full test suite must pass with none of them present. The
+  IGDB pair gets the same scoping and secret-marking as the required four — an optional credential is
+  still a credential; the AniList username is public and not a secret. `STEAM_API_KEY`, `STEAM_ID` and
+  `PSN_NPSSO` were retired on 2026-10-18 and can be deleted from Netlify.
 - **The Supabase migration credential (`MIGRATION_DATABASE_URL`) is never stored in Netlify at all** —
   it exists only on an operator's own shell for the moment a migration runs. See `docs/DEPLOYMENT.md`,
   "Database — Supabase Postgres."

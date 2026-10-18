@@ -1362,28 +1362,57 @@ shipped two bugs behind 1,267 green tests.
 
 ---
 
+## Games simplification (2026-10-18)
+
+Seven weeks after launch the owner called the Games module "very complicated": the per-trophy list and
+the Steam/PSN syncs cost more attention than they returned, and a page per game meant a navigation for
+every glance. Decided through a product interview, then built on `feat/games-simplify` as one PR:
+
+- **Removed:** both in-app syncs, the CLI Steam script, the `psn-api` dependency, the per-trophy table
+  and every screen that read it (the trophy section, the trophy-hunter Stats sections, the Completion
+  card), the Duplicates screen and its two scripts, the Settings → Games section, and the four Steam/PSN
+  link columns. Migration `0019` drops the three tables, their four enums and the columns.
+- **Kept:** the hand-entered achievement counts and platinum flag ("Trophies earned" now sums them on
+  Stats), collections (linked in the app, no backfill map), IGDB cover art and the Upcoming feed.
+- **The game panel** replaced `/games/[id]`: a non-modal 520px panel beside the library, opened from a
+  cover, a row, or a wishlist entry; every field still inline-editable; it re-fetches itself after each
+  save. The library reflows beside it; it is full-screen on a phone. See `docs/GAMES.md`, "The game
+  panel".
+- **Upcoming** opens with "Your wishlist" and no longer auto-flips a released wanted game to backlog:
+  released games show "Out now" until the owner moves them. The feed hides games already in the
+  library. A hand-added wanted game can be given a release date in the panel.
+- **Library order** is last edited first (`updated_at`), since `last_played_at` was only ever filled by
+  the syncs.
+- **`scripts/diff-game-log.mjs`** compares the original sheet export with production and emits the
+  inserts for whatever the app is missing — pure, with platforms assigned by the owner per row.
+
+Also fixed on the way: `/anime` had never been added to the entry-points test's pure-redirect
+allowlist, so the private-page guard test had been red since the Anime merge.
+
+Gotchas found during this pass are in CLAUDE.md: the non-modal Radix dialog rules (outside
+pointer-down, Escape capture, z-index against toasts) and a scripted-edit helper that ate a
+`describe`'s closing brace.
+
+---
+
 ## ▶ RESUME HERE
 
-**State as of 2026-08-29:** deployed, live, and in daily use on real data. All three product
-modules — Finance, Games and Anime — are built. There is no next milestone; work is driven by what
-real use turns up, in the round-based shape established above.
+**State as of 2026-10-18:** `feat/games-simplify` carries the Games simplification above. Production
+is still the Aug 29 deploy (`917555d`), and migrations `0016`–`0018` were never applied to it — the
+deployed code expects `games.collection_id` and the `anime*` tables that production does not have.
 
-**Anime's first real run has not happened yet, and it is the immediate next step:** set
-`ANILIST_USERNAME`, apply migrations `0017`/`0018`, and run a sync from Settings → Anime on a machine
-that can reach `graphql.anilist.co`. That first contact is what confirms the query field names and
-the `repeat` semantics — see "Known gaps" in the Anime section above.
+**Order of operations from here, and it is order-sensitive:**
 
-**The things actually outstanding, in priority order:**
+1. Apply `0016`, `0017`, `0018` to production — through the Supabase MCP as raw SQL plus the journal
+   rows (`docs/DEPLOYMENT.md`, "Applying a migration through the Supabase MCP"). This brings the
+   CURRENT deploy's schema up to what its code expects before anything else changes.
+2. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming,
+   Stats and Settings against the not-yet-dropped tables.
+3. Only then apply `0019` the same way. Old code read the dropped tables; the new code does not.
+4. Run the sheet reconciliation (`scripts/diff-game-log.mjs`) and link collections in the app.
 
-1. **No backup exists of the live database.** See `docs/DEPLOYMENT.md`, "Backup strategy". The restore
-   procedure has only ever been verified against local dev, on a different Postgres major version, with
-   five rows in it. This is the highest-value unfinished item in the project.
-2. **Migration `0016` is committed but not applied to production.** Take a backup first — that is
-   exactly the trigger item 1 exists for.
-3. **The collections backfill needs its map**, per the section above.
-4. **Confirm the Netlify function region actually took effect.** `netlify.toml` now pins `us-east-2`
-   to match Supabase, but region pinning may be plan-gated — read the deploy log rather than assuming.
-   Worth tens of milliseconds, not hundreds; see that file's own comment for the honest sizing.
+**Still outstanding, in priority order:** a backup of the live database has never been taken; Anime
+has never run against the live AniList API; the Netlify function-region pin is unconfirmed.
 
 ---
 
@@ -1404,7 +1433,7 @@ Items deliberately deferred to a later milestone, tracked so they are not lost.
 | ~~Production Docker hardening~~ | ~~M10~~ | **Moot — there is no production image.** The Dockerfile was deleted in the minimalism pass above and production is Netlify (serverless). `compose.dev.yml` runs one `postgres` service for local dev and nothing else. |
 | Optional AI categorization | Post-V1 | Only if the residual review tail after 2–3 real months justifies it. As of 32 months / ~1,048 transactions, nothing awaits review and the 87 uncategorized rows are all transfers, card payments and income — types that legitimately have no category. On this evidence the tail does not justify it. |
 | **A backup of the live database** | **Now** | Never taken. See `docs/DEPLOYMENT.md`, "Backup strategy" — the policy is written and has never been executed. |
-| **The collections backfill map** | **Now** | Needs the original spreadsheet's parent/child grouping, which only the owner has. Until then `collection_id` is `NULL` on every row. |
+| **Reconcile the original sheet with production** | **Now** | `scripts/diff-game-log.mjs` writes the report and the inserts; the owner assigns platforms per row. Collections are then linked in the app (Part of / Add games / table multi-select) — no backfill map. |
 | Postgres major-version mismatch between production and local/CI | When a migration needs an 18-only feature | Supabase runs 17.x; `compose.dev.yml` and CI pin `postgres:18-alpine`. Nothing in the schema depends on the difference today, which is why this is recorded rather than fixed. |
 
 ---

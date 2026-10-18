@@ -125,140 +125,19 @@ cross-referenced with an actual purchase transaction. See "Out of scope" below.
 no per-achievement child table anywhere in the schema — the source spreadsheet's "Trophies" column was
 always a single number, never a list, and the module doesn't invent structure the data never had.
 
-### Platinum is the owner's own claim by hand — except where PSN sync owns it
+### Platinum is the owner's own claim by hand
 
-`platinum` is a plain `boolean`, edited via a checkbox in the add/edit dialog — not computed from
-`achievementsUnlocked === achievementsTotal`. Two reasons: the source spreadsheet only ever recorded
-trophies *earned*, never the total, so a platinum could not be derived for any of the 160 imported
-games even retroactively; and on Steam, 100% achievement completion is not a platinum at all — the
-concept is PlayStation-specific and has no Steam equivalent to derive it from. This is why the Steam
-sync (in-app and CLI alike) never touches this column — see "Steam owns hours and achievements for a
-linked game" below.
+`platinum` is a plain `boolean`, edited via a checkbox — not computed from
+`achievementsUnlocked === achievementsTotal`. The source spreadsheet only ever recorded trophies
+*earned*, never the total, so a platinum could not be derived for any imported game; and on Steam,
+100% achievements is not a platinum at all. (From late August to 2026-10-18 a PSN sync owned this flag
+for PSN-linked games; that sync is gone and the checkbox is the only writer again.)
 
-**The in-app PSN sync reverses that rule for a PSN-linked game.** Sony's own trophy list is the actual
-system of record for whether a platinum was earned — not the owner's memory — so `psn-plan.ts` is the
-one and only place in the sync feature that proposes a `platinum` change, gated on a confident trophy-
-title match. See "PlayStation sync" below for the full reasoning; nothing here makes the two sync
-engines symmetric, and they are correct to disagree.
-
-The Server Action path (`createGameAction`/`updateGameAction` in `game-actions.ts`) treats this field
-differently from every other optional field `parse()` handles: an HTML checkbox submits **no** key in
-`FormData` at all when unchecked, so `platinum` is written unconditionally on every submit, in both
-create and update, rather than following the create-omits/update-clears-to-null pattern the rest of
-`parse()` uses. Gating it behind that pattern would mean a platinum, once set, could never be turned
-back off from the editor. This is the hand-editing path only — a PSN sync run writes `platinum`
-through the staged `field_update`/commit path described in "PlayStation sync" below, not through this
-form submit at all.
+In the panel the checkbox saves on every click through `updateGameFieldAction('platinum', …)`, with
+an empty value meaning "off", so a platinum once set can always be turned back off. `createGameAction`
+writes it unconditionally because an unchecked HTML checkbox submits no key in `FormData` at all.
 
 ---
-
-## The `game_trophies` table — the one place Games stores a list
-
-Everything else in this module is a scalar on a `games` row. `game_trophies` is the exception: one row
-per individual trophy or achievement, persisted by the syncs so the game page and the Stats screen can
-answer questions a pair of counters cannot.
-
-**This does not contradict "Achievements are a count, not a checklist" above.** That rule is about what
-the OWNER maintains — `achievements_unlocked`/`achievements_total` are still two hand-editable numbers,
-and still what every stat and the library table read. `game_trophies` is what a SYNC brings back, and
-it exists because PSN and Steam hand over the full list anyway: discarding it and keeping only the
-count would throw away rarity and earned-dates that nothing else can reconstruct. The counters remain
-the owner's summary; this table is the platform's detail.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `source` | enum, not null | `psn \| steam` |
-| `external_id` | text, not null | PSN `trophyId` or Steam `apiname`. **Unique only within a title** — PSN restarts `trophyId` at 0 for every game |
-| `name`, `description`, `icon_url` | text, nullable | As reported. Null for a hidden trophy the platform withholds |
-| `tier` | enum, nullable | `bronze \| silver \| gold \| platinum`. **PSN only** — Steam has no tiers, and inventing one would misrepresent its data |
-| `group_id` | text, nullable | PSN `trophyGroupId`: `default` for the base game, `001`/`002`… for DLC. PSN only |
-| `hidden`, `earned` | boolean, not null | |
-| `earned_at` | timestamptz, nullable | Null whenever `earned` is false. PSN reports it directly; Steam's `unlocktime` is converted |
-| `rarity_tenths` | integer, nullable | Percentage of players who earned it, in TENTHS: `225` = 22.5%. Null when the API reported no rate |
-
-### Rarity is an integer of tenths, for the same reason hours are
-
-Both APIs report exactly one decimal place (PSN `trophyEarnedRate: "22.5"`, Steam `percent: "76.8"`).
-Storing that as `NUMERIC` is forbidden outright by CLAUDE.md — the `pg` driver returns `NUMERIC` as a
-**string**, and the `parseFloat` that follows is the precise bug this project exists to avoid. Storing
-it as a float reintroduces `0.1 + 0.2`. So it is an integer of tenths, exactly like `hours_tenths`,
-with all conversion contained in `src/server/games/trophies.ts` and nowhere else.
-
-**Null is a real state and is never coerced to 0.** A rate of 0 would claim "nobody on the platform has
-this," which is a different and much stronger statement than "the API did not tell us."
-
-### A re-sync is an UPSERT, keyed on four columns
-
-`(owner_id, game_id, source, external_id)` is unique. `external_id` alone cannot be the key — it is
-unique only within a title — and omitting `source` would make a Steam achievement collide with the PSN
-trophy that happens to share its id. `replaceGameTrophies` (`src/server/db/games/trophies.ts`) is what
-every sync writes through, so syncing the same game twice updates rows rather than doubling them.
-
-### Three indexes, two of them partial
-
-`(owner_id, earned_at DESC)` and `(owner_id, rarity_tenths)` are both `WHERE earned` — the two ordered
-views on the Stats screen (Recently earned, Rarest earned) only ever look at earned rows, so an index
-covering the ~40% that are unearned would be dead weight in a scan that can never return them. The
-third, `(owner_id, game_id)`, serves the game page's own trophy list.
-
-### What reads it
-
-`listGameTrophies` (the game page's trophy section), plus four Stats-screen readers:
-`listCloseToPlatinum`, `listRecentlyEarned`, `listRarestEarned` and `getCompletionSummary`. All are
-owner-scoped, all live in `src/server/db/games/trophies.ts`; the pure conversion and formatting helpers
-live in `src/server/games/trophies.ts` and import nothing.
-
----
-
-## Duplicates — finding them, and merging without losing a game
-
-**Two kinds, both from the owner's real library.**
-
-*The same game on two platforms.* `Uncharted: Legacy of Thieves Collection` (PS4, hand-typed, price
-and rating) and `UNCHARTED: Legacy of Thieves Collection` (PS5, PSN-linked, platinum). One purchase,
-played through backwards compatibility, reported by PSN under the platform it ran on — the
-near-identical hours are the tell. `scripts/merge-duplicate-games.mjs` cannot see this pair at all:
-it keys on `platform + title`, so the two land in different groups. `src/server/games/duplicates.ts`
-keys on **title alone** and makes the platform an explicit per-pair decision instead.
-
-*A collection flattened into its own first title.* `Uncharted: The Nathan Drake Collection -
-Uncharted: Drake's Fortune Remastered` — the spreadsheet importer joined a set's name to the first
-game listed under it. The row carries the SET's figures (44h, 154 achievements) under a name that
-reads like one title, which is how 154 achievements came to sit on a single game. Detected by
-splitting on a **spaced** hyphen and matching the left half; a bare hyphen would tear `Spider-Man`
-in half.
-
-**A flattened merge CREATES the game it names.** This is the non-obvious half. The flattened row is
-standalone, so it counts as a game; merging it into the collection deletes it, and the Uncharted
-shelf silently drops from three titles to two — the exact number the owner keeps, and the reason
-collections exist. So the merge also inserts the right-hand half of the title as a real row inside
-the collection, created bare: hours and price are the set's, trophies stay unset until a sync gives
-that title its own PSN list. Skipped when that title already exists.
-
-**The merge transaction's order is forced from both ends** (`src/server/db/games/duplicates.ts`):
-
-1. re-parent any games filed under the loser;
-2. re-parent any trophies stored against the loser;
-3. delete the loser;
-4. write the fills, platinum and platform onto the winner.
-
-Steps 1–2 precede the delete because `game_trophies.game_id` is `ON DELETE CASCADE` and
-`games.collection_id` is `ON DELETE SET NULL`. Step 4 must FOLLOW it, which was found by running the
-merge rather than by reading it: `games_owner_title_platform_idx` is unique on
-`(owner, lower(title), platform)`, and the whole point of a merge is that the two rows share a title
-— so writing the chosen platform onto the winner while the loser still exists collides with the row
-being merged away, and the transaction dies on a `23505` naming an index with no obvious connection
-to the change.
-
-**The plan is re-derived server-side.** The screen sends only which pair and which platform;
-everything else is recomputed from current database state. A client-supplied fills object would be a
-client-supplied list of columns to write, and a plan built at render time can be stale by the time it
-is clicked.
-
-**What it refuses.** Three rows sharing a title, both copies linked, a loser that holds collection
-members or has its own stored trophies — each becomes a "needs your decision" entry naming what is
-ambiguous. Merging deletes a row, so an unforced answer is never guessed at.
-
 
 ## Collections
 
@@ -282,8 +161,8 @@ hole in the library.
 `src/server/db/games/games.ts`): a row cannot be its own collection; a collection that is itself inside
 one is refused; and a row that already holds members cannot become a member. `listCollectionOptions`
 offers exactly the set that will be accepted, so the picker can never present a choice the server
-rejects. The same three rules are re-implemented in `scripts/link-game-collections.mjs`, deliberately —
-a backfill that skipped them is how a two-level chain no view can render gets into the database.
+rejects. Every write path goes through the same check, including the table's multi-select — a backfill
+that skipped it is how a two-level chain no view can render would get into the database.
 
 ### The counting rule, in one sentence
 
@@ -309,19 +188,9 @@ title: hours are attributed to the row that carries them.
 ### Where the figures live
 
 A title inside a collection has no hours, price, trophies or play-year split of its own — the set has
-one of each, on the collection. The game page renders exactly those fields read-only for a member, with
-the hint "From the collection", the same treatment a Steam-linked game already gets for hours and
-achievements (Steam's hint wins when somehow both apply, since Steam is the one that actually rewrites
-the value on every sync). Taking a game back out of a collection does **not** hand it those figures —
+one of each, on the collection. The panel renders exactly those fields read-only for a member, with
+the hint "From the collection". Taking a game back out of a collection does **not** hand it those figures —
 they were never its own, which is also what `ON DELETE SET NULL` does when the collection is deleted.
-
-### Both sync engines are blind to collection members
-
-`NOT_A_COLLECTION_MEMBER` (`src/server/db/games/games.ts`) is applied to every Steam and PSN
-scoping query — counts, chunks and match candidates alike. A title inside a collection is invisible to
-both. Without it, Steam or PSN would match a member by an exact title and write hours onto it that the
-collection already accounts for, double-counting the set's play time in every total that sums across
-rows.
 
 ### How the two views render it
 
@@ -338,23 +207,21 @@ titles inside a set is what table view is for. A search that matches a member st
 collection's card (`LibraryView` keeps a group when the collection **or** any title inside it matches),
 so the gallery never silently has nothing for a title the owner typed.
 
-### Backfilling an already-imported library
+### Linking an already-imported library
 
 `scripts/import-game-log.mjs` wrote every spreadsheet row — including every sparse sub-row — as an
 independent `games` row, because the CSV export had already lost the indentation. The relationship has
-to be re-stated once, by hand, which is what `scripts/link-game-collections.mjs` is for: it takes an
-explicit JSON map of collection title → member titles, matches titles exactly (case, whitespace and
-curly quotes folded; never fuzzy), and writes `collection_id` and **nothing else**. A member that
-carries its own hours, price or trophies is reported and skipped rather than filed, since those figures
-belong to the collection under this model. `--suggest` writes a starting point for that map from a
-keyword heuristic; it is wrong often enough that its output is a file to edit, not an answer.
+to be re-stated once, by hand, and that happens in the app: a collection's panel has "Add games"
+(`CollectionMembersPanel`), a member's panel has "Part of" (`CollectionField`), and the table's
+multi-select files several rows at once. Each path writes `collection_id` and **nothing else** — a
+member that carries its own hours, price or trophies keeps them, and the roll-up simply reads the sum.
+A CLI with a JSON map (`link-game-collections.mjs`) existed for this until 2026-10-18 and was removed
+with the sync tooling; the app's three paths cover a library of this size.
 
-`scripts/merge-duplicate-games.mjs` handles the related mess: a sync could not match a colon-bearing
-boxed-set title (`isTokenContainmentMatch` disables token containment when either side contains a
-colon, so "Half-Life 2" never absorbs "Half-Life 2: Episode One"), created its own row, and the library
-ended up holding the same game twice. **The synced copy wins** — it is the row the next sync will keep
-writing to. Both scripts report by default and need `--apply` to write; against a non-local database
-they need `--remote` on top of it.
+A title the importer flattened into the sheet's one-line form — "Nathan Drake Collection - Uncharted:
+Drake's Fortune" — is fixed by hand too: create the collection, rename the row to its own title, file
+it. `scripts/diff-game-log.mjs` flags such rows as `possible flattened collection` in its report so
+none is missed.
 
 ---
 
@@ -380,9 +247,8 @@ One row per "I played N hours of this game in year Y" (migration `drizzle/0007_n
 Unique on `(game_id, year)` — a game cannot have two rows claiming the same year.
 
 **`games.hours_tenths` remains the authoritative total. These rows are an attribution OF that total,
-never a replacement for it.** That distinction is load-bearing, not stylistic: Steam and PSN own the
-total for a linked game and have no concept of years at all (see "Steam library sync" below), so the
-total has to stay a single number an API can write. A game with **no** `game_play_years` rows
+never a replacement for it.** That distinction is load-bearing, not stylistic: the total is the one number the owner edits (and, until
+2026-10-18, the one number a platform sync could write), while the split only says which years. A game with **no** `game_play_years` rows
 attributes everything to `first_played_year` — the behaviour every game already had before this
 feature existed, which is why only 3 of 160 games needed anything backfilled (see "Seeding the three
 known splits" below).
@@ -392,7 +258,7 @@ known splits" below).
 `attributeHours` (`src/server/games/play-years.ts` — pure TypeScript, no React, no Next, no
 database, same boundary rule as the rest of `src/server/games/`) turns `games` rows plus
 `game_play_years` rows into a per-year attribution. When a split's rows don't sum to the game's
-`hours_tenths` — the usual cause is a Steam sync raising the total after the split was last edited —
+`hours_tenths` — the usual cause is the total being edited after the split was —
 the shortfall (or overshoot) is accumulated into `unattributedTenths` and rendered as its own
 "Unattributed" line in the Year by year table (`YearlyBreakdownTable`), never silently absorbed into
 a year and never silently dropped. A negative `unattributedTenths` means the split overshoots the
@@ -419,7 +285,7 @@ catches it and reports a field error rather than crashing, which is defense-in-d
 ### Achievements are not split, and never will be
 
 `buildYearlyBreakdown` attributes hours per year but leaves achievements on `first_played_year`,
-unconditionally. No source anywhere — the library, Steam, or PSN — records which year a trophy was
+unconditionally. No source anywhere records which year a trophy was
 earned in, so splitting them proportionally across a game's played years would fabricate data the
 owner never entered. This is a permanent property of the data available, not a gap this feature
 happens not to have closed yet.
@@ -434,14 +300,6 @@ the game's *current* `hours_tenths` before writing — a hand-recovered split th
 the live total is refused, not force-written. A one-off script rather than a SQL data migration for
 the same reason `fix-game-platforms.mjs` gives: migrations run against both local and production,
 where `games.id` values differ, and a title-keyed write inside a migration is fragile.
-
-### Neither Steam nor PSN can ever supply this
-
-Steam's `GetOwnedGames` returns only `playtime_forever` and `playtime_2weeks` — no per-year
-breakdown exists in the API at all. PSN's `getUserPlayedGames` (built — see "PlayStation sync" below)
-returns a single cumulative `playDuration` per title, same limitation. Per-year attribution is
-permanently a hand-entered fact, not something a sync could ever fill in automatically the way it
-fills in the total.
 
 ---
 
@@ -484,7 +342,7 @@ its own chip is active.
 
 **The gallery no longer pins or enlarges `playing` games.** It did once — `GameGrid` sorted them first
 and `GameCard` took a `size` prop — but neither exists in the code any more. The gallery renders one
-uniform card per row, in the recency order `listGames` already sorted by.
+uniform card per row, in the last-edited order `listGames` already sorted by.
 
 ---
 
@@ -651,373 +509,11 @@ no `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET` present.**
 
 ---
 
-## Steam library sync
-
-`scripts/sync-steam-library.mjs` (2026-08-23) fills in achievements and play time for Steam-platform
-games automatically, via the official Steam Web API, replacing hand entry for those columns going
-forward. See `.superpowers/sdd/2026-08-20-game-tracker/psn-integration-research.md` for the evaluation
-that led here: Steam's API is official, documented, and has a credential that never expires, where the
-only PSN options known at the time were scraping PSNProfiles (a scraper of a scraper, actively
-resisted by Cloudflare) or driving Sony's own undocumented API by hand through a ~60-day manual
-re-authentication chore — PSN stayed a research note here, not code, and this script has no PSN
-counterpart. **That changed once `psn-api` (`achievements-app/psn-api`) turned up** — an actively
-maintained MIT library calling PlayStation's own official endpoints rather than scraping — which is
-what the separate in-app PSN sync below is actually built on; see "PlayStation sync" below for that
-integration in full. This script itself was never extended to PSN and stays Steam-only.
-
-### A stable external id, matched once
-
-`games.steam_appid` (migration 0006) is a nullable integer, unique per owner where set. Title matching
-against a third-party catalog is the risky part of this whole feature — the owner's titles carry
-edition/store noise (`[Launch Edition]`, `(itch)`) that already defeated IGDB's own matcher (see "Cover
-art" above) — so a game is matched to a Steam app **at most once**, and the resolved id is persisted.
-Every later sync run is an id lookup for that game, never a re-match by title.
-
-### What it fills, and what it deliberately does not
-
-Only `platform = 'steam'` library rows are ever compared against Steam data — matching a PS5/PS4/PSP
-title against a Steam appid would be a category error. Within that scope, the sync **fills a column
-only where it is currently `null`**: `steam_appid`, `achievements_total`, and
-`achievements_unlocked`/`hours_tenths` where empty (`steamSyncFieldsToFill` in
-`src/server/games/steam.ts` is the single source of truth for that rule — the sync script's own
-`--apply` path never has to remember it separately). A stored value that **differs** from what Steam
-reports is always shown in the script's report and never silently overwritten; `hours_tenths` is the
-one column with an overwrite path at all (Steam's measured playtime is more accurate than a hand-typed
-estimate), gated behind the script's separate, explicit `--overwrite-hours` flag on top of `--apply`.
-`achievements_unlocked`/`achievements_total` have no overwrite path — a differing achievement count is
-reported and left alone, full stop.
-
-**`platinum` is never touched by this script**, deliberately — see "Platinum is the owner's own claim
-by hand — except where PSN sync owns it" above. A Steam game at 100% achievements is not a PlayStation
-platinum trophy; the two concepts don't map onto each other, and the script's own header comment says
-so explicitly so nobody wires this up by mistake later. (The in-app PSN sync below is the one place
-`platinum` IS written automatically — a different engine, on purpose; this script still never touches
-it.)
-
-**The 40 PSP games get nothing from this script, ever, and are out of scope by construction** — they
-are not `platform = 'steam'` rows, and trophies/achievements postdate the PSP entirely (trophies
-launched with PS3 in 2008; PSP has no client-side trophy support). The in-app PSN sync below walks PSP
-rows too, but PSN can supply no data for them either, for the same historical reason — see "PSP is
-permanently manual" under "PlayStation sync."
-
-A Steam-owned game with no matching library row is listed in the script's report (title, appid, hours)
-and **never imported** as a new row — the library is curated by the owner, and importing an entire Steam
-account is not this feature's goal.
-
-### Credentials and the dry-run contract
-
-`STEAM_API_KEY`/`STEAM_ID` are optional at the module level, matching IGDB's own contract:
-`src/server/db/games/steam-client.ts` never throws on missing credentials, a network error, a timeout, a
-non-200, or malformed JSON, and the full test suite passes with neither present. Unlike IGDB, that
-soft-failure contract is not a flat "always `[]`": `fetchOwnedGames` returns `null` when the request
-itself failed, distinct from `[]` for a successful response that genuinely carries zero games (a private
-"Game details" profile, or an account that really owns nothing — Steam's response shape doesn't
-distinguish those two; see `toOwnedGames`). The owner's Steam profile "Game details" privacy must be set
-to Public, or the API silently returns an empty games list — there is no error response to tell "wrong
-credentials" apart from "private profile," which is why the script's report calls this out explicitly
-when zero games come back with no fetch error.
-
-`STEAM_ID` accepts either form of Steam's own profile URL — `/profiles/{steamid64}` or
-`/id/{vanityname}` — since an owner copying their own profile URL has no way to know `GetOwnedGames`
-requires the 17-digit numeric SteamID64. A value that is exactly 17 digits (`isSteamId64` in
-`src/server/games/steam.ts`) is used as-is; anything else is treated as a vanity name and resolved to a
-SteamID64 via `ISteamUser/ResolveVanityURL/v1` before the sync runs, printing what it resolved to so the
-owner can confirm it worked. If the name doesn't resolve (Steam's `success: 42`), the script aborts with
-a message pointing at where to find a real SteamID64, rather than sending a malformed id into
-`GetOwnedGames`.
-
-`src/server/db/games/steam-client.ts` — the in-app sync's own client, see "In-app Steam sync" below —
-resolves a vanity `STEAM_ID` the same way, via the same `buildResolveVanityUrl`/`isSteamId64`/
-`toResolvedVanityUrl` building blocks, memoized in-process so a run that calls `fetchAchievementCounts`
-dozens of times doesn't re-resolve the name on every call. It soft-fails to `null` on a resolution
-problem instead of throwing (matching the rest of this module's contract), where the script aborts —
-same split as every other failure mode covered above.
-
-The script itself is a stricter, CLI-level gate on top of the client's soft-failure contract in two
-ways: it exits early with an error if either var is unset (the same shape `backfill-game-metadata.mjs`
-already uses for `IGDB_CLIENT_ID`/`IGDB_CLIENT_SECRET`), and — unlike the app-side client — it
-**aborts with a non-zero exit and writes no report at all** if the owned-games request itself fails
-after credentials are present (bad SteamID64, network error, non-2xx, malformed JSON). Silently
-continuing with an empty snapshot would match every Steam-platform library row against nothing and print
-a confident but meaningless "0 matched, N unmatched" summary — indistinguishable, at a glance, from a
-real report saying the owner's whole library is unrecognized by Steam. A script whose only job is
-reporting a diff must never produce that report from a request that never actually succeeded.
-
-**The script defaults to a dry run.** No database write happens without the explicit `--apply` flag —
-non-negotiable, since this touches data the owner entered by hand. A dry run (or an applied run) always
-writes a full human-readable report to a path outside the repo (default: the OS temp directory), listing
-every match, every difference, and every Steam-owned game with no library row, so the owner reviews
-before trusting `--apply`.
-
----
-
-## In-app Steam sync
-
-A second, separate Steam integration from the one above: `src/features/games/sync/` drives a sync run
-from inside the app itself — click "Sync with Steam" on the Library screen, review a staged diff at
-`/games/sync/[runId]`, apply only what's selected. It shares Steam's HTTP client
-(`src/server/db/games/steam-client.ts`) and the pure `src/server/games/steam.ts` leaf with
-`scripts/sync-steam-library.mjs` above, but everything about WHAT it proposes and HOW it applies is
-different — see "The opposite fill rule" below before touching either.
-
-### Chunked and resumable, not one long request
-
-A Server Action has a serverless timeout; walking the owner's whole Steam-platform library in one call
-does not fit inside it. `startSteamSyncAction` fetches the owner's Steam library once and snapshots it
-into a `game_sync_runs` row; `advanceSteamSyncAction` then processes `CHUNK_SIZE` (5) library games per
-call — each matched game costs one `GetPlayerAchievements` request, so a chunk is at most 5 outbound
-Steam requests, comfortably inside any timeout. The Sync button (`src/features/games/sync/sync-button.tsx`)
-drives this by calling `advanceSteamSyncAction` in a loop, showing "N of M games checked," until a
-response reports `done: true`.
-
-**`done` comes from an empty chunk, never from `cursor >= total`.** `total` is a count taken once at run
-creation — a snapshot, not a live value — and pagination walks `games.id` by keyset (`id > lastGameId`),
-not OFFSET/LIMIT, specifically because `total` can never be trusted to line up with the cursor exactly
-(a game added or removed mid-run shifts it). See `advanceSteamSyncAction`'s own doc comment in
-`src/features/games/sync/sync-actions.ts` for the two failure modes this fixes, both reproduced against
-real Postgres before the fix. `cursor`/`total` exist in `SyncProgress` for the "N of M" label only —
-nothing in the engine or the button decides completion by comparing them.
-
-Because the run's state (cursor, staged changes so far) lives in the database the whole time, **closing
-the tab mid-run leaves a resumable run**, not a lost one — reopening `/games/sync/[runId]` for a still-
-`running` run shows "still in progress," and clicking Sync again from the Library screen is safe (it
-starts a fresh run rather than resuming one, since a fresh Steam library snapshot is cheap and correctness
-doesn't depend on continuing the exact same run).
-
-### Nothing is written without explicit approval
-
-Every one of `startSteamSyncAction`/`advanceSteamSyncAction` only ever calls `appendSyncChanges` and
-`finishSyncRun` (`src/server/db/games/sync.ts`) — neither touches the `games` table. The owner reviews
-the staged diff at `/games/sync/[runId]` (`SyncReview`, `src/features/games/sync/sync-review.tsx`),
-grouped into "Needs attention," "New games," "Field updates," and "Links," and only `commitSyncRunAction`
-— triggered by the review screen's own "Apply N selected changes" button, one explicit click — writes
-anything, and only for the changes the owner left checked. A run is immutable once committed: committing
-again, or committing a run that never reached `ready`, is refused with a message rather than silently
-re-applying.
-
-### Sync never deletes or hides a game
-
-A library game Steam's response doesn't account for is left completely untouched — no write of any kind
-reaches its row, and it is never removed from the run's processed set or hidden from the library. This
-falls out of the design rather than needing a special case: the sync engine never calls
-`createGame`/`updateGame`/`deleteGame` at all, only read functions plus the sync-tables' own append/finish
-functions (see the "NO-DELETE INVARIANT" block at the top of `sync-actions.ts`, and its matching
-invariant test in `tests/integration/games-sync-actions.test.ts`).
-
-In the owner's real library that means **40 PSP games and 12 Steam-platform games Steam does not own are
-permanently manual** — the PSP games because Steam only ever compares `platform = 'steam'` rows (same
-scoping rule as the CLI script above), and the 12 because a title with no Steam match simply produces no
-change for that game; neither group is ever flagged, deleted, or excluded from view. They stay exactly as
-entered, indefinitely, across every future run.
-
-### Steam owns hours and achievements for a linked game
-
-This is the one place the in-app sync and the CLI script actively disagree, by design (see "The opposite
-fill rule" below). Once a game is linked (`steamAppid !== null`) — the same provenance signal
-`game-card.tsx`'s source mark and the Library's Source filter chip both use, independent of the
-`platform` column — Steam's reported hours and achievement counts are treated as authoritative. The
-editor (`game-dialog.tsx`) renders `hoursTenths`, `achievementsUnlocked`, and `achievementsTotal`
-read-only for a linked game (`steamOwned`, with a "From Steam" hint), and a sync run proposes a
-`field_update` change whenever the stored value differs from what Steam reports. A `null` from Steam
-(no playtime field, a 400 from `GetPlayerAchievements` on an older title) is never proposed as a change
-— see `planLinkedGameChanges` in `src/server/games/sync-plan.ts` — so a temporary API gap can never
-overwrite a real recorded number with a zero.
-
-### A changed total raises a reconciliation item, never a re-split
-
-`game_play_years` rows (see "Play-year attribution" above) record which YEARS a game's hours happened
-in; only the owner knows that breakdown, and Steam's API has no per-year data to supply it (see the
-matching `CLAUDE.md` gotcha). So when a `field_update` changes `hoursTenths` on a game that already has
-a play-year split, the sync additionally stages a `reconcile` change — "your recorded years add up to
-X, but the new total is Y" — and never touches the split rows itself. `reconcile` changes are staged
-`selected: false` regardless of the column's own default (see the "needs-attention items never
-pre-selected" rule in `sync.ts`) and apply nothing at commit time even if somehow checked — they name no
-`games` column to write. The owner rebalances the split by hand on the game's own page; the sync only
-ever surfaces that it's now stale.
-
-### New games are staged pre-selected, but still need a click
-
-A Steam-owned game with no library row at all is staged as a `new_game` change once the run's keyset
-walk finishes (an empty chunk) — never inserted directly. `appendSyncChanges` defaults every non-
-`reconcile` change to `selected: true`, so a brand-new game shows up pre-checked in the "New games"
-group of the review screen, but it is still just a checkbox: nothing lands in `games` until the owner
-clicks Apply. Achievements are deliberately not fetched for a `new_game` proposal — the game doesn't
-exist in the library yet, and fetching them for every unmatched Steam title would multiply a run's
-Steam API cost for rows the owner may well leave unchecked.
-
-### The opposite fill rule
-
-`scripts/sync-steam-library.mjs` still exists, unchanged, for local-only runs — see "Steam library
-sync" above — and it follows the **opposite** rule from everything on this page: it fills a column
-**only where it is currently `null`** (`steamSyncFieldsToFill` in `src/server/games/steam.ts`), because
-its contract is "never overwrite what the owner typed by hand." The in-app sync makes Steam
-authoritative for a linked game's hours and achievement counts and proposes an update whenever they
-differ, which is why those fields are read-only in the editor. **Both are correct for their own
-caller — do not unify them.** See the `CLAUDE.md` gotcha of the same name for what breaks if that line
-gets blurred.
-
-### Known limitation: an insert that sorts before the bookmark
-
-Keyset pagination fixes the two failure modes described under "Chunked and resumable" above, but it has
-one known gap: a game added to the library mid-run whose `id` happens to sort BEFORE the keyset
-bookmark (`lastGameId`) is never seen by that run — the walk has already passed the point in `id`-order
-where it would have appeared. It is picked up cleanly on the next run (the next sync starts a fresh
-keyset walk from the beginning), so nothing is lost permanently; it just doesn't appear until the owner
-syncs again. A game added mid-run whose id sorts AFTER the bookmark is picked up normally, in the same
-run.
-
----
-
-## PlayStation sync
-
-A second, independent in-app sync engine — `src/features/games/sync/psn-actions.ts` and
-`src/server/games/psn-plan.ts` — reusing the SAME staging, review, and commit machinery as Steam's
-(`game_sync_runs`/`game_sync_changes` with `source: 'psn'`, the same `SyncReview` screen at
-`/games/sync/[runId]`), talking to PlayStation via `psn-api`
-(`achievements-app/psn-api` — see "Steam library sync" above for why this library, and not an earlier-
-rejected scraper, is what made this worth building at all). "Sync with PlayStation" is its own button
-on the Library screen, **deliberately separate from "Sync with Steam"** — the owner's explicit choice,
-so a dead or expired PSN token can never block a working Steam sync. Everything about chunking,
-resumability, the no-delete invariant, and `done` coming from an empty chunk rather than
-`cursor >= total` is identical to the Steam engine described above; this section covers only what is
-actually different.
-
-### What PSN supplies
-
-Two PSN endpoints, fetched once per run and snapshotted together: `getUserPlayedGames` (play data,
-keyed by `titleId`) and `getUserTitles` (trophy data, keyed by `npCommunicationId`). Together they
-fill:
-
-- **Play time** — a cumulative `playDuration` ISO-8601 duration, converted to the same tenths-of-an-
-  hour unit everything else in Games uses (`parsePlayDuration` in `src/server/games/psn.ts` — not
-  `hours.ts`'s minutes-based converter, since PSN's input shape is different; see that function's own
-  doc comment).
-- **First-played year** — from `firstPlayedDateTime`, the same `first_played_year` column Steam sync
-  never touches (Steam's API has no such field at all).
-- **PS4-vs-PS5 platform** — from the played title's `category`, mapped through `categoryToPlatform`.
-  Only `ps4_game` → `ps4` and `ps5_native_game` → `ps5` are confirmed; every other value, `pspc_game`
-  included, maps to `null` (see "An unconfirmed category value" below).
-- **Last-played** — `lastPlayedDateTime`, stored on `games.last_played_at`.
-- **Trophy counts and platinum** — `earned`/`total` (summing `TrophyCounts`' four grades — `bronze`,
-  `silver`, `gold`, and `platinum` as a `0 | 1` flag, never a count, since a title can only ever have
-  one platinum) and a `platinum: boolean` derived from `earnedTrophies.platinum === 1`.
-
-A `null` from any of these — a `category` PSN doesn't report, no `lastPlayedDateTime` on a title
-that's shown as owned but never actually launched — means "PSN did not tell us something usable," not
-"the value is empty," and is never proposed as a change (same discipline `planLinkedGameChanges`
-applies to a `null` Steam field).
-
-### Trophy data is matched by NAME, across two identifier spaces with no join key
-
-`titleId` (`CUSA…`, played-game data) and `npCommunicationId` (`NPWR…`, trophy data) are two entirely
-separate PSN identifier spaces. **There is no field anywhere in either API response that maps one to
-the other** — the only thing they share is the human-readable title name. `psn-actions.ts` resolves
-each independently: `resolvePlayedTitle` looks up a stored `psnTitleId` (or falls back to a fresh title
-match), and `resolveTrophyTitle` does the same for `psnNpCommunicationId` against `bestTitleMatchAmong`
-— the same `SIMILARITY_FLOOR`-gated matcher IGDB and Steam matching both use, never bypassed or
-lowered here. Once a game is linked, its STORED id always wins over a fresh match, for both id spaces
-independently — the same controller invariant `sync-actions.ts`'s `resolveAppid` documents for Steam.
-
-**A title with no confident trophy-name match gets its play data (hours, platform, first/last played)
-and NO trophy data — this is never recorded as "zero trophies earned."** `planLinkedPsnGameChanges`
-gates every trophy-shaped proposal (`achievementsUnlocked`, `achievementsTotal`, `platinum`) on
-`trophyTitle !== null`; a `null` trophy title produces no trophy-field changes at all, not zeros. See
-the matching `CLAUDE.md` gotcha — conflating these two id spaces, or treating an unmatched trophy title
-as "confirmed zero," are both real ways to corrupt this data.
-
-### `platinum` is PSN-owned — the one field the two sync engines actively disagree on
-
-See "Platinum is the owner's own claim by hand — except where PSN sync owns it" in "Data model" above
-for the full reasoning. In short: Steam has no platinum concept, so the Steam sync (in-app and CLI
-alike) never writes this column and the owner's own checkbox is the only source of truth for a
-Steam-linked or manually-entered game. PlayStation's trophy system IS the actual system of record for
-a platinum trophy — Sony knows whether one was earned, the owner's memory doesn't have to — so
-`planLinkedPsnGameChanges` is the one place in the whole sync feature that proposes a `platinum`
-`field_update`, gated on a confident trophy-title match like every other trophy field above. The two
-planners are correct to disagree; this is not an inconsistency to "fix" toward symmetry.
-
-### The NPSSO token — a real chore, roughly every two months, that cannot be automated
-
-`PSN_NPSSO` is retrieved by hand from `https://ca.account.sony.com/api/v1/ssocookie` while logged in
-to PlayStation in a browser, and pasted into the environment. `psn-api` exchanges it for a short-lived
-access/refresh token pair that `psn-client.ts` caches in-process and refreshes automatically — but the
-NPSSO itself still expires roughly every two months regardless, and refreshing the derived tokens does
-nothing to extend it. **This cannot be automated**: it requires an authenticated interactive browser
-session against Sony's own login flow, not an API call this codebase could ever drive headlessly.
-
-`psn-client.ts` reports one of three distinct outcomes — `'not_configured' | 'token_expired' |
-'unavailable'` — never collapsed into one generic failure:
-
-- **Not configured** (`PSN_NPSSO` unset) — the Library screen's "Sync with PlayStation" button renders
-  disabled, with a standing explanation naming `PSN_NPSSO`, exactly like the Steam button's own
-  disabled state.
-- **Token expired** (Sony's OAuth rejects the NPSSO) — surfaced as its own distinct message at click
-  time, naming the ~2-month cadence and the retrieval URL above, because "something went wrong" gives
-  the owner no way to know a fresh token is the actual fix.
-- **Unavailable** (network error, timeout, non-2xx, malformed response) — "PlayStation did not
-  respond, try again."
-
-The full test suite passes with `PSN_NPSSO` unset, the same optional-credential contract IGDB and
-Steam both already hold.
-
-### PSP is permanently manual
-
-PlayStation Portable predates PSN's trophy system entirely (trophies launched with the PS3 in 2008;
-the PSP has no client-side trophy support at all), so PSN can never return play or trophy data that
-GENUINELY belongs to a PSP title under any circumstances. The sync engine still WALKS every
-PSP-platform library row rather than filtering them out as an "optimisation" (`PSN_PLATFORMS` in
-`src/server/db/games/games.ts` covers `ps5`/`ps4`/`psp` together, on purpose) — each one resolves no
-played title, stages nothing, and is left byte-identical, proving the no-delete invariant for exactly
-the games the owner is most protective of, rather than leaving it unproven by carving PSP out of the
-walk entirely.
-
-**"PSN never returns PSP data" is not, by itself, enough to guarantee that.** Sony has re-released
-several PSP-era titles on PS4/PS5 under the IDENTICAL name — "Persona 3 Portable" shipped again on PS5
-in 2023 with no change to the title string — so a plain name match against PSN's played-titles list
-would score that unrelated re-release as a near-perfect match for the owner's real PSP copy, and
-happily stage a `platform` flip (`psp` → `ps5`) straight onto it. `resolvePlayedTitle`
-(`src/features/games/sync/psn-actions.ts`) closes this with an explicit guard: an unlinked
-(`psnTitleId === null`) row with `platform === 'psp'` skips the name-match fallback entirely and
-always resolves to no played title, never falling through to `bestTitleMatchAmong` at all. The same
-guard is applied where the engine decides which PSN titles count as "already matched," so a PSP row
-can never absorb a genuine PS4/PS5 release and hide it from that run's `new_game` list either. Proven
-by two integration tests: the unrelated-response invariant (mutation-tested — see
-`tests/integration/games-psn-actions.test.ts`) and a same-titled-re-release collision test seeding a
-real "Persona 3 Portable" PSP row against a mocked PS5 title of the same name.
-
-In the owner's real library this means **every PSP game stays permanently hand-maintained,
-indefinitely, across every future PSN sync run** — never flagged, never excluded from view, never
-relabelled by a same-titled re-release, and never silently skipped in a way that would make its
-absence from every run's changes ambiguous with "nothing changed" versus "never checked."
-
-### An unconfirmed category value never becomes a guess
-
-PSN's played-title `category` field includes a `pspc_game` value whose meaning was not confirmed
-anywhere in the installed `psn-api` package — no comment, README section, or runtime code says what it
-stands for (see `src/server/games/psn.ts`'s module header for the verification that was actually done,
-not assumed). `categoryToPlatform` maps only the two confirmed values (`ps4_game` → `ps4`,
-`ps5_native_game` → `ps5`); `pspc_game` and every other unrecognized value map to `null` — a signal to
-leave the stored platform alone — and **`pspc_game` must never map to `'psp'`**, which would corrupt
-the platform of the owner's genuinely-PSP games the moment a PS-title-on-PC entry happened to sync.
-
-### The volume reality: PSN returns more than the owner's curated library
-
-A curated ~160-game library synced against a full PSN played-titles list can come back with several
-hundred `new_game` proposals — demos, PS Plus monthly claims, and anything else the account has ever
-launched or claimed, none of which the owner necessarily wants added. This is expected, not a bug:
-`SyncReview`'s `NEW_GAME_VOLUME_WARNING_THRESHOLD` (100, source-agnostic — a large Steam library could
-cross it too) renders the count and a visible warning in the "New games" group header itself, before
-the owner scrolls to a single row, and **nothing is written to `games` without the owner's own
-"Apply N selected changes" click** — every `new_game` change still has to be individually reviewed and
-left checked (or unchecked) like any other staged change; the volume warning does not change what gets
-committed, only how hard it is to miss before approving.
-
----
-
 ## Upcoming games and the wishlist
 
-`/games/upcoming` lists anticipated unreleased games from IGDB, grouped by release month, with a
-one-click add to the wishlist.
+`/games/upcoming` opens with the owner's own wishlist (every `wanted` game — see "Your wishlist"
+below), then lists anticipated unreleased games from IGDB, grouped by release month, with a one-click
+add to the wishlist.
 
 **`hypes` is the only usable signal, and that is not a preference.** IGDB documents it as "number of
 follows a game gets before release." Every other quality field — `total_rating`, `aggregated_rating`,
@@ -1048,7 +544,10 @@ this table in a comment — if you change it, re-measure rather than nudging the
 `3-6` quarters, `7` TBD. Only `0` and `1` yield a real month; everything else falls into a single
 trailing **Later / TBD** group — which is load-bearing, not an edge case: **19 of 45 real games land
 there**, because IGDB has only year or quarter precision for them. A game appears once, in its
-earliest qualifying month, with all its platforms listed — never once per release row.
+earliest qualifying month, with all its platforms listed — never once per release row. `excludeOwned`
+then drops every candidate whose IGDB id is already in the library (any status) and any month that
+empties: a wishlisted game is listed above the feed, and showing it twice said nothing the first copy
+did not.
 
 ### Fetching
 
@@ -1058,41 +557,82 @@ AND for any failure, so the page cannot tell those apart; the empty state delibe
 a cause it cannot know. `igdbConfigured()` is checked separately so "not configured" can be named
 precisely.
 
-### Auto-promotion on release
+### Your wishlist — a wanted game stays until the owner moves it
 
-A `wanted` game whose `release_date` has passed is flipped to `backlog` automatically. **This edits
-owner data without asking** — a deliberate decision, recorded here so nobody "fixes" it later.
+The tab opens with every `wanted` game: released ones first with an "Out now" mark, then by release
+date soonest first, then games with no date, each group alphabetical (`sortWishlist`, pure). Each row
+has a quick status menu — Playing / Played / Backlog; `wanted` is where it already is — and opens the
+game panel in place.
 
-It deliberately does NOT run during the Server Component render: Next forbids mutation there and it
-would fire unpredictably. The page counts overdue rows and passes the count down; the client view
-fires `promoteReleasedWantedGamesAction()` once on mount only when that count is non-zero. The action
-is idempotent, so React Strict Mode's double-mount in development is harmless. No scheduled job is
-involved — nothing is deployed yet, so a cron would have nowhere to run.
+There used to be an auto-flip: a wanted game whose date passed was silently made `backlog` and
+vanished from this tab, because the IGDB feed below only ever lists unreleased titles. So a game
+disappeared on the day it came out — the one day the owner most wanted to see it. Removed 2026-10-18
+by owner decision: `wanted` means "on my radar, not started" until the owner says otherwise, and
+nothing on this tab edits owner data unprompted any more.
+
+**"Out now" is `isReleased`, and it is precision-aware.** A day-precision date counts from the day
+itself. A month-precision date (stored as `YYYY-MM-01`) counts only once the whole month is behind us —
+that placeholder day is exactly what made the old auto-flip promote a "November 2026" game on 2
+November. `formatReleaseCountdown` prints "Out now" in both cases.
+
+### A release date you can type
+
+A hand-added wanted game has no IGDB id and no date, so it sorts last as "No date". The panel offers a
+Release date row while a game is `wanted` — `updateGameFieldAction('releaseDate', …)`, validated as
+a real calendar day (2026-02-30 is a shape, not a date), stored at `'day'` precision; clearing it
+clears both columns. One caveat: `reconcileWishlistReleaseDatesAction` still corrects IGDB-sourced
+rows from the feed, so a hand-typed date on an IGDB-sourced row can be overwritten by IGDB's reading.
+Hand-added rows have no IGDB id and are never touched.
+
+---
+
+## The game panel
+
+Clicking a cover, a table row, or a wishlist entry opens the game in a 520px panel beside the content
+(full-screen on a phone) instead of navigating to a page. `/games/[id]` no longer exists. The panel is
+client state held by `GamePanelProvider` in the Games `(tabs)` layout
+(`src/features/games/panel/`), so the Library and Upcoming tabs open the same panel in place; closing
+is Esc or the X, and switching tabs closes it. There is deliberately no URL for it.
+
+**Non-modal, on purpose.** Built directly on Radix `Dialog` with `modal={false}` — no overlay, no
+focus trap, no scroll lock — so the grid stays live and clicking another cover swaps the panel. Three
+things Radix would otherwise do for a modal are handled in `game-panel.tsx`: an outside pointer-down
+is prevented from dismissing (it is a swap, not a close); Escape inside a text control is prevented so
+it cancels only that field, and a second Escape closes; and the panel sits at `z-40` so toasts,
+nested dialogs (Confirm, the collection picker), Select content and the mobile nav — all `z-50` —
+stay above it. While it is open the page content gets right padding equal to the panel's width, so the
+library reflows beside it rather than sitting underneath.
+
+**Data.** The caller hands over the full `Game` it already has, so the header and every scalar row
+render on the first frame; `getGamePanelAction` fetches the collection data (members, options,
+candidates), and the panel re-fetches itself after every successful save — its copy of the game is
+state, not a prop, and the action's own `revalidatePath` only refreshes the page behind it. A swap
+from inside the panel (a member, the parent collection) has only an id and shows a skeleton until that
+fetch lands. Stale data stays on screen while a re-fetch is in flight; nothing flickers.
+
+**Layout.** A compact header — cover, the click-to-edit title with its IGDB search-as-you-type,
+`platform · status · rating`, and a muted `Metacritic N · ~Nh to beat` line when IGDB supplied
+either (ESRB is stored but never shown) — then Progress (status, rating, release date while wanted,
+hours, first played, the play-year split, achievement counts, platinum), Details (platform, ownership,
+price, genre, developer, publisher), Collection (the members panel on any row that holds or could hold
+games; the "Part of" picker on a member), Notes, and Remove. Every field keeps its per-field inline
+save through `updateGameFieldAction`; a collection member's hours, price and ownership stay read-only
+("From the collection") exactly as before. Creating a game is still the small modal — a new row needs
+only a handful of fields to start.
 
 ---
 
 ## Loading and click feedback
 
-Two things the module gained in the 2026-08-28 perceived-performance pass, recorded here because both
-are easy to undo by accident.
+**The Games `(tabs)` segment has its own `loading.tsx`**, and that is not cosmetic: Next.js does not
+prefetch a dynamic route at all unless it has a `loading` boundary, and every route in this app is
+dynamic. It is scoped to that segment deliberately — a fallback above the Library/Upcoming/Stats bar
+blanked the tabs being clicked. (`[id]` and `sync/[runId]` had their own until both routes were
+removed on 2026-10-18.)
 
-**Every Games segment has its own `loading.tsx`** — `(tabs)`, `[id]`, and `sync/[runId]`. This is not
-cosmetic: Next.js does not prefetch a dynamic route at all unless it has a `loading` boundary, and
-every route in this app is dynamic. Games had none, so its routes were both un-prefetched and silent
-on click, while Finance — which had a segment-scoped fallback — felt noticeably better. The `(tabs)`
-one is scoped to that segment deliberately: the previous nearest boundary sat *above* the
-Library/Upcoming/Stats bar, so switching tabs blanked the tabs being clicked.
-
-**A clicked cover or row shows a spinner while its page loads.** `LibraryView` tracks `openingId` and
-passes it to `GameGrid`/`GameTable`; the card renders an overlay above every foil layer, the row an
-inline spinner beside the title. This is the ONE piece of chrome allowed onto the box art beyond the
-countdown and the collection marker, and it earns its place for the opposite reason they do — it is
-not information about the game, it is the card answering the click. In a wall of near-identical tiles,
-no response reads as a missed tap, so the owner taps again.
-
-See `docs/ARCHITECTURE.md`, "Perceived performance", for the full diagnosis, including why the two
-trophy aggregates on `/games/stats` (~109ms and ~66ms mean, against under 20ms for every other query
-in the app) were left alone rather than indexed.
+**A clicked cover or row opens the panel on the same frame**, so there is no spinner to show any more;
+instead the card whose game is open carries a ring (`aria-pressed`) and the table row is highlighted
+(`data-active`). See `docs/ARCHITECTURE.md`, "Perceived performance", for the original diagnosis.
 
 ---
 
@@ -1114,3 +654,13 @@ Each of these was considered and cut, not overlooked:
 - ~~**A wishlist-vs-backlog distinction.**~~ **Shipped** — see "Upcoming games and the wishlist"
   above. `wanted` is now a real status, distinct from `backlog`, and excluded from every computed
   number.
+- **Platform syncs and a per-trophy list.** Steam and PSN syncs (staged, reviewed, committed) and a
+  `game_trophies` table were built in August 2026, lived in production for seven weeks, and were
+  removed on 2026-10-18 by owner decision: re-pasting a PSN token every two months and reviewing staged
+  runs cost more attention than the data returned. Hours, achievement counts and platinum are
+  hand-entered again. Git history before commit `3324656` has the full implementation if it is ever
+  wanted back.
+- **A Duplicates screen.** It existed to merge the copies the syncs created (the same purchase under
+  PS4 and PS5, a boxed set flattened into its first title). With no sync there is no source of
+  duplicates the `(owner, lower(title), platform)` index does not already block; the few flattened
+  rows left from the original import are fixed by hand in the app.

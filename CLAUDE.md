@@ -325,54 +325,25 @@ These are verified, not folklore. Do not "fix" them back.
   exactly like the AI-optional rule for Finance. IGDB replaced RAWG (2026-08-20): RAWG has no portrait
   cover art anywhere in its data model and its search response silently omits `developers`/
   `publishers`; see `docs/GAMES.md`, "Cover art — IGDB, and its soft-failure contract."
-- **`ANILIST_USERNAME` is optional, same contract as the IGDB and Steam credentials.**
+- **`ANILIST_USERNAME` is optional, same contract as the IGDB credentials.**
   `src/server/db/anime/anilist-client.ts` fails soft (`null`, never a throw) when it is unset, on a
   network error, a timeout, a non-200 (429 included), a GraphQL `errors` body, or malformed JSON — and
   the full test suite must pass without it, which `tests/unit/anime-anilist-client.test.ts` enforces by
   asserting `fetch` is never CALLED rather than merely that the result is empty. `null` and `[]` mean
   different things here and are kept apart deliberately: "the request failed" and "this list is empty"
   are separate facts. AniList needs no auth because the owner's profile is public — if a private one
-  ever needs supporting, copy `psn-client.ts`'s three-way failure string, not a fourth `null`.
-- **`STEAM_API_KEY`/`STEAM_ID` are optional too, same contract as IGDB's pair above.**
-  `src/server/db/games/steam-client.ts` fails soft (`[]`/`null`, never a throw) on missing
-  credentials, a network error, a timeout, a non-200, or malformed JSON, and the full test suite must
-  pass with neither present. `scripts/sync-steam-library.mjs` (2026-08-23) exits early with an error
-  if either is unset, since there's nothing useful it can do without them — see `docs/GAMES.md`,
-  "Steam library sync." The in-app sync (2026-08-24, `src/features/games/sync/`) consumes the same
-  pair through a real app request path, and degrades instead of exiting: `isSteamConfiguredAction`
-  checks the environment directly (never inferred from a fetch result — see its own doc comment) so
-  the Library screen's Sync button renders disabled with a visible explanation naming both vars,
-  never hidden and never thrown. See `docs/GAMES.md`, "In-app Steam sync."
-- **The in-app Steam sync and `scripts/sync-steam-library.mjs` deliberately follow OPPOSITE rules,
-  and unifying them is a bug.** The script fills only columns that are currently `NULL`
-  (`steamSyncFieldsToFill`) because its contract is "never overwrite what the owner typed." The
-  in-app sync makes Steam authoritative for a linked game's hours and achievement counts and proposes
-  an update whenever they differ, which is why those fields render read-only in the editor. Both are
-  correct for their own caller. `sync-plan.ts` exists as a separate module precisely because
-  `steam.ts` must stay a dependency-free leaf for the script to `node`-import it.
+  ever needs supporting, model a three-way failure string on the removed PSN client (git history),
+  not a fourth `null`.
 - **`games.hours_tenths` is the authoritative total; `game_play_years` only says WHICH YEARS it
-  happened in.** Neither Steam nor PSN can supply a per-year breakdown (Steam gives
-  `playtime_forever` and `playtime_2weeks`; PSN gives one cumulative `playDuration`), so the total
-  has to stay a single number an API can write while the split stays owner-entered. Do not
-  "normalize" this by deriving the total from the rows — a sync would then have nowhere to write,
-  and 157 of 160 games have no rows at all. See `docs/GAMES.md`, "Play-year attribution."
-- **`titleId` and `npCommunicationId` are different PSN identifier spaces and must never be
-  conflated.** `titleId` (`CUSA…`) identifies played-game data (`getUserPlayedGames`);
-  `npCommunicationId` (`NPWR…`) identifies trophy data (`getUserTitles`) — there is no field in
-  either PSN response that maps one to the other. `psn-actions.ts` joins them only by NAME, via the
-  same `bestTitleMatchAmong`/`SIMILARITY_FLOOR` matcher IGDB and Steam matching already use, which is
-  exactly why `games` has two separate nullable columns (`psn_title_id`, `psn_np_communication_id`)
-  instead of one: a game can resolve one without the other. A title with no confident trophy-name
-  match gets play data and NO trophy fields proposed at all — never a zero. See `docs/GAMES.md`,
-  "PlayStation sync."
+  happened in.** The total is the one number the owner edits; the split is an attribution of it that
+  must sum to it. Do not "normalize" this by deriving the total from the rows — 157 of 160 games have no
+  rows at all. See `docs/GAMES.md`, "Play-year attribution."
 - **Collections: anything that COUNTS games excludes collection rows; anything that SUMS hours, money
   or trophies includes everything.** A boxed set is one `games` row wrapping several titles via a
   nullable self-FK (`games.collection_id`), so counting it alongside its own three titles reports four
   games where there are three. The sums need no rule at all — a title inside a collection carries NULL
   hours, NULL price and `platinum = false`, so every existing `SUM` already excludes it for free. The
-  rule lives in `src/server/games/collections.ts` and nowhere else. Both sync engines are blind to
-  members (`NOT_A_COLLECTION_MEMBER`): without that, a Steam/PSN exact-title match would write hours
-  onto a member that the collection already accounts for. See `docs/GAMES.md`, "Collections."
+  rule lives in `src/server/games/collections.ts` and nowhere else. See `docs/GAMES.md`, "Collections."
 - **A RUNTIME import from a `server/db/**` module into a client component drags `postgres` into the
   browser bundle and fails the build with `Can't resolve 'fs'`.** `import type` from the same module is
   fine — types are erased — which is why `transactions-table.tsx` has always imported `LedgerPage`,
@@ -432,7 +403,8 @@ These are verified, not folklore. Do not "fix" them back.
   which block is on screen — see `tests/unit/finance-dashboard-view.test.tsx`, whose two regression
   cases fail against the shipped code.
 - **A merge that changes a UNIQUE column must delete the other row FIRST.** `games` has a unique index
-  on `(owner_id, lower(title), platform)`. The duplicates merge writes the chosen platform onto the
+  on `(owner_id, lower(title), platform)`. The duplicates merge (a screen removed 2026-10-18; the lesson
+  stands) wrote the chosen platform onto the
   surviving row — and the whole premise of a merge is that both rows share a title, so doing that
   while the loser still exists collides with the very row being merged away. Postgres raises `23505`
   naming `games_owner_title_platform_idx`, which reads like a bug in the index rather than in the
@@ -440,11 +412,26 @@ These are verified, not folklore. Do not "fix" them back.
   a real merge in a browser; no test, typecheck or lint saw it, and the transaction rolled back
   cleanly each time so the data was never wrong — just permanently unmergeable.
 - **A Server Action that REJECTS (rather than returning a failure result) skips everything after its
-  `await`, including the line that clears your pending flag.** The duplicates screen set
-  `mergingId` before the call and cleared it after; when the merge threw, every Merge button on the
+  `await`, including the line that clears your pending flag.** The (since removed) duplicates screen
+  set `mergingId` before the call and cleared it after; when the merge threw, every Merge button on the
   page stayed disabled with no error shown and no way back except a reload — and the symptom
   ("element is not enabled") pointed at the button, not at the action. Any component holding a
   pending flag across a Server Action call needs `try/catch/finally`, not a bare `await`.
+- **A non-modal Radix `Dialog` still dismisses on any outside pointer-down, and catches Escape in a
+  document-level CAPTURE listener before the focused input ever sees it.** The game panel
+  (`src/features/games/panel/game-panel.tsx`) is `modal={false}` so the library behind it stays live;
+  without `onInteractOutside={(e) => e.preventDefault()}` clicking another cover closed it and the
+  card's own click reopened it a frame later, and without an `onEscapeKeyDown` guard on text controls
+  Esc cancelled the field AND closed the panel in one press. Both are Radix `DismissableLayer`
+  behaviour, not bugs. The panel also sits at `z-40` on purpose: the toast stack, every nested
+  dialog, Select content and the mobile nav are `z-50` and a `z-50` panel appended later to `<body>`
+  would have covered the toasts that confirm its own saves.
+- **A helper that removes a block of text and then "skips one more character" eats the next brace
+  when the block was the LAST one in its parent.** A scripted test edit that cut an `it(...)` and then
+  stepped past one extra character to swallow a blank line removed the `}` of the enclosing
+  `describe` whenever that `it` was its last child — leaving a bare `);` that typecheck, lint and
+  Prettier all reported as "Declaration or statement expected" at a line that looked fine. Skip a
+  following newline only if the next character IS a newline; never an unconditional `+ 1`.
 - **A conditional SPREAD into JSX bypasses TypeScript's excess-property check, so a prop that does
   not exist is silently dropped.** `{...(cond ? { hint: 'x' } : {})}` on a component with no `hint`
   prop compiles clean, lints clean, and renders nothing — excess-property checking only applies to
@@ -509,7 +496,8 @@ These are verified, not folklore. Do not "fix" them back.
 src/proxy.ts              Access JWT verification, security headers, CSP nonce
 src/app/                  routes; / redirects to /finance/monthly (the landing view)
 src/features/finance/     Finance UI
-src/features/games/       Games UI
+src/features/games/       Games UI — library, panel/ (the game side panel: client state in the Games
+                          (tabs) layout, no route), upcoming/, dashboard/, collections/
 src/features/anime/       Anime UI
 src/components/ui/        shared primitives, incl. page-skeleton.tsx (route-shaped loading fallbacks),
                           inline-edit-row.tsx, picker-dialog.tsx and status-badge.tsx — all three
@@ -526,7 +514,9 @@ src/server/db/anime/      same, with anilist-client.ts as its one HTTP boundary
 src/server/{auth,db,security}/
 drizzle/                  migrations (committed)
 tests/fixtures/           SYNTHETIC statements only
-scripts/                  migrate.mjs, provision-owner.mjs — plain host-run Node scripts
+scripts/                  migrate.mjs, provision-owner.mjs — plain host-run Node scripts; plus one-offs
+                          (import-game-log, diff-game-log, backfill-game-metadata, …) that import the
+                          domain core by path and never run against production without saying so
 docs/                     the approved plan and supporting documents
 ```
 

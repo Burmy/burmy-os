@@ -48,7 +48,7 @@ src/server/games/       ← the same rule, held to just as strictly.
 
 Money arithmetic, merchant normalization, deduplication, categorization and transfer classification
 live in the first. Hours conversion, taxonomy, play-year attribution, stats aggregation, the collection
-counting rule, and the pure request/response shaping for IGDB, Steam and PSN live in the second. All of
+counting rule, release-date logic, and the pure request/response shaping for IGDB live in the second. All of
 them take plain data and return plain data.
 
 This is not architectural taste. It is what makes financial correctness *verifiable*: the logic that
@@ -63,20 +63,21 @@ Everything else is arranged around it:
 | --- | --- | --- |
 | `src/server/finance/` | Domain logic and arithmetic. **No Drizzle, no database, no I/O.** | Nothing framework-related |
 | `src/server/db/` | Drizzle schema and connection | Domain types |
-| `src/server/games/` | Games domain logic — hours, taxonomy, stats, collections, sync planning. **Same rule: no Drizzle, no database, no HTTP.** | Nothing framework-related |
+| `src/server/games/` | Games domain logic — hours, taxonomy, stats, collections, release dates, upcoming. **Same rule: no Drizzle, no database, no HTTP.** | Nothing framework-related |
 | `src/server/db/finance/` | **Owner-scoped data access.** Every function takes an `ownerId` and injects it into the `WHERE`; mutations match on `(ownerId, id)`, never `id` alone. Routes and actions never build queries. | Drizzle, domain types |
-| `src/server/db/games/` | The same, for Games — **plus the module's only outbound HTTP** (`igdb.ts`, `steam-client.ts`, `psn-client.ts`) | Drizzle, domain types, `fetch` |
+| `src/server/db/games/` | The same, for Games — **plus the module's only outbound HTTP** (`igdb.ts`) | Drizzle, domain types, `fetch` |
 | `src/server/{auth,security}/` | Owner guard, CSP, headers, audit | Next.js request APIs |
 | `src/features/finance/` | Finance UI — components, grids, review flow | Domain types, server actions |
-| `src/features/games/` | Games UI — library, game page, stats, sync review | Domain types, server actions |
+| `src/features/games/` | Games UI — library, the game panel, upcoming, stats | Domain types, server actions |
 | `src/app/` | Routing, layouts, Server Actions, Route Handlers | Everything above |
 | `src/proxy.ts` | Access JWT verification, headers, CSP nonce | Next.js only |
 
 Dependencies point inward. The domain core knows nothing about what is above it.
 
-**Outbound HTTP is confined to `db/games/`, and only there.** Finance makes no external calls at all —
-CLAUDE.md's "no bank connections, ever" is absolute. Games talks to three third-party APIs, and each
-client is a leaf that fails soft: a missing credential, a timeout, a non-200 or malformed JSON all
+**Outbound HTTP is confined to `db/games/igdb.ts` and `db/anime/anilist-client.ts`, and only there.**
+Finance makes no external calls at all — CLAUDE.md's "no bank connections, ever" is absolute. Games
+talks to one third-party API and Anime to one, and each client is a leaf that fails soft: a missing
+credential, a timeout, a non-200 or malformed JSON all
 produce `[]`/`null`, never a throw, so no page can break because IGDB was slow. The pure URL-building
 and response-shaping for each lives in `server/games/` where it can be tested without a network; only
 the `fetch` itself lives in `db/games/`.
@@ -244,12 +245,11 @@ Stated plainly, because the reassuring version would be false:
 - **Supabase hosts the database** with the same category of at-rest/in-memory access any managed
   Postgres provider has to the data it stores.
 - **Google** sees an identity assertion at the Access layer and no financial data.
-- **IGDB (via Twitch OAuth), Steam and Sony** each receive game titles and identifiers from the Games
-  module, and Steam and Sony additionally tie those requests to the owner's real account on their
-  platform. Every one of these is **optional** — the module works fully with no credentials set — and
-  none of them ever receives Finance data, because Finance makes no outbound calls at all. Sony's is an
-  *unofficial* API accessed with a browser token; it can change or break without notice, which is why
-  its failure path is a visible message rather than an exception.
+- **IGDB (via Twitch OAuth)** receives game titles from the Games module, and **AniList** the owner's
+  public username from Anime. Both are **optional** — each module works fully with no credentials set —
+  and neither ever receives Finance data, because Finance makes no outbound calls at all. (Steam and
+  Sony were in this list until 2026-10-18, when the syncs were removed; Sony's unofficial API was the
+  least trustworthy dependency the project had.)
 
 The architecture buys "no host to patch, no inbound ports of our own, an identity gate, low cost" in
 exchange for trusting Cloudflare in transit, Netlify to run the app honestly, and Supabase with the
@@ -264,9 +264,9 @@ Real usage: *"the transitions between pages and everything is very laggy or slow
 indication."* Measured rather than guessed, and the measurement moved the answer.
 
 **The database is not the bottleneck and cannot become one at this size.** 18 MB, ~1,100 transactions,
-185 games, 6,137 trophies. Supabase's performance advisors report nothing above INFO. Of the app's own
-queries, the two slowest are trophy aggregates on `/games/stats` at ~109ms and ~66ms mean; **everything
-else is under 20ms.** Adding indexes to a table Postgres can scan in a millisecond would be theatre.
+185 games. Supabase's performance advisors report nothing above INFO. **Every query the app makes is
+under 20ms** (the two trophy aggregates that once ran ~100ms went with the trophy table on
+2026-10-18). Adding indexes to a table Postgres can scan in a millisecond would be theatre.
 
 What actually costs time is the **serverless round trip** — a Netlify function invocation, cold most of
 the time for a single-user app that scales to zero — and what made that time feel worse than it is was

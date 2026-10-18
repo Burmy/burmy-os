@@ -257,28 +257,25 @@ being pulled into a scope (like Post processing, which touches build output) whe
 | `CF_ACCESS_AUD` | the Burmy-OS Access application's Audience tag | Functions / Runtime only | **Production only** | Yes |
 | `NODE_ENV` | `production` | — | Set by Netlify automatically | Not applicable — never set this manually |
 
-### The five OPTIONAL Games variables
+### The three OPTIONAL module variables
 
-The four above are what the application REQUIRES. The Games module adds five more, and every one of
-them is optional by contract — see `docs/GAMES.md` and `.env.example`, both of which spell out the
-soft-failure behavior. They are listed here because the table above used to be the complete picture and
+The four above are what the application REQUIRES. Games adds two more and Anime one, and every one of
+them is optional by contract — see `docs/GAMES.md`, `docs/ANIME.md` and `.env.example`, which spell
+out the soft-failure behavior. They are listed here because the table above used to be the complete picture and
 is not any more, and because "optional" makes their absence invisible rather than loud: with none of
 them set the app runs correctly and simply offers less.
 
 | Variable | What it enables | Absent behavior |
 | --- | --- | --- |
 | `IGDB_CLIENT_ID`, `IGDB_CLIENT_SECRET` | Cover art and metadata suggestions (genre, developer/publisher, critic score, playtime, ESRB) | Lookup returns `[]`. No error, no crash — a game just has no art |
-| `STEAM_API_KEY`, `STEAM_ID` | The Library's "Sync with Steam" button | Button renders DISABLED with a visible explanation naming both variables. Never hidden, never thrown |
-| `PSN_NPSSO` | The Library's "Sync with PlayStation" button | Same: disabled, with a visible explanation naming the variable |
+| `ANILIST_USERNAME` | Settings → Anime → Sync | Button renders DISABLED with a visible explanation naming the variable. Never hidden, never thrown |
 
-Same scoping rule as the required four — **Functions/Runtime only, Production only, secret-marked.**
-They are credentials tied to the owner's personal Twitch, Steam and PlayStation accounts, and none of
-them is needed at build time.
+Same scoping rule as the required four — **Functions/Runtime only, Production only**, and the IGDB pair
+secret-marked (it is a credential for the owner's Twitch developer app; the AniList username is public).
+None is needed at build time.
 
-**`PSN_NPSSO` is the one that will need re-entering.** It expires roughly every two months and there is
-no way to detect that except by attempting a sync, at which point the button surfaces a distinct "token
-expired" message rather than a generic failure. Re-pasting it in Netlify's dashboard is a manual chore
-with no automated alternative — see `docs/GAMES.md`, "The NPSSO token."
+**`STEAM_API_KEY`, `STEAM_ID` and `PSN_NPSSO` are retired** (2026-10-18, with the syncs) and can be
+deleted from Netlify's dashboard; the application no longer reads them.
 
 **None of the four required variables are given a Build scope.** `next build` never needs a live database or Access
 config — `src/server/db/index.ts` connects lazily, on first query, specifically so `next build` (which
@@ -423,6 +420,26 @@ Local development is unaffected: `docker compose -f compose.dev.yml up -d postgr
 Postgres container, not Supabase. Drizzle/`drizzle-kit` need no changes — `drizzle.config.ts`
 already just reads `DATABASE_URL`.
 
+### Applying a migration through the Supabase MCP
+
+When the only route to production is the Supabase MCP (no connection string on the machine), a
+migration is applied as raw SQL through `execute_sql` and then recorded exactly as Drizzle's own
+migrator would — otherwise the next `node scripts/migrate.mjs` re-runs or skips it. Verified against
+`node_modules/drizzle-orm/migrator.js` and `pg-core/dialect.js`:
+
+- The journal is `drizzle.__drizzle_migrations (hash text, created_at bigint)`. `hash` is the SHA-256
+  of the WHOLE `.sql` file text (`sha256sum drizzle/<tag>.sql`; the files are LF on disk);
+  `created_at` is that entry's `when` from `drizzle/meta/_journal.json`.
+- The migrator applies every journal entry whose `when` is greater than the newest `created_at` in
+  the table, and never compares hashes — so `created_at` must be the literal journal value.
+- One `execute_sql` call per migration: `BEGIN;` + the file's statements (`--> statement-breakpoint`
+  lines are SQL comments and may stay) + `insert into drizzle.__drizzle_migrations ("hash","created_at")
+  values ('<hash>', <when>);` + `COMMIT;`. An `ALTER TYPE … ADD VALUE` is fine inside the transaction
+  on PG ≥ 12 as long as the new label is not used in the same transaction.
+- Never `apply_migration`: it records into Supabase's own `supabase_migrations` table, which this
+  app's migrator ignores.
+- Pre-check the newest `created_at` before starting; post-check the journal and the schema after.
+
 ### Running any OTHER script against production
 
 `migrate.mjs` and `provision-owner.mjs` are the two scripts that are *supposed* to run against
@@ -433,8 +450,8 @@ right answer differs per script:
 | --- | --- |
 | `migrate.mjs`, `provision-owner.mjs` | None — running against production is their purpose |
 | `pnpm db:seed` | **Refuses** unless `DATABASE_URL`'s host is `localhost`/`127.0.0.1`/`::1` |
-| `sync-steam-library.mjs`, `backfill-game-metadata.mjs`, `fix-game-platforms.mjs`, `import-game-log.mjs` | **Refuse** a non-local database outright — sync locally, then migrate the result deliberately |
-| `link-game-collections.mjs`, `merge-duplicate-games.mjs` | Report by default; `--apply` writes; a non-local database additionally requires `--remote` |
+| `backfill-game-metadata.mjs`, `fix-game-platforms.mjs`, `import-game-log.mjs`, `seed-play-year-splits.mjs` | **Refuse** a non-local database outright — run locally, then migrate the result deliberately |
+| `diff-game-log.mjs` | **No database access at all** — reads the sheet CSV and a JSON export of production rows, writes a report and an SQL file; the SQL is applied by hand (through the MCP) after the owner reads the report |
 
 **Why `db:seed`'s guard is a hostname check and not `NODE_ENV`.** It was added after `pnpm db:seed`
 was once run against the real Supabase database by accident, immediately after legitimately pointing
@@ -443,9 +460,6 @@ operator shell running production commands typically has no `NODE_ENV` set at al
 `NODE_ENV !== 'production'` gate would have passed cleanly in exactly the situation that caused the
 mistake. See `src/server/db/seed-guard.ts`.
 
-**The two collections scripts are the exception that proves the rule.** They exist to fix data that
-only exists in production, so they cannot carry the flat local-only refusal. `--remote` is the
-deliberate second key: nothing about a mistyped command line produces it accidentally.
 
 ---
 
@@ -546,8 +560,8 @@ restore target's role structure doesn't exactly match the dump's recorded owner,
 case restoring into a fresh Supabase project or a different Postgres instance entirely.
 
 **When repeating this against Supabase, compare more than three tables.** The row-count check above
-was written when the database held two transactions. The live schema has 23 tables across Finance and
-Games; a restore that silently dropped `game_trophies` or `finance_import_rows` would pass the check
+was written when the database held two transactions. The live schema has two dozen tables across
+Finance, Games and Anime; a restore that silently dropped `game_play_years` or `finance_import_rows` would pass the check
 exactly as written. Count every table that should be non-empty, or diff the full `\dt` output.
 
 **This is intentionally the simplest thing that provides real, independent protection, not the final
