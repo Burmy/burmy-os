@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatReleaseCountdown } from '@/server/games/release-date';
+import { formatReleaseCountdown, isReleased, sortWishlist } from '@/server/games/release-date';
 
 const NOW = new Date('2026-09-06T12:00:00.000Z');
 
@@ -50,7 +50,7 @@ describe('formatReleaseCountdown — day precision', () => {
    * state is genuinely reachable in the library.
    */
   it('says the game is out rather than counting backwards', () => {
-    expect(formatReleaseCountdown('2026-09-01', 'day', NOW)).toBe('Released');
+    expect(formatReleaseCountdown('2026-09-01', 'day', NOW)).toBe('Out now');
   });
 
   /**
@@ -64,5 +64,75 @@ describe('formatReleaseCountdown — day precision', () => {
     const earlyInDay = new Date('2026-09-06T00:01:00.000Z');
     expect(formatReleaseCountdown('2026-09-08', 'day', lateInDay)).toBe('in 2 days');
     expect(formatReleaseCountdown('2026-09-08', 'day', earlyInDay)).toBe('in 2 days');
+  });
+});
+
+describe('formatReleaseCountdown — once a month-precision date has passed', () => {
+  it('says "Out now" for a month strictly before the current one', () => {
+    expect(formatReleaseCountdown('2026-08-01', 'month', NOW)).toBe('Out now');
+  });
+
+  it('still names the month while it is the CURRENT month — the day is unknown', () => {
+    const now = new Date('2026-11-20T12:00:00Z');
+    expect(formatReleaseCountdown('2026-11-01', 'month', now)).toBe('November 2026');
+  });
+});
+
+describe('isReleased', () => {
+  it('treats a day-precision date as released on the day itself and after', () => {
+    expect(isReleased('2026-09-06', 'day', NOW)).toBe(true);
+    expect(isReleased('2026-09-01', 'day', NOW)).toBe(true);
+    expect(isReleased('2026-09-07', 'day', NOW)).toBe(false);
+  });
+
+  it('treats a month-precision date as released only once the whole month is behind us', () => {
+    expect(isReleased('2026-08-01', 'month', NOW)).toBe(true);
+    expect(isReleased('2026-09-01', 'month', NOW)).toBe(false);
+    expect(isReleased('2026-10-01', 'month', NOW)).toBe(false);
+  });
+
+  it('is false for garbage rather than throwing', () => {
+    expect(isReleased('soon', 'day', NOW)).toBe(false);
+  });
+});
+
+describe('sortWishlist', () => {
+  const entry = (
+    title: string,
+    releaseDate: string | null,
+    releasePrecision: 'day' | 'month' | null = 'day',
+  ) => ({
+    title,
+    releaseDate,
+    releasePrecision,
+  });
+
+  it('puts released games first, then dated games soonest first, then undated, each alphabetical', () => {
+    const sorted = sortWishlist(
+      [
+        entry('Zeta (no date)', null, null),
+        entry('Later', '2027-03-01', 'month'),
+        entry('Soon', '2026-10-02'),
+        entry('Bravo (out)', '2026-01-10'),
+        entry('Alpha (no date)', null, null),
+        entry('Alpha (out)', '2026-05-05'),
+      ],
+      NOW,
+    ).map((game) => game.title);
+
+    expect(sorted).toEqual([
+      'Alpha (out)',
+      'Bravo (out)',
+      'Soon',
+      'Later',
+      'Alpha (no date)',
+      'Zeta (no date)',
+    ]);
+  });
+
+  it('does not mutate its input', () => {
+    const input = [entry('B', null, null), entry('A', null, null)];
+    sortWishlist(input, NOW);
+    expect(input.map((game) => game.title)).toEqual(['B', 'A']);
   });
 });

@@ -350,7 +350,24 @@ const GAME_FIELD_SCHEMAS = {
   priceDollars: z.coerce.number().min(0).max(10_000),
   hours: z.string(),
   platinum: z.coerce.boolean(),
+  /**
+   * Hand-entered from the panel while a game is `wanted`. A regex for the
+   * shape, then a round trip through `Date.UTC` to reject a day that does not
+   * exist (2026-02-30 parses as a shape and is not a date).
+   */
+  releaseDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the form YYYY-MM-DD')
+    .refine(isRealCalendarDate, 'That is not a real calendar date'),
 } as const;
+
+function isRealCalendarDate(value: string): boolean {
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
 
 export type GameFieldKey = keyof typeof GAME_FIELD_SCHEMAS;
 
@@ -442,6 +459,17 @@ export async function updateGameFieldAction(
       }
       case 'platinum':
         patch.platinum = GAME_FIELD_SCHEMAS.platinum.parse(rawValue);
+        break;
+      case 'releaseDate':
+        // A typed date is a real day, so its precision is `'day'`; clearing
+        // the date clears the precision with it — the pair is read together.
+        if (trimmed === '') {
+          patch.releaseDate = null;
+          patch.releasePrecision = null;
+        } else {
+          patch.releaseDate = GAME_FIELD_SCHEMAS.releaseDate.parse(trimmed);
+          patch.releasePrecision = 'day';
+        }
         break;
     }
   } catch (error) {

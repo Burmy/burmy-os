@@ -429,9 +429,9 @@ describe('listWishlistIgdbIds', () => {
     expect(await games.listWishlistIgdbIds(owner)).toEqual([111]);
   });
 
-  it('still includes an igdb id after its row is promoted to backlog', async () => {
+  it('still includes an igdb id after the owner moves its row to another status', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, {
+    const row = await games.createWishlistGame(owner, {
       igdbId: 222,
       title: 'Released Now',
       coverUrl: null,
@@ -440,8 +440,13 @@ describe('listWishlistIgdbIds', () => {
       platform: 'ps5',
     });
 
-    await games.promoteReleasedWantedGames(owner);
+    await games.updateGame(owner, row.id, {
+      title: row.title,
+      platform: row.platform,
+      status: 'played',
+    });
 
+    // The feed must keep hiding a game the owner already has, whatever its status.
     expect(await games.listWishlistIgdbIds(owner)).toEqual([222]);
   });
 
@@ -458,105 +463,5 @@ describe('listWishlistIgdbIds', () => {
     });
 
     expect(await games.listWishlistIgdbIds(mine)).toEqual([]);
-  });
-});
-
-describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
-  it('counts only wanted rows whose release date has passed — not future dates, not TBD (null) dates', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, {
-      igdbId: 1,
-      title: 'Overdue',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-    await games.createWishlistGame(owner, {
-      igdbId: 2,
-      title: 'Future',
-      coverUrl: null,
-      releaseDate: '2099-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-    await games.createWishlistGame(owner, {
-      igdbId: 3,
-      title: 'TBD',
-      coverUrl: null,
-      releaseDate: null,
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    expect(await games.countOverdueWantedGames(owner)).toBe(1);
-  });
-
-  it('flips only the overdue wanted rows to backlog, leaving future and TBD wishlist rows as wanted', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    const overdue = await games.createWishlistGame(owner, {
-      igdbId: 1,
-      title: 'Overdue',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-    const future = await games.createWishlistGame(owner, {
-      igdbId: 2,
-      title: 'Future',
-      coverUrl: null,
-      releaseDate: '2099-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-    const tbd = await games.createWishlistGame(owner, {
-      igdbId: 3,
-      title: 'TBD',
-      coverUrl: null,
-      releaseDate: null,
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    const flipped = await games.promoteReleasedWantedGames(owner);
-
-    expect(flipped).toBe(1);
-    expect((await games.getGame(owner, overdue.id)).status).toBe('backlog');
-    expect((await games.getGame(owner, future.id)).status).toBe('wanted');
-    expect((await games.getGame(owner, tbd.id)).status).toBe('wanted');
-  });
-
-  it('only flips the given owner’s rows', async () => {
-    const mine = await makeOwner('mine@burmy.test');
-    const theirs = await makeOwner('theirs@burmy.test');
-    const theirOverdue = await games.createWishlistGame(theirs, {
-      igdbId: 1,
-      title: 'Their overdue game',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    const flipped = await games.promoteReleasedWantedGames(mine);
-
-    expect(flipped).toBe(0);
-    expect((await games.getGame(theirs, theirOverdue.id)).status).toBe('wanted');
-  });
-
-  it('is idempotent — a second call touches zero rows once the first has already flipped everything', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, {
-      igdbId: 1,
-      title: 'Overdue',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    expect(await games.promoteReleasedWantedGames(owner)).toBe(1);
-    expect(await games.promoteReleasedWantedGames(owner)).toBe(0);
   });
 });

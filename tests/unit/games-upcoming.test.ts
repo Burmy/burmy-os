@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { groupByMonth, toUpcomingGames, type UpcomingGame } from '@/server/games/upcoming';
+import {
+  excludeOwned,
+  groupByMonth,
+  toUpcomingGames,
+  type UpcomingGame,
+  type UpcomingMonth,
+} from '@/server/games/upcoming';
 
 describe('toUpcomingGames', () => {
   it('shapes a well-formed payload', () => {
@@ -110,8 +116,16 @@ describe('toUpcomingGames', () => {
 
   it('leaves the day null when the timestamp is absent or malformed', () => {
     const payload = [
-      { id: 4, name: 'No Timestamp', release_dates: [{ y: 2026, m: 11, date_format: 0, platform: 167 }] },
-      { id: 5, name: 'Bad Timestamp', release_dates: [{ y: 2026, m: 11, date: 'soon', date_format: 0, platform: 167 }] },
+      {
+        id: 4,
+        name: 'No Timestamp',
+        release_dates: [{ y: 2026, m: 11, date_format: 0, platform: 167 }],
+      },
+      {
+        id: 5,
+        name: 'Bad Timestamp',
+        release_dates: [{ y: 2026, m: 11, date: 'soon', date_format: 0, platform: 167 }],
+      },
     ];
 
     expect(toUpcomingGames(payload).map((g) => g.releaseDates[0]?.day)).toEqual([null, null]);
@@ -171,7 +185,9 @@ describe('toUpcomingGames', () => {
 });
 
 /** Builds a minimal UpcomingGame for groupByMonth tests without going through toUpcomingGames. */
-function game(overrides: Partial<UpcomingGame> & { readonly igdbId: number; readonly title: string }): UpcomingGame {
+function game(
+  overrides: Partial<UpcomingGame> & { readonly igdbId: number; readonly title: string },
+): UpcomingGame {
   return {
     coverUrl: null,
     hypes: 0,
@@ -196,13 +212,21 @@ describe('groupByMonth', () => {
     expect(months).toHaveLength(1);
     expect(months[0]).toMatchObject({ key: '2026-11', label: 'November 2026' });
     expect(months[0]?.games).toHaveLength(1);
-    expect(months[0]?.games[0]).toMatchObject({ igdbId: 1, title: 'Exact Month Game', releaseDate: '2026-11-01' });
+    expect(months[0]?.games[0]).toMatchObject({
+      igdbId: 1,
+      title: 'Exact Month Game',
+      releaseDate: '2026-11-01',
+    });
   });
 
   it('routes date_format 2 (year-only) to Later/TBD, ignoring the placeholder month IGDB fills in', () => {
     // Live-observed: a year-only row still carries a non-null `m` (e.g. 12)
     // — that value must never be read as a real month.
-    const g = game({ igdbId: 2, title: 'Year Only', releaseDates: [{ year: 2026, month: 12, day: null, dateFormat: 2 }] });
+    const g = game({
+      igdbId: 2,
+      title: 'Year Only',
+      releaseDates: [{ year: 2026, month: 12, day: null, dateFormat: 2 }],
+    });
 
     const months = groupByMonth([g], NOW);
 
@@ -212,7 +236,11 @@ describe('groupByMonth', () => {
   });
 
   it.each([3, 4, 5, 6])('routes date_format %i (quarter) to Later/TBD', (dateFormat) => {
-    const g = game({ igdbId: 10 + dateFormat, title: `Quarter ${dateFormat}`, releaseDates: [{ year: 2027, month: 3, day: null, dateFormat }] });
+    const g = game({
+      igdbId: 10 + dateFormat,
+      title: `Quarter ${dateFormat}`,
+      releaseDates: [{ year: 2027, month: 3, day: null, dateFormat }],
+    });
 
     const months = groupByMonth([g], NOW);
 
@@ -220,7 +248,11 @@ describe('groupByMonth', () => {
   });
 
   it('routes date_format 7 (TBD, no month at all) to Later/TBD', () => {
-    const g = game({ igdbId: 3, title: 'TBD', releaseDates: [{ year: 2027, month: null, day: null, dateFormat: 7 }] });
+    const g = game({
+      igdbId: 3,
+      title: 'TBD',
+      releaseDates: [{ year: 2027, month: null, day: null, dateFormat: 7 }],
+    });
 
     const months = groupByMonth([g], NOW);
 
@@ -231,7 +263,11 @@ describe('groupByMonth', () => {
     // Live-observed hazard: IGDB returns release_dates rows in the past
     // (here: April 2026) even when the query is scoped to future-only
     // first_release_date. "now" is August 2026 in this test.
-    const g = game({ igdbId: 4, title: 'Stale Row', releaseDates: [{ year: 2026, month: 4, day: null, dateFormat: 0 }] });
+    const g = game({
+      igdbId: 4,
+      title: 'Stale Row',
+      releaseDates: [{ year: 2026, month: 4, day: null, dateFormat: 0 }],
+    });
 
     const months = groupByMonth([g], NOW);
 
@@ -242,7 +278,11 @@ describe('groupByMonth', () => {
   });
 
   it('accepts a release_dates row in the current calendar month (not "earlier than")', () => {
-    const g = game({ igdbId: 5, title: 'This Month', releaseDates: [{ year: 2026, month: 8, day: null, dateFormat: 0 }] });
+    const g = game({
+      igdbId: 5,
+      title: 'This Month',
+      releaseDates: [{ year: 2026, month: 8, day: null, dateFormat: 0 }],
+    });
 
     const months = groupByMonth([g], NOW);
 
@@ -270,9 +310,24 @@ describe('groupByMonth', () => {
   });
 
   it('orders real months chronologically ascending, with Later/TBD always trailing regardless of hype', () => {
-    const nov = game({ igdbId: 1, title: 'November', hypes: 10, releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }] });
-    const sep = game({ igdbId: 2, title: 'September', hypes: 999, releaseDates: [{ year: 2026, month: 9, day: null, dateFormat: 0 }] });
-    const later = game({ igdbId: 3, title: 'Someday', hypes: 500, releaseDates: [{ year: 2026, month: 12, day: null, dateFormat: 2 }] });
+    const nov = game({
+      igdbId: 1,
+      title: 'November',
+      hypes: 10,
+      releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }],
+    });
+    const sep = game({
+      igdbId: 2,
+      title: 'September',
+      hypes: 999,
+      releaseDates: [{ year: 2026, month: 9, day: null, dateFormat: 0 }],
+    });
+    const later = game({
+      igdbId: 3,
+      title: 'Someday',
+      hypes: 500,
+      releaseDates: [{ year: 2026, month: 12, day: null, dateFormat: 2 }],
+    });
 
     const months = groupByMonth([nov, sep, later], NOW);
 
@@ -280,8 +335,18 @@ describe('groupByMonth', () => {
   });
 
   it('sorts games within a month by hypes descending', () => {
-    const low = game({ igdbId: 1, title: 'Low', hypes: 30, releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }] });
-    const high = game({ igdbId: 2, title: 'High', hypes: 900, releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }] });
+    const low = game({
+      igdbId: 1,
+      title: 'Low',
+      hypes: 30,
+      releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }],
+    });
+    const high = game({
+      igdbId: 2,
+      title: 'High',
+      hypes: 900,
+      releaseDates: [{ year: 2026, month: 11, day: null, dateFormat: 0 }],
+    });
 
     const months = groupByMonth([low, high], NOW);
 
@@ -290,5 +355,35 @@ describe('groupByMonth', () => {
 
   it('returns [] for an empty game list', () => {
     expect(groupByMonth([], NOW)).toEqual([]);
+  });
+});
+
+describe('excludeOwned', () => {
+  const candidate = (igdbId: number, title: string): UpcomingMonth['games'][number] => ({
+    igdbId,
+    title,
+    coverUrl: null,
+    hypes: 50,
+    platforms: ['ps5'],
+    releaseDate: '2026-11-01',
+    releasePrecision: 'month',
+  });
+  const months: UpcomingMonth[] = [
+    {
+      key: '2026-11',
+      label: 'November 2026',
+      games: [candidate(1, 'Kept'), candidate(2, 'Owned')],
+    },
+    { key: '2026-12', label: 'December 2026', games: [candidate(3, 'Also owned')] },
+  ];
+
+  it('drops owned candidates and any month left empty by that', () => {
+    const result = excludeOwned(months, [2, 3]);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.games.map((game) => game.title)).toEqual(['Kept']);
+  });
+
+  it('returns the feed untouched when nothing is owned', () => {
+    expect(excludeOwned(months, [])).toEqual(months);
   });
 });

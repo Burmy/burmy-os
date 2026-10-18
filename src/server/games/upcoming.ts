@@ -362,3 +362,20 @@ export function groupByMonth(games: readonly UpcomingGame[], now: Date): Upcomin
 
   return monthGroups;
 }
+
+/**
+ * Drops every candidate the owner already has a `games` row for (any status
+ * — `listWishlistIgdbIds` returns every stored IGDB id), and any month that
+ * is left with nothing. A wishlisted game is listed in "Your wishlist" above
+ * the feed; showing it a second time with an "Added" button said nothing the
+ * first copy did not. Pure, like everything else in this module.
+ */
+export function excludeOwned(
+  months: readonly UpcomingMonth[],
+  ownedIgdbIds: readonly number[],
+): UpcomingMonth[] {
+  const owned = new Set(ownedIgdbIds);
+  return months
+    .map((month) => ({ ...month, games: month.games.filter((game) => !owned.has(game.igdbId)) }))
+    .filter((month) => month.games.length > 0);
+}

@@ -2,21 +2,19 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { Check, Gamepad2, Heart, Loader2, Plus } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Check, Gamepad2, Loader2, Plus } from 'lucide-react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 
 import { FoilCard } from '@/components/games/foil-card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/page-header';
 import { toast } from '@/components/ui/toast';
-import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import type { Game } from '@/server/db/games/games';
 import { formatReleaseCountdown } from '@/server/games/release-date';
+import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import type { UpcomingMonth, UpcomingMonthGame } from '@/server/games/upcoming';
-import {
-  addToWishlistAction,
-  promoteReleasedWantedGamesAction,
-  reconcileWishlistReleaseDatesAction,
-} from './wishlist-actions';
+import { addToWishlistAction, reconcileWishlistReleaseDatesAction } from './wishlist-actions';
+import { WishlistSection } from './wishlist-section';
 
 /**
  * The card's release line. `null` for the trailing Later/TBD bucket, where
@@ -39,9 +37,12 @@ function formatReleaseLine(game: UpcomingMonthGame, now: Date): string | null {
 }
 
 /**
- * The "Upcoming games" tab: IGDB's PS5/PC releases over the next 12 months
- * (`HYPE_FLOOR = 30` — see `igdb.ts`), grouped by month with a trailing
- * Later/TBD bucket for anything IGDB only knows the year/quarter of.
+ * The "Upcoming" tab: the owner's own wishlist first, then IGDB's PS5/PC
+ * releases over the next 12 months (`HYPE_FLOOR = 30` — see `igdb.ts`),
+ * grouped by month with a trailing Later/TBD bucket for anything IGDB only
+ * knows the year/quarter of. Anything already in the library is filtered
+ * out of the feed by the page (`excludeOwned`) — it is in the wishlist
+ * section instead, or owned outright.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * THREE EMPTY STATES, EACH A DIFFERENT QUESTION
@@ -54,54 +55,34 @@ function formatReleaseLine(game: UpcomingMonthGame, now: Date): string | null {
  *      own doc comment in `igdb.ts`.
  *   2. "IGDB is configured, but nothing came back" (`months.length === 0`)
  *      — deliberately vague about WHY: it could be a genuinely quiet 12
- *      months above the hype floor, or a request that failed after
- *      credentials passed the check above. Neither this component nor the
- *      page has enough information to tell those apart, so the copy says so
- *      rather than asserting a cause it doesn't know.
+ *      months above the hype floor, a feed the owner has already wishlisted
+ *      in full, or a request that failed after credentials passed the check
+ *      above. Neither this component nor the page has enough information to
+ *      tell those apart, so the copy says so rather than asserting a cause.
  *   3. "A month rendered, but has no games" — defensive: `groupByMonth`
- *      never actually produces an empty bucket in real use (a bucket only
- *      exists because at least one game landed in it), but `MonthSection`
- *      takes `UpcomingMonth` as plain data, not a value it can assume its
- *      only real caller's invariants hold for, so it handles the empty case
- *      honestly rather than rendering an empty grid.
+ *      never actually produces an empty bucket in real use, and `excludeOwned`
+ *      drops any it empties, but `MonthSection` takes `UpcomingMonth` as plain
+ *      data, not a value it can assume its only real caller's invariants hold
+ *      for, so it handles the empty case honestly rather than rendering an
+ *      empty grid.
+ *
+ * The wishlist section renders in every one of those states — it is the
+ * owner's own data and needs no IGDB at all.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function UpcomingView({
   months,
-  wishlistedIgdbIds,
-  overdueWantedCount,
+  wishlist,
   igdbConfigured,
 }: {
   readonly months: readonly UpcomingMonth[];
-  /** The owner's existing `igdb_id`s — already-wishlisted (or since-owned) candidates render "Added", not the add control. */
-  readonly wishlistedIgdbIds: readonly number[];
-  /** How many `wanted` rows are already overdue, computed by the server page — see the mount effect below. */
-  readonly overdueWantedCount: number;
+  /** Every `wanted` game the owner has — IGDB-sourced or hand-added. */
+  readonly wishlist: readonly Game[];
   readonly igdbConfigured: boolean;
 }): React.ReactElement {
-  const wishlisted = useMemo(() => new Set(wishlistedIgdbIds), [wishlistedIgdbIds]);
-
-  // Captured once, at mount, in a ref rather than read from the prop
-  // directly inside the effect: the intent is "fire once, only for the
-  // count the SERVER computed for this page load," not "re-fire whenever
-  // this prop happens to change" — a ref sidesteps needing `overdueWantedCount`
-  // in the dependency array at all, the same idiom `game-dialog.tsx` uses
-  // for its own "only once, on a real edit" guards (`titleEditedRef`).
-  const overdueWantedCountRef = useRef(overdueWantedCount);
-
-  useEffect(() => {
-    if (overdueWantedCountRef.current <= 0) return;
-    // Fire-and-forget: a failed auto-flip just means the overdue rows stay
-    // `wanted` until the next visit tries again — not worth surfacing to
-    // the owner as an error for a background bookkeeping action they never
-    // asked to run in the first place (see the action's own doc comment).
-    promoteReleasedWantedGamesAction().catch(() => {});
-  }, []);
-
-  // Captured at mount in a ref, exactly like `overdueWantedCountRef` above and
-  // for the same reason: this is "reconcile against what the SERVER sent for
-  // this page load," not "re-reconcile whenever `months` arrives as a new
-  // array reference." A ref also keeps the flattening out of render entirely.
+  // Captured at mount in a ref: this is "reconcile against what the SERVER
+  // sent for this page load," not "re-reconcile whenever `months` arrives as a
+  // new array reference." A ref also keeps the flattening out of render.
   const monthsRef = useRef(months);
 
   useEffect(() => {
@@ -114,14 +95,19 @@ export function UpcomingView({
       month.games.flatMap((game) =>
         game.releaseDate === null || game.releasePrecision === null
           ? []
-          : [{ igdbId: game.igdbId, releaseDate: game.releaseDate, releasePrecision: game.releasePrecision }],
+          : [
+              {
+                igdbId: game.igdbId,
+                releaseDate: game.releaseDate,
+                releasePrecision: game.releasePrecision,
+              },
+            ],
       ),
     );
     if (readings.length === 0) return;
 
-    // Same fire-and-forget shape as the auto-flip above, and for the same
-    // reason: stale wishlist dates until the next visit are not worth an
-    // error toast for work the owner never asked to run.
+    // Fire-and-forget: stale wishlist dates until the next visit are not
+    // worth an error toast for work the owner never asked to run.
     reconcileWishlistReleaseDatesAction(readings).catch(() => {});
   }, []);
 
@@ -129,57 +115,53 @@ export function UpcomingView({
     <div className="space-y-8">
       <PageHeader title="Upcoming" />
 
+      <WishlistSection games={wishlist} />
+
       {!igdbConfigured ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">
           Upcoming games needs IGDB credentials. Set{' '}
           <code className="font-mono">IGDB_CLIENT_ID</code> and{' '}
-          <code className="font-mono">IGDB_CLIENT_SECRET</code> to enable this tab.
+          <code className="font-mono">IGDB_CLIENT_SECRET</code> to enable the release feed.
         </p>
       ) : months.length === 0 ? (
         <p className="text-muted-foreground py-16 text-center text-sm text-balance">
           No upcoming games to show right now — either nothing in the next 12 months clears the hype
-          threshold, or IGDB couldn&apos;t be reached. Try again later.
+          threshold, everything that does is already on your wishlist, or IGDB couldn&apos;t be
+          reached. Try again later.
         </p>
       ) : (
         <div className="space-y-8">
           {months.map((month) => (
-            <MonthSection key={month.key} month={month} wishlisted={wishlisted} />
+            <MonthSection key={month.key} month={month} />
           ))}
         </div>
       )}
 
       {/* A FOOTNOTE, not a description — so it sits at the bottom rather than
-          pushing the actual content down on every visit. It survives the
-          app-wide header-prose cull because it isn't describing the screen:
-          IGDB's feed only ever carries titles with real pre-release hype in
-          the next 12 months, so a game that's already out (or below the hype
-          floor) can never appear here no matter how long you wait, and
-          nothing on this page reveals that the Library's Add Game flow has
-          always accepted a hand-typed title with status Wanted. */}
+          pushing the actual content down on every visit. IGDB's feed only
+          carries titles with real pre-release hype in the next 12 months, so a
+          game below the hype floor never appears there no matter how long you
+          wait; the Library's Add game flow takes a hand-typed title with
+          status Wanted, and it then shows in Your wishlist above. */}
       {igdbConfigured ? (
         <p className="text-muted-foreground border-t pt-6 text-xs">
-          Don&apos;t see a game here? IGDB only lists titles with real pre-release buzz, in the next
-          12 months. For anything else — already out, or below IGDB&apos;s radar — add it from the{' '}
+          Don&apos;t see a game in the feed? IGDB only lists titles with real pre-release buzz, in
+          the next 12 months. For anything else, add it from the{' '}
           <Link
             href="/games/library"
             className="hover:text-foreground underline underline-offset-2"
           >
             Library
           </Link>{' '}
-          and set its status to Wanted.
+          with its status set to Wanted and it appears in Your wishlist above — with a countdown
+          once you give it a release date.
         </p>
       ) : null}
     </div>
   );
 }
 
-function MonthSection({
-  month,
-  wishlisted,
-}: {
-  readonly month: UpcomingMonth;
-  readonly wishlisted: ReadonlySet<number>;
-}): React.ReactElement {
+function MonthSection({ month }: { readonly month: UpcomingMonth }): React.ReactElement {
   return (
     <section className="space-y-4">
       <h2 className="text-sm font-semibold">{month.label}</h2>
@@ -190,11 +172,7 @@ function MonthSection({
         // the two used to diverge for no reason.
         <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
           {month.games.map((game) => (
-            <UpcomingGameCard
-              key={game.igdbId}
-              game={game}
-              wishlisted={wishlisted.has(game.igdbId)}
-            />
+            <UpcomingGameCard key={game.igdbId} game={game} />
           ))}
         </div>
       )}
@@ -209,34 +187,12 @@ function MonthSection({
  * upcoming title either, and a lone floating icon would look just as broken
  * here as it would in the library gallery.
  *
- * ─────────────────────────────────────────────────────────────────────────────
- * WISHLISTED GETS A DISTINCT COVER TREATMENT, NOT JUST THE BUTTON AT THE BOTTOM.
- *
- * Before this, a wishlisted card and an un-wishlisted one were pixel-identical
- * above the fold — the ONLY difference was the "+ Add to wishlist" button
- * flipping to a disabled "Added" at the very bottom, invisible while scanning
- * a 7-column grid. A violet ring plus a small corner marker on the cover
- * itself make it scannable without reading any button — violet because
- * `StatusBadge` already uses it for the library's own `wanted` status, so
- * this reads as the SAME "wishlisted" meaning rather than a new color. The
- * marker sits at the BOTTOM corner, not top, for the same reason
- * `game-card.tsx` keeps its own badges off the top of the cover: box art
- * commonly carries a logo across the top third, and the bottom is far more
- * often plain background art. Stays CIRCULAR (unlike `PlatinumBadge`, which
- * moved to a rounded-square medallion) — the two never compete on the same
- * card (a wishlist candidate can't be platinum'd), so there was no "blurs
- * together" complaint to fix here; only size/contrast were raised, so this
- * got the same size-6→size-8, ring-1→ring-2, and a fully opaque background
- * bump `PlatinumBadge` got, without changing its shape.
- * ─────────────────────────────────────────────────────────────────────────────
+ * A card here is never already-wishlisted: the page filters those out of the
+ * feed, since they are listed in "Your wishlist" above. The only state the
+ * card carries is the moment after the owner clicks Add, before the page
+ * re-renders without it.
  */
-function UpcomingGameCard({
-  game,
-  wishlisted,
-}: {
-  readonly game: UpcomingMonthGame;
-  readonly wishlisted: boolean;
-}): React.ReactElement {
+function UpcomingGameCard({ game }: { readonly game: UpcomingMonthGame }): React.ReactElement {
   // Read once per render rather than per card: every card in the grid must
   // count down from the same instant, and a `new Date()` inside each one is
   // both wasteful and capable of straddling midnight mid-render.
@@ -246,27 +202,18 @@ function UpcomingGameCard({
     <div
       // `data-slot` is this codebase's existing hook convention (every
       // shadcn primitive carries one). Tests reach the card through it
-      // rather than a radius class — a radius is styling that moves, and a
-      // test anchored to `.rounded-xl` broke the moment the app unified on
-      // one 6px radius.
+      // rather than a radius class — a radius is styling that moves.
       data-slot="upcoming-card"
-      // No padded box and no fill. Wishlisted state used to be a `bg-card`
-      // surface with `p-2` around the whole card — the last survivor of the
-      // "a padded box whose FILL carries the state" pattern the library grid
-      // has since dropped. It is redundant now that the cover itself carries
-      // the cold frost foil plus the heart glyph, and it was also the app's
-      // only remaining card at 8px of padding when every other card is at
-      // 24px. Two ways of saying "wishlisted," one of them off-rhythm.
       className="flex flex-col gap-2.5"
     >
       {/* Same cover treatment as the library grid — tilt and glare on every
-          card, cold frost once it's on the wishlist. These two galleries share
-          one card language and must not diverge again; see `foil-card.tsx`.
-          What they do NOT share is the text below: this screen still needs the
-          title, the release month and the add control, because a card here is
-          something you act on rather than something you recognise. */}
+          card. These two galleries share one card language and must not
+          diverge again; see `foil-card.tsx`. What they do NOT share is the
+          text below: this screen still needs the title, the release month
+          and the add control, because a card here is something you act on
+          rather than something you recognise. */}
       <div className="relative aspect-3/4 w-full">
-        <FoilCard tone={wishlisted ? 'wishlist' : null}>
+        <FoilCard tone={null}>
           <span className="bg-muted absolute inset-0 block">
             {game.coverUrl === null ? (
               <span
@@ -288,19 +235,6 @@ function UpcomingGameCard({
               />
             )}
           </span>
-
-          {/* Monochrome over an opaque scrim, matching the library's own
-              badge treatment — the old violet pill was app-colored chrome
-              sitting on third-party box art, which never composed well. */}
-          {wishlisted ? (
-            <span
-              aria-hidden
-              title="On your wishlist"
-              className="absolute right-2 bottom-2 z-20 inline-flex size-7 items-center justify-center rounded-full bg-black/70 text-white/90 ring-1 ring-white/25"
-            >
-              <Heart className="size-3.5" />
-            </span>
-          ) : null}
         </FoilCard>
       </div>
 
@@ -309,15 +243,14 @@ function UpcomingGameCard({
         <span className="text-muted-foreground text-xs">
           {game.platforms.map((platform) => PLATFORM_LABELS[platform]).join(' · ')}
         </span>
-        {/* Month-precision only (see `formatReleaseMonth`'s own doc comment)
-            — absent for the trailing Later/TBD bucket, where the section
-            header already conveys "no known date" and repeating that per
-            card would be redundant. */}
+        {/* Absent for the trailing Later/TBD bucket, where the section header
+            already conveys "no known date" and repeating that per card would
+            be redundant. */}
         {releaseLine === null ? null : (
           <span className="text-muted-foreground text-xs">{releaseLine}</span>
         )}
         <div className="mt-auto pt-2">
-          <AddToWishlistButton game={game} wishlisted={wishlisted} />
+          <AddToWishlistButton game={game} />
         </div>
       </div>
     </div>
@@ -330,19 +263,12 @@ function UpcomingGameCard({
  * state before the server write had actually landed. `added` is only ever
  * set to `true` AFTER `addToWishlistAction` resolves `ok: true`, so this
  * always reflects what the server actually did, never a guess about what it
- * is about to do.
+ * is about to do. The action's own `revalidatePath` then re-renders the
+ * page, which moves the game up into "Your wishlist".
  */
-function AddToWishlistButton({
-  game,
-  wishlisted,
-}: {
-  readonly game: UpcomingMonthGame;
-  readonly wishlisted: boolean;
-}): React.ReactElement {
+function AddToWishlistButton({ game }: { readonly game: UpcomingMonthGame }): React.ReactElement {
   const [added, setAdded] = useState(false);
   const [pending, startTransition] = useTransition();
-
-  const isAdded = wishlisted || added;
 
   function add(): void {
     startTransition(async () => {
@@ -364,23 +290,12 @@ function AddToWishlistButton({
     });
   }
 
-  if (isAdded) {
+  if (added) {
     // Not `disabled` — this is a permanent success/done state, not a
     // temporarily-unavailable control, so it must not pick up the shared
-    // `disabled:opacity-50` rule in button.tsx: that rule fading an already
-    // low-contrast `secondary` (gray-on-gray) pairing to half opacity is
-    // exactly why "Added" was nearly illegible. `pointer-events-none` keeps
+    // `disabled:opacity-50` rule in button.tsx. `pointer-events-none` keeps
     // it inert without the HTML `disabled` attribute; `tabIndex={-1}` keeps
-    // it out of tab order now that `disabled` no longer does that
-    // automatically — there's nothing here for a keyboard user to activate.
-    //
-    // Monochrome, not the former emerald: this grid's whole card language
-    // went black-and-white, and a green pill was the last colored chrome left
-    // in it. The solid white `default` fill — the same one Add game, Export and
-    // Find on PowerPyx carry — reads as "done" without a second semantic
-    // colour, and reads it at a glance: `bg-muted` was dark-on-dark and
-    // disappeared against the card while the un-added `outline` button beside
-    // it stood out, which is backwards for the state you have already acted on.
+    // it out of tab order — there's nothing here for a keyboard user to do.
     return (
       <Button type="button" size="sm" tabIndex={-1} className="pointer-events-none w-full">
         <Check className="size-4" aria-hidden />

@@ -29,6 +29,7 @@ import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { rollUpTrophies } from '@/server/games/collections';
 import { formatHours, hours } from '@/server/games/hours';
+import { formatReleaseCountdown } from '@/server/games/release-date';
 import {
   GAME_OWNERSHIPS,
   type GameStatus,
@@ -265,6 +266,22 @@ export function GamePanel({
                     onSave={(value) => saveField('status', value)}
                   />
                   <RatingRow rating={game.rating} onSave={(value) => saveField('rating', value)} />
+                  {/* Only while wanted: it is what sorts the game into "Your
+                      wishlist" and gives it a countdown. Once the game is
+                      played the date is history and the row goes away. */}
+                  {game.status === 'wanted' ? (
+                    <InlineEditField
+                      label="Release date"
+                      value={game.releaseDate ?? ''}
+                      displayValue={
+                        game.releaseDate !== null && game.releasePrecision !== null
+                          ? `${game.releaseDate} · ${formatReleaseCountdown(game.releaseDate, game.releasePrecision, new Date())}`
+                          : undefined
+                      }
+                      placeholder="No date — type YYYY-MM-DD"
+                      onSave={(value) => saveField('releaseDate', value)}
+                    />
+                  ) : null}
                   <InlineEditField
                     label="Hours"
                     value={game.hoursTenths === null ? '' : String(game.hoursTenths / 10)}

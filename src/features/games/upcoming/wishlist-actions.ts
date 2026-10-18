@@ -8,7 +8,6 @@ import { DuplicateWishlistGameError } from '@/server/db/games/errors';
 import {
   createWishlistGame,
   listWantedReleaseDates,
-  promoteReleasedWantedGames,
   updateWantedReleaseDate,
 } from '@/server/db/games/games';
 import type { UpcomingPlatform } from '@/server/games/upcoming';
@@ -84,32 +83,6 @@ export async function addToWishlistAction(input: WishlistAddInput): Promise<Acti
   return ok();
 }
 
-/**
- * `wanted` -> `backlog` for every one of the owner's wishlist rows whose
- * `release_date` has passed.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * EDITS OWNER DATA WITHOUT ASKING — DELIBERATE, NOT AN OVERSIGHT.
- *
- * Fired once by `UpcomingView` on mount, and only when the server-computed
- * overdue count it was handed (`countOverdueWantedGames`, read by the
- * Upcoming page) is non-zero — see that component's own doc comment. The
- * flip cannot happen during the Server Component's own render: Next forbids
- * mutating data there, and doing so would fire unpredictably depending on
- * render timing rather than once, deliberately, on the client. The owner
- * decided during design review that a released wishlist entry should just
- * quietly become a backlog entry with no confirmation prompt — do not "fix"
- * this into one. Idempotent: a second call touches zero rows once the first
- * has already run (`promoteReleasedWantedGames`'s own contract).
- * ─────────────────────────────────────────────────────────────────────────────
- */
-export async function promoteReleasedWantedGamesAction(): Promise<ActionResult> {
-  const owner = await requireOwner();
-  await promoteReleasedWantedGames(owner.userId);
-  revalidatePath('/games', 'layout');
-  return ok();
-}
-
 /** One game's fresh reading, as `UpcomingView` already has it from the feed on screen. */
 export interface ReleaseDateReading {
   readonly igdbId: number;
@@ -137,8 +110,10 @@ export interface ReleaseDateReading {
  *
  * SAFETY. Only `wanted` rows with an `igdb_id` are eligible, enforced in the
  * UPDATE's own WHERE clause and not merely at the call site
- * (`updateWantedReleaseDate`), so a game promoted to `backlog` in the meantime
- * is untouchable. A reading with no date is SKIPPED rather than written as
+ * (`updateWantedReleaseDate`), so a game the owner has since moved to another
+ * status is untouchable — and so is a hand-added `wanted` row, which has no
+ * `igdb_id` to match on. A hand-typed date on an IGDB-sourced row CAN be
+ * overwritten by the feed's reading; that is the one caveat of reconciling. A reading with no date is SKIPPED rather than written as
  * null: `fetchUpcomingGames()` returns `[]` for a missing credential and for a
  * failed request alike (see `igdbConfigured()`), so "no date" can mean "IGDB
  * did not answer," and treating that as truth would erase every stored date.

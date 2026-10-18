@@ -25,10 +25,45 @@ const MONTH_ABBR = [
   'Dec',
 ] as const;
 
+function parseParts(releaseDate: string): { year: number; month: number; day: number } | null {
+  const [yearPart, monthPart, dayPart] = releaseDate.split('-');
+  const year = Number(yearPart);
+  const month = Number(monthPart);
+  const day = Number(dayPart);
+  if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
+  return { year, month, day };
+}
+
+/**
+ * Has this release date passed?
+ *
+ * Day precision: the day is today or behind us (a game out today IS out).
+ * Month precision: the whole month has to be behind us — IGDB pinned no day,
+ * so a "November 2026" game is not out on 2 November just because the
+ * stored placeholder day is the 1st. That placeholder is exactly what made
+ * the old auto-flip promote month-precision games a day into their month.
+ *
+ * `now` is a parameter so every branch is deterministic and testable.
+ */
+export function isReleased(releaseDate: string, precision: ReleasePrecision, now: Date): boolean {
+  const parts = parseParts(releaseDate);
+  if (parts === null) return false;
+
+  if (precision === 'month') {
+    const nowYear = now.getUTCFullYear();
+    const nowMonth = now.getUTCMonth() + 1;
+    return parts.year < nowYear || (parts.year === nowYear && parts.month < nowMonth);
+  }
+
+  const releaseUtc = Date.UTC(parts.year, parts.month - 1, parts.day);
+  const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return releaseUtc <= todayUtc;
+}
+
 /**
  * The short phrase a wishlist card shows for a game that hasn't launched:
  * "in 12 days" when it's close, "Sep 18, 2026" when it's far, "November 2026"
- * when IGDB only knows the month.
+ * when IGDB only knows the month — and "Out now" once it has.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * WHY THIS IS GAMES-LOCAL AND NOT IN `src/lib/format-date.ts`.
@@ -46,7 +81,7 @@ const MONTH_ABBR = [
  * required means that mistake cannot compile.
  *
  * `now` is a parameter rather than an internal `new Date()` so every branch is
- * deterministic and testable, matching `groupByMonth` and `psnTokenAge`.
+ * deterministic and testable, matching `groupByMonth`.
  */
 export function formatReleaseCountdown(
   /** `YYYY-MM-DD`. The day is a placeholder unless `precision` is `'day'`. */
@@ -54,16 +89,15 @@ export function formatReleaseCountdown(
   precision: ReleasePrecision,
   now: Date,
 ): string {
-  const [yearPart, monthPart, dayPart] = releaseDate.split('-');
-  const year = Number(yearPart);
-  const month = Number(monthPart);
-  const day = Number(dayPart);
-  if (!Number.isFinite(year) || !Number.isFinite(month)) return '';
+  const parts = parseParts(releaseDate);
+  if (parts === null) return '';
+  const { year, month, day } = parts;
 
   if (precision === 'month') {
     // No day exists to count down to, so this never counts down — saying
     // "in 12 days" about a date IGDB pinned only to a month would invent
-    // a launch day.
+    // a launch day. Once the month is behind us it is simply out.
+    if (isReleased(releaseDate, precision, now)) return 'Out now';
     return `${MONTH_NAMES[month - 1] ?? ''} ${year}`.trim();
   }
 
@@ -75,9 +109,41 @@ export function formatReleaseCountdown(
   const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = Math.round((releaseUtc - todayUtc) / 86_400_000);
 
-  if (days < 0) return 'Released';
+  if (days < 0) return 'Out now';
   if (days === 0) return 'Out today';
   if (days === 1) return 'Tomorrow';
   if (days <= COUNTDOWN_HORIZON_DAYS) return `in ${days} days`;
   return `${MONTH_ABBR[month - 1] ?? ''} ${day}, ${year}`;
+}
+
+/** The three fields `sortWishlist` reads — a `Game` satisfies it. */
+export interface WishlistSortable {
+  readonly title: string;
+  readonly releaseDate: string | null;
+  readonly releasePrecision: ReleasePrecision | null;
+}
+
+/**
+ * The order the "Your wishlist" section lists wanted games in: released
+ * ones first (they are the ones to act on — buy, start, or admit you won't),
+ * then dated ones soonest first, then games with no date at all, each group
+ * alphabetical. Pure, so the Upcoming view can hand it `new Date()` once per
+ * render and a test can hand it any instant it likes.
+ */
+export function sortWishlist<T extends WishlistSortable>(games: readonly T[], now: Date): T[] {
+  const rank = (game: T): 0 | 1 | 2 => {
+    if (game.releaseDate === null || game.releasePrecision === null) return 2;
+    return isReleased(game.releaseDate, game.releasePrecision, now) ? 0 : 1;
+  };
+
+  return [...games].sort((a, b) => {
+    const rankA = rank(a);
+    const rankB = rank(b);
+    if (rankA !== rankB) return rankA - rankB;
+    if (rankA === 1) {
+      const byDate = (a.releaseDate ?? '').localeCompare(b.releaseDate ?? '');
+      if (byDate !== 0) return byDate;
+    }
+    return a.title.localeCompare(b.title);
+  });
 }

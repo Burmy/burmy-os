@@ -3,16 +3,24 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const addToWishlistAction = vi.fn(async () => ({ ok: true as const }));
-const promoteReleasedWantedGamesAction = vi.fn(async () => ({ ok: true as const }));
 const reconcileWishlistReleaseDatesAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/games/upcoming/wishlist-actions', () => ({
   addToWishlistAction,
-  promoteReleasedWantedGamesAction,
   reconcileWishlistReleaseDatesAction,
 }));
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+// The wishlist section opens the game panel and changes statuses; both are
+// covered in `games-wishlist-section.test.tsx`. Here they only need to exist.
+const openGame = vi.fn();
+vi.mock('@/features/games/panel/game-panel-context', () => ({
+  useGamePanel: () => ({ openGame, close: vi.fn(), activeId: null }),
+}));
+vi.mock('@/features/games/game-actions', () => ({
+  updateGameFieldAction: vi.fn(async () => ({ ok: true as const })),
+}));
 
 /**
  * `restoreMocks: true` (vitest.config.ts) does not reliably clear a mock
@@ -27,7 +35,6 @@ vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.f
  */
 beforeEach(() => {
   addToWishlistAction.mockClear();
-  promoteReleasedWantedGamesAction.mockClear();
   reconcileWishlistReleaseDatesAction.mockClear();
 });
 
@@ -58,11 +65,12 @@ function month(overrides: Partial<UpcomingMonth> = {}): UpcomingMonth {
   };
 }
 
-function baseProps(overrides: Partial<Parameters<typeof UpcomingView>[0]> = {}): Parameters<typeof UpcomingView>[0] {
+function baseProps(
+  overrides: Partial<Parameters<typeof UpcomingView>[0]> = {},
+): Parameters<typeof UpcomingView>[0] {
   return {
     months: [month()],
-    wishlistedIgdbIds: [],
-    overdueWantedCount: 0,
+    wishlist: [],
     igdbConfigured: true,
     ...overrides,
   };
@@ -74,8 +82,16 @@ describe('UpcomingView — month ordering', () => {
       <UpcomingView
         {...baseProps({
           months: [
-            month({ key: '2026-09', label: 'September 2026', games: [upcomingGame({ igdbId: 1, title: 'September Game' })] }),
-            month({ key: '2026-11', label: 'November 2026', games: [upcomingGame({ igdbId: 2, title: 'November Game' })] }),
+            month({
+              key: '2026-09',
+              label: 'September 2026',
+              games: [upcomingGame({ igdbId: 1, title: 'September Game' })],
+            }),
+            month({
+              key: '2026-11',
+              label: 'November 2026',
+              games: [upcomingGame({ igdbId: 2, title: 'November Game' })],
+            }),
             month({
               key: 'later',
               label: 'Later / TBD',
@@ -86,14 +102,24 @@ describe('UpcomingView — month ordering', () => {
       />,
     );
 
-    const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent);
+    const headings = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent)
+      // 'Your wishlist' sits above the feed on every render — not a month.
+      .filter((text) => text !== 'Your wishlist');
     expect(headings).toEqual(['September 2026', 'November 2026', 'Later / TBD']);
   });
 });
 
 describe('UpcomingView — release date on the card', () => {
   it('renders a month-precision release date for a dated card', () => {
-    render(<UpcomingView {...baseProps({ months: [month({ games: [upcomingGame({ releaseDate: '2026-11-01' })] })] })} />);
+    render(
+      <UpcomingView
+        {...baseProps({
+          months: [month({ games: [upcomingGame({ releaseDate: '2026-11-01' })] })],
+        })}
+      />,
+    );
 
     // Appears twice — once as the section header, once on the card itself
     // (new: the card used to omit it entirely, relying solely on which
@@ -106,7 +132,11 @@ describe('UpcomingView — release date on the card', () => {
       <UpcomingView
         {...baseProps({
           months: [
-            month({ key: 'later', label: 'Later / TBD', games: [upcomingGame({ title: 'TBD Game', releaseDate: null })] }),
+            month({
+              key: 'later',
+              label: 'Later / TBD',
+              games: [upcomingGame({ title: 'TBD Game', releaseDate: null })],
+            }),
           ],
         })}
       />,
@@ -118,102 +148,21 @@ describe('UpcomingView — release date on the card', () => {
   });
 });
 
-describe('UpcomingView — already-wishlisted state', () => {
-  it('renders "Added", not the add control, for a game whose igdbId is already wishlisted', () => {
-    render(
-      <UpcomingView
-        {...baseProps({
-          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
-          wishlistedIgdbIds: [42],
-        })}
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: /added/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /add to wishlist/i })).not.toBeInTheDocument();
-  });
-
-  /**
-   * Regression: the "Added" control used to be `disabled` with
-   * `variant="secondary"` — the shared `disabled:opacity-50` rule faded an
-   * already-modest gray-on-gray pairing to near-illegibility (reported: hard
-   * to read, especially in dark theme). It's a permanent success state, not
-   * a temporarily-unavailable control, so it must not be `disabled` at all.
-   *
-   * It used to assert an emerald "done" register; the whole grid went
-   * monochrome, so the guard is now the thing that actually mattered — it
-   * is NOT disabled, and it carries a real full-contrast fill rather than
-   * inheriting the faded shared disabled styling.
-   */
-  it('renders "Added" at full opacity, not as a disabled control', () => {
-    render(
-      <UpcomingView
-        {...baseProps({
-          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
-          wishlistedIgdbIds: [42],
-        })}
-      />,
-    );
-
-    const added = screen.getByRole('button', { name: /added/i });
-    expect(added).not.toBeDisabled();
-    // The solid `default` fill, same as Add game and Export — `bg-muted` was
-    // dark-on-dark and vanished against the card, leaving the un-added button
-    // beside it looking like the more prominent of the two.
-    expect(added.className).toMatch(/bg-primary/);
-    // Negative lookbehind on purpose: the shared button base class always
-    // carries `disabled:opacity-50`, which is inert here precisely because
-    // the control is not disabled. What must never appear is an
-    // UNCONDITIONAL `opacity-50` actually fading the thing.
-    expect(added.className).not.toMatch(/(?<!disabled:)\bopacity-50\b/);
-  });
-
-  /**
-   * Before any of this, a wishlisted card and a plain one were pixel-identical
-   * above the fold — the only difference was the button at the very bottom,
-   * invisible while scanning the grid.
-   *
-   * The distinguishing treatment has now changed three times (a violet ring, a
-   * raised `bg-card` fill, and now the cold frost foil the library grid uses),
-   * and this test was rewritten each time because it kept asserting the
-   * CURRENT VISUAL rather than the durable fact. It now asserts what has been
-   * true throughout: the CARD declares the state, not just the button at its
-   * foot. How `data-foil="wishlist"` renders is `globals.css`'s business.
-   */
-  it('gives a wishlisted card a distinct treatment that a plain card does not have', () => {
-    const { rerender } = render(
-      <UpcomingView
-        {...baseProps({
-          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
-          wishlistedIgdbIds: [],
-        })}
-      />,
-    );
-
-    const plainCard = screen.getByRole('button', { name: /add to wishlist/i }).closest('[data-slot="upcoming-card"]');
-    expect(plainCard?.querySelector('[data-foil]')).toBeNull();
-
-    rerender(
-      <UpcomingView
-        {...baseProps({
-          months: [month({ games: [upcomingGame({ igdbId: 42, title: 'Grand Theft Auto VI' })] })],
-          wishlistedIgdbIds: [42],
-        })}
-      />,
-    );
-
-    const wishlistedCard = screen.getByRole('button', { name: /added/i }).closest('[data-slot="upcoming-card"]');
-    expect(wishlistedCard?.querySelector('[data-foil]')).toHaveAttribute('data-foil', 'wishlist');
-  });
-
+describe('UpcomingView — adding to the wishlist', () => {
   it('flips a fresh card from "Add to wishlist" to "Added" only after the server confirms it', async () => {
     addToWishlistAction.mockResolvedValueOnce({ ok: true });
-    render(<UpcomingView {...baseProps({ months: [month({ games: [upcomingGame({ igdbId: 7 })] })] })} />);
+    render(
+      <UpcomingView
+        {...baseProps({ months: [month({ games: [upcomingGame({ igdbId: 7 })] })] })}
+      />,
+    );
 
     const button = screen.getByRole('button', { name: /add to wishlist/i });
     await userEvent.click(button);
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /^added$/i })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^added$/i })).toBeInTheDocument(),
+    );
     expect(addToWishlistAction).toHaveBeenCalledWith(
       expect.objectContaining({ igdbId: 7, title: 'Fable', platforms: ['ps5'] }),
     );
@@ -221,7 +170,7 @@ describe('UpcomingView — already-wishlisted state', () => {
 });
 
 describe('UpcomingView — Library discoverability hint', () => {
-  it('points at the Library for a game IGDB\'s feed cannot surface, when IGDB is configured', () => {
+  it("points at the Library for a game IGDB's feed cannot surface, when IGDB is configured", () => {
     render(<UpcomingView {...baseProps({ igdbConfigured: true })} />);
 
     const link = screen.getByRole('link', { name: 'Library' });
@@ -271,19 +220,48 @@ describe('UpcomingView — empty states', () => {
   });
 });
 
-describe('UpcomingView — auto-flip on mount', () => {
-  it('fires promoteReleasedWantedGamesAction once when the overdue count is non-zero', async () => {
-    render(<UpcomingView {...baseProps({ overdueWantedCount: 2 })} />);
-
-    await waitFor(() => expect(promoteReleasedWantedGamesAction).toHaveBeenCalledTimes(1));
+describe('UpcomingView — your wishlist', () => {
+  const wanted = (
+    overrides: Partial<Parameters<typeof UpcomingView>[0]['wishlist'][number]> = {},
+  ) => ({
+    id: 'w1',
+    title: 'Hollow Knight: Silksong',
+    platform: 'steam' as const,
+    developer: null,
+    publisher: null,
+    ownership: null,
+    priceCents: null,
+    status: 'wanted' as const,
+    rating: null,
+    hoursTenths: null,
+    firstPlayedYear: null,
+    achievementsUnlocked: null,
+    achievementsTotal: null,
+    coverUrl: null,
+    genre: null,
+    notes: null,
+    platinum: false,
+    metacritic: null,
+    averagePlaytimeHours: null,
+    esrbRating: null,
+    releaseDate: null,
+    releasePrecision: null,
+    createdAt: new Date('2026-01-01'),
+    updatedAt: new Date('2026-01-01'),
+    playYears: [],
+    collectionId: null,
+    ...overrides,
   });
 
-  it('never fires promoteReleasedWantedGamesAction when the overdue count is zero', async () => {
-    render(<UpcomingView {...baseProps({ overdueWantedCount: 0 })} />);
+  it('lists the wishlist above the feed, even when IGDB is not configured', () => {
+    render(<UpcomingView {...baseProps({ igdbConfigured: false, wishlist: [wanted()] })} />);
 
-    // There is nothing to await for a call that should never happen — a
-    // microtask flush is enough to prove the mount effect didn't fire it.
-    await Promise.resolve();
-    expect(promoteReleasedWantedGamesAction).not.toHaveBeenCalled();
+    expect(screen.getByRole('heading', { name: 'Your wishlist' })).toBeInTheDocument();
+    expect(screen.getByText('Hollow Knight: Silksong')).toBeInTheDocument();
+  });
+
+  it('shows an empty line rather than hiding the section when nothing is wanted', () => {
+    render(<UpcomingView {...baseProps({ wishlist: [] })} />);
+    expect(screen.getByText(/Nothing on your wishlist yet/)).toBeInTheDocument();
   });
 });

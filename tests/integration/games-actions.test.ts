@@ -163,3 +163,41 @@ describe('game actions — play-year split validation', () => {
     expect(await games.listGames(ownerId)).toEqual([]);
   });
 });
+
+describe('updateGameFieldAction — releaseDate', () => {
+  it('stores a hand-entered date at day precision, and clears both columns on an empty commit', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Hollow Knight: Silksong',
+      platform: 'steam',
+      status: 'wanted',
+    });
+
+    expect((await actions.updateGameFieldAction(created.id, 'releaseDate', '2026-11-20')).ok).toBe(
+      true,
+    );
+    let fetched = await games.getGame(ownerId, created.id);
+    expect(fetched.releaseDate).toBe('2026-11-20');
+    expect(fetched.releasePrecision).toBe('day');
+
+    expect((await actions.updateGameFieldAction(created.id, 'releaseDate', '')).ok).toBe(true);
+    fetched = await games.getGame(ownerId, created.id);
+    expect(fetched.releaseDate).toBeNull();
+    expect(fetched.releasePrecision).toBeNull();
+  });
+
+  it('rejects a date that is not a real calendar day, leaving the row untouched', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Silksong',
+      platform: 'steam',
+      status: 'wanted',
+    });
+
+    for (const bad of ['2026-02-30', '2026-13-01', 'next year', '20261120']) {
+      const result = await actions.updateGameFieldAction(created.id, 'releaseDate', bad);
+      expect(result.ok, bad).toBe(false);
+    }
+    expect((await games.getGame(ownerId, created.id)).releaseDate).toBeNull();
+  });
+});

@@ -92,6 +92,9 @@ export interface GameInput {
   readonly metacritic?: number | null;
   readonly averagePlaytimeHours?: number | null;
   readonly esrbRating?: string | null;
+  /** Hand-entered from the panel (always `'day'` precision) — IGDB-sourced rows get theirs from `createWishlistGame`. */
+  readonly releaseDate?: string | null;
+  readonly releasePrecision?: 'day' | 'month' | null;
   readonly collectionId?: string | null;
 }
 
@@ -369,10 +372,10 @@ export async function createWishlistGame(ownerId: string, input: WishlistGameInp
 
 /**
  * Every IGDB game id the owner already has a `games` row for — wishlisted,
- * or since promoted to `backlog` by the auto-flip; either way, still the
- * SAME row the unique index on `(owner_id, igdb_id)` guards. Used by the
- * Upcoming tab to render an already-added candidate as "Added" instead of
- * offering the add control a second time.
+ * or since moved to another status; either way, still the SAME row the
+ * unique index on `(owner_id, igdb_id)` guards. The Upcoming page drops
+ * these from the IGDB feed (`excludeOwned`): a wishlisted game is listed in
+ * "Your wishlist" above it, and an owned one has nothing to add.
  */
 export async function listWishlistIgdbIds(ownerId: string): Promise<number[]> {
   const rows = await getDb()
@@ -381,51 +384,6 @@ export async function listWishlistIgdbIds(ownerId: string): Promise<number[]> {
     .where(and(eq(gamesTable.ownerId, ownerId), isNotNull(gamesTable.igdbId)));
 
   return rows.map((row) => row.igdbId).filter((igdbId): igdbId is number => igdbId !== null);
-}
-
-/**
- * How many of the owner's wishlist rows have a `release_date` already in
- * the past. The Upcoming page counts this at render time and hands it down
- * so the client can decide whether to fire `promoteReleasedWantedGamesAction`
- * — see that action's own doc comment for why the flip itself can't happen
- * here, during a Server Component's render.
- */
-export async function countOverdueWantedGames(ownerId: string): Promise<number> {
-  const rows = await getDb()
-    .select({ n: sql<number>`count(*)::int` })
-    .from(gamesTable)
-    .where(
-      and(
-        eq(gamesTable.ownerId, ownerId),
-        eq(gamesTable.status, 'wanted'),
-        sql`${gamesTable.releaseDate} < current_date`,
-      ),
-    );
-
-  return rows[0]?.n ?? 0;
-}
-
-/**
- * `wanted` -> `backlog` for every one of the owner's wishlist rows whose
- * `release_date` has passed. Owner-scoped, and idempotent — a second call
- * touches zero rows once the first has already flipped everything overdue.
- * Returns the number of rows flipped, useful only for tests; callers don't
- * need it.
- */
-export async function promoteReleasedWantedGames(ownerId: string): Promise<number> {
-  const rows = await getDb()
-    .update(gamesTable)
-    .set({ status: 'backlog', updatedAt: new Date() })
-    .where(
-      and(
-        eq(gamesTable.ownerId, ownerId),
-        eq(gamesTable.status, 'wanted'),
-        sql`${gamesTable.releaseDate} < current_date`,
-      ),
-    )
-    .returning({ id: gamesTable.id });
-
-  return rows.length;
 }
 
 /** One wishlist row's stored release date, keyed by IGDB id — the input to a reconcile. */

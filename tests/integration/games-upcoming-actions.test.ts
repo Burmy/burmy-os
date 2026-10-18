@@ -46,9 +46,9 @@ beforeEach(async () => {
   requestHeaders.current = new Headers();
 });
 
-function wishlistInput(overrides: Partial<Parameters<typeof actions.addToWishlistAction>[0]> = {}): Parameters<
-  typeof actions.addToWishlistAction
->[0] {
+function wishlistInput(
+  overrides: Partial<Parameters<typeof actions.addToWishlistAction>[0]> = {},
+): Parameters<typeof actions.addToWishlistAction>[0] {
   return {
     igdbId: 92550,
     title: 'Fable',
@@ -75,7 +75,9 @@ describe('addToWishlistAction', () => {
   it('defaults to the steam platform when the candidate does not list PS5', async () => {
     const ownerId = await provisionOwner();
 
-    const result = await actions.addToWishlistAction(wishlistInput({ igdbId: 5, platforms: ['pc'] }));
+    const result = await actions.addToWishlistAction(
+      wishlistInput({ igdbId: 5, platforms: ['pc'] }),
+    );
 
     expect(result.ok).toBe(true);
     const [created] = await games.listGames(ownerId, { status: 'wanted' });
@@ -102,73 +104,6 @@ describe('addToWishlistAction', () => {
 
     expect(await games.listGames(ownerId, { status: 'wanted' })).toHaveLength(1);
     expect(await games.listGames(otherOwnerId, { status: 'wanted' })).toHaveLength(0);
-  });
-});
-
-describe('promoteReleasedWantedGamesAction', () => {
-  it('flips only overdue wanted rows to backlog', async () => {
-    const ownerId = await provisionOwner();
-    const overdue = await games.createWishlistGame(ownerId, {
-      igdbId: 1,
-      title: 'Overdue',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-    const future = await games.createWishlistGame(ownerId, {
-      igdbId: 2,
-      title: 'Future',
-      coverUrl: null,
-      releaseDate: '2099-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    const result = await actions.promoteReleasedWantedGamesAction();
-
-    expect(result.ok).toBe(true);
-    expect((await games.getGame(ownerId, overdue.id)).status).toBe('backlog');
-    expect((await games.getGame(ownerId, future.id)).status).toBe('wanted');
-  });
-
-  it("only flips the resolved owner's rows, never another owner's", async () => {
-    const ownerId = await provisionOwner();
-    const otherOwnerId = await provisionOwner('someone-else@burmy.test');
-    const theirOverdue = await games.createWishlistGame(otherOwnerId, {
-      igdbId: 3,
-      title: 'Their overdue game',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    await actions.promoteReleasedWantedGamesAction();
-
-    expect((await games.getGame(otherOwnerId, theirOverdue.id)).status).toBe('wanted');
-    // Sanity: the resolved owner had nothing to flip, and the action still
-    // succeeded rather than erroring on an empty update.
-    expect(await games.listGames(ownerId, { status: 'wanted' })).toHaveLength(0);
-  });
-
-  it('is idempotent — calling it again after everything is already flipped succeeds and changes nothing further', async () => {
-    const ownerId = await provisionOwner();
-    const overdue = await games.createWishlistGame(ownerId, {
-      igdbId: 1,
-      title: 'Overdue',
-      coverUrl: null,
-      releaseDate: '2020-01-01',
-      releasePrecision: null,
-      platform: 'ps5',
-    });
-
-    const first = await actions.promoteReleasedWantedGamesAction();
-    const second = await actions.promoteReleasedWantedGamesAction();
-
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
-    expect((await games.getGame(ownerId, overdue.id)).status).toBe('backlog');
   });
 });
 
@@ -284,7 +219,11 @@ describe('reconcileWishlistReleaseDatesAction', () => {
       releasePrecision: 'month',
       platform: 'ps5',
     });
-    await games.updateGame(ownerId, game.id, { title: game.title, platform: 'ps5', status: 'backlog' });
+    await games.updateGame(ownerId, game.id, {
+      title: game.title,
+      platform: 'ps5',
+      status: 'backlog',
+    });
 
     await actions.reconcileWishlistReleaseDatesAction([
       { igdbId: 11, releaseDate: '2026-01-22', releasePrecision: 'day' },
