@@ -120,7 +120,14 @@ export const ruleOperatorEnum = pgEnum('rule_operator', [
 // ── Games ───────────────────────────────────────────────────────────────────
 
 /** Where a game was played. `other` covers retro/emulated/misc without inventing a taxonomy. */
-export const gamePlatformEnum = pgEnum('game_platform', ['ps5', 'ps4', 'psp', 'steam', 'pc', 'other']);
+export const gamePlatformEnum = pgEnum('game_platform', [
+  'ps5',
+  'ps4',
+  'psp',
+  'steam',
+  'pc',
+  'other',
+]);
 
 export const gameOwnershipEnum = pgEnum('game_ownership', ['physical', 'digital']);
 
@@ -887,40 +894,6 @@ export const games = pgTable(
     averagePlaytimeHours: smallint('average_playtime_hours'),
     esrbRating: text('esrb_rating'),
     /**
-     * Steam's stable numeric app id (e.g. 1091500 for Cyberpunk 2077).
-     * Nullable — most rows predate the Steam sync and PS/PSP rows never get
-     * one at all.
-     *
-     * Once a library row is matched to a Steam app, THIS is what the sync
-     * script (`scripts/sync-steam-library.mjs`) looks up on every later run,
-     * never the title again. Title matching is the risky part of the whole
-     * feature — the owner's titles carry edition/store noise ("[Launch
-     * Edition]", "(itch)") that already defeated IGDB's matcher (see
-     * docs/GAMES.md) — so it happens at most once per game, with the result
-     * persisted here, exactly like the "resolve the match once, persist the
-     * external id" approach `psn-integration-research.md` recommends for any
-     * third-party library sync.
-     */
-    steamAppid: integer('steam_appid'),
-    /**
-     * PSN's stable per-title id (e.g. `CUSA12345_00`), TEXT not numeric —
-     * unlike Steam's `steamAppid`. Played-game data (hours, first played,
-     * platform) is keyed by this id.
-     *
-     * `psnTitleId` and `psnNpCommunicationId` below are TWO SEPARATE
-     * identifier spaces with no join key between them except the game's
-     * name: trophy data (counts, platinum) is keyed by
-     * `npCommunicationId`, not `titleId`. Both are stored because the sync
-     * engine resolves each independently against the owner's library, the
-     * same "resolve the match once, persist the external id" precedent
-     * `steamAppid` already set.
-     */
-    psnTitleId: text('psn_title_id'),
-    /** See `psnTitleId` above — a separate id space, used only for trophy data. */
-    psnNpCommunicationId: text('psn_np_communication_id'),
-    /** Most recent play activity PSN reported for this title, if any. */
-    lastPlayedAt: timestamp('last_played_at', { withTimezone: true }),
-    /**
      * A calendar fact, not an instant — same `date`-string convention as
      * finance transaction dates (see this file's header comment). Populated
      * for a `wanted` row from IGDB's upcoming query, and read by the
@@ -1006,28 +979,15 @@ export const games = pgTable(
     index('games_owner_idx').on(t.ownerId),
     index('games_owner_status_idx').on(t.ownerId, t.status),
     index('games_owner_year_idx').on(t.ownerId, t.firstPlayedYear),
-    // Partial: only rows that have actually been matched to a Steam app
-    // carry a value here, and one Steam app maps to at most one library row
-    // per owner. Mirrors `finance_categories_owner_name_live_idx`'s partial-
-    // uniqueness shape (there: live categories only; here: matched rows only).
-    uniqueIndex('games_owner_steam_appid_idx')
-      .on(t.ownerId, t.steamAppid)
-      .where(sql`${t.steamAppid} is not null`),
-    // Same partial-uniqueness shape as the Steam index above, for the same
-    // reason: only rows matched to a PSN title carry a value here, and one
-    // PSN title maps to at most one library row per owner. `psnNpCommunicationId`
-    // deliberately gets NO uniqueness constraint — see the field comment.
-    uniqueIndex('games_owner_psn_title_id_idx')
-      .on(t.ownerId, t.psnTitleId)
-      .where(sql`${t.psnTitleId} is not null`),
-    // Same partial-uniqueness shape as the Steam/PSN indexes above: only
-    // rows created from the upcoming-games wishlist flow carry a value
-    // here, and one IGDB game maps to at most one library row per owner.
-    // Makes a double-add a clean isUniqueViolation(), not a duplicate row.
+    // Partial: only rows created from the upcoming-games wishlist flow carry
+    // a value here, and one IGDB game maps to at most one library row per
+    // owner. Mirrors `finance_categories_owner_name_live_idx`'s partial-
+    // uniqueness shape (there: live categories only; here: wishlisted rows
+    // only). Makes a double-add a clean isUniqueViolation(), not a duplicate.
     uniqueIndex('games_owner_igdb_id_idx')
       .on(t.ownerId, t.igdbId)
       .where(sql`${t.igdbId} is not null`),
-    // Partial, same shape as the three above: only the titles inside a
+    // Partial, same shape as the one above: only the titles inside a
     // collection carry a value here, and every read of it ("this
     // collection's games", "is this row a child") is owner-scoped. A full
     // index would be mostly nulls — the standalone games and the collection
@@ -1071,206 +1031,6 @@ export const gamePlayYears = pgTable(
   ],
 );
 
-/**
- * Every individual trophy/achievement defined for a game the owner owns, both
- * PlayStation and Steam, earned or not.
- *
- * ─────────────────────────────────────────────────────────────────────────────
- * WHY THIS TABLE EXISTS AT ALL.
- *
- * Trophies used to be fetched from PSN live on every game-page visit and thrown
- * away — measured at ~1.0s on first view and ~1.5s on reload, every time, with
- * no caching. Worse than the wait: nothing about trophies was queryable across
- * games, so "what am I close to platinuming", "what did I earn this month" and
- * "what is the rarest thing I own" were all unanswerable, in an app whose owner
- * uses it primarily to track trophies. PSN was already returning the earned
- * timestamp and the rarity percentage; both were parsed and then discarded.
- *
- * ONE TABLE FOR BOTH SOURCES. Steam has no notion of a tier or a trophy group,
- * so `tier` and `group_id` are nullable and PSN-only — the alternative, two
- * near-identical tables, would fork every query that wants a combined answer
- * ("earned recently" across everything the owner plays) for the sake of two
- * columns.
- * ─────────────────────────────────────────────────────────────────────────────
- */
-export const gameTrophySourceEnum = pgEnum('game_trophy_source', ['psn', 'steam']);
-export const gameTrophyTierEnum = pgEnum('game_trophy_tier', ['bronze', 'silver', 'gold', 'platinum']);
-
-export const gameTrophies = pgTable(
-  'game_trophies',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    ownerId: text('owner_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    gameId: uuid('game_id')
-      .notNull()
-      .references(() => games.id, { onDelete: 'cascade' }),
-    source: gameTrophySourceEnum('source').notNull(),
-    /** PSN `trophyId` (unique within a title only) or Steam `apiname`. Never globally unique — see the index below. */
-    externalId: text('external_id').notNull(),
-    name: text('name'),
-    description: text('description'),
-    iconUrl: text('icon_url'),
-    /** PSN only. Steam has no tiers, and inventing one would misrepresent its data. */
-    tier: gameTrophyTierEnum('tier'),
-    /** PSN `trophyGroupId` — `default` for the base game, `001`/`002`… for DLC. PSN only. */
-    groupId: text('group_id'),
-    hidden: boolean('hidden').notNull().default(false),
-    earned: boolean('earned').notNull().default(false),
-    /** Null whenever `earned` is false. PSN reports this directly; Steam's `unlocktime` is converted. */
-    earnedAt: timestamp('earned_at', { withTimezone: true }),
-    /**
-     * Percentage of players who earned this, in TENTHS of a percent — `225`
-     * means 22.5%.
-     *
-     * An integer, deliberately, not `NUMERIC`. Both APIs report exactly one
-     * decimal place (PSN `trophyEarnedRate: "22.5"`, Steam `percent: "76.8"`),
-     * and CLAUDE.md forbids `NUMERIC` outright because the `pg` driver hands it
-     * back as a STRING — the resulting `parseFloat` is the precise bug this
-     * project is built to avoid. Games already stores `hours_tenths` this way;
-     * rarity follows the same rule, with conversion contained in
-     * `src/server/games/trophies.ts` and nowhere else.
-     *
-     * Null when the API did not report a rate, which is a real state — never
-     * coerced to 0, which would claim "nobody has this."
-     */
-    rarityTenths: integer('rarity_tenths'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    // What makes a re-sync an UPSERT rather than a duplicate. `external_id` is
-    // only unique within a title (PSN restarts `trophyId` at 0 for every game),
-    // so the game and the source both have to be part of the key.
-    uniqueIndex('game_trophies_owner_game_source_external_idx').on(t.ownerId, t.gameId, t.source, t.externalId),
-    index('game_trophies_owner_game_idx').on(t.ownerId, t.gameId),
-    // Partial, because both ordered views only ever look at earned rows — an
-    // index covering the ~40% that are unearned would be that much dead weight
-    // in a scan that can never return them.
-    index('game_trophies_owner_earned_at_idx')
-      .on(t.ownerId, t.earnedAt.desc())
-      .where(sql`${t.earned}`),
-    index('game_trophies_owner_rarity_idx')
-      .on(t.ownerId, t.rarityTenths)
-      .where(sql`${t.earned}`),
-  ],
-);
-
-export const gameSyncSourceEnum = pgEnum('game_sync_source', ['steam', 'psn']);
-export const gameSyncRunStatusEnum = pgEnum('game_sync_run_status', [
-  'running',
-  'ready',
-  'committed',
-  'failed',
-  'cancelled',
-]);
-
-/**
- * One Steam (later: PSN) sync run.
- *
- * Processed in small client-driven chunks rather than one long request, so no
- * single call approaches a serverless timeout and progress is real rather than
- * a spinner. `cursor` is how many library games have been processed; `total` is
- * how many there are. A run persists, so closing the tab mid-sync leaves a
- * resumable run rather than a lost one.
- */
-export const gameSyncRuns = pgTable(
-  'game_sync_runs',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    ownerId: text('owner_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    source: gameSyncSourceEnum('source').notNull(),
-    status: gameSyncRunStatusEnum('status').notNull().default('running'),
-    /**
-     * `cursor`/`total` are for PROGRESS DISPLAY only ("7 of 47") — `total` is
-     * a snapshot of the owner's Steam-platform game count taken when the run
-     * was created, and a game deleted or inserted mid-run can make it an
-     * estimate the cursor never exactly reaches. `lastGameId` below, not
-     * this pair, is what the engine uses to decide what to process next and
-     * when the run is actually done.
-     */
-    cursor: integer('cursor').notNull().default(0),
-    total: integer('total').notNull().default(0),
-    /**
-     * Keyset pagination bookmark: the `id` of the last Steam-platform game
-     * this run has processed, in `id` order. `null` means no chunk has run
-     * yet. The next chunk queries `id > lastGameId ORDER BY id LIMIT
-     * CHUNK_SIZE`, and the run is done once that query returns nothing —
-     * not once `cursor` reaches `total`. That is what makes a game deleted
-     * mid-run harmless (the cursor simply never has to "arrive" anywhere)
-     * instead of stranding the run in `running` forever.
-     *
-     * Deliberately NOT a foreign key. An `ON DELETE SET NULL` would silently
-     * rewind an in-progress run to the very beginning the moment its
-     * last-processed game was deleted, restaging every change before it —
-     * worse than the bug this column exists to fix. This is a pagination
-     * bookmark, not a reference, so a deleted game's id can safely keep
-     * living here as an opaque marker forever.
-     */
-    lastGameId: uuid('last_game_id'),
-    /**
-     * The owner's Steam library as fetched ONCE at the start of the run —
-     * appid, name and playtime only. Held here so each chunk does not re-fetch
-     * the whole list, and so a resumed run matches against exactly the same
-     * snapshot it started with rather than a library that moved underneath it.
-     * Transient run state, discarded with the run.
-     */
-    steamLibrary: jsonb('steam_library'),
-    errorMessage: text('error_message'),
-    /**
-     * A SHA-256 fingerprint of the `PSN_NPSSO` value that made THIS run
-     * possible — hex, truncated to 16 chars, computed by
-     * `currentPsnTokenFingerprint()` in `src/server/db/games/psn-client.ts`.
-     * One-way: this is a hash, not the token, so it never lets anyone
-     * recover the secret from the database, and it never leaves the
-     * database — no Server Action returns it to the client. It exists
-     * purely so the app can tell "the owner is still using the same PSN
-     * token" apart from "a new one was just pasted," without storing the
-     * token itself or a raw "issued at" date: pasting a new token changes
-     * its fingerprint, which is what lets "in use since" naturally restart
-     * from the token that is actually active now. Set only on a
-     * SUCCESSFULLY created `source: 'psn'` run — never for Steam, and never
-     * merely because `PSN_NPSSO` was configured. `null` for every run that
-     * predates this column, and for every Steam run.
-     */
-    psnTokenFingerprint: text('psn_token_fingerprint'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index('game_sync_runs_owner_status_idx').on(t.ownerId, t.status)],
-);
-
-/**
- * One proposed change staged by a run. Nothing here has been written to
- * `games` — that happens only when the owner approves the run.
- *
- * `payload` carries both the proposed value and the value it would replace, so
- * the review screen shows a real before/after rather than just a target.
- */
-export const gameSyncChanges = pgTable(
-  'game_sync_changes',
-  {
-    id: uuid('id').primaryKey().defaultRandom(),
-    ownerId: text('owner_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
-    runId: uuid('run_id')
-      .notNull()
-      .references(() => gameSyncRuns.id, { onDelete: 'cascade' }),
-    /** Null for `new_game` — that change has no library row yet, by definition. */
-    gameId: uuid('game_id').references(() => games.id, { onDelete: 'cascade' }),
-    kind: text('kind').notNull(),
-    title: text('title').notNull(),
-    selected: boolean('selected').notNull().default(true),
-    payload: jsonb('payload').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [index('game_sync_changes_run_idx').on(t.runId)],
-);
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Anime
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1285,10 +1045,23 @@ export const gameSyncChanges = pgTable(
  * `repeat_count` still carries the rewatch signal, so folding REPEATING loses
  * nothing that mattered.
  */
-export const animeStatusEnum = pgEnum('anime_status', ['watching', 'completed', 'dropped', 'planning']);
+export const animeStatusEnum = pgEnum('anime_status', [
+  'watching',
+  'completed',
+  'dropped',
+  'planning',
+]);
 
 /** AniList's own `MediaFormat`, narrowed to the values an anime list actually contains. */
-export const animeFormatEnum = pgEnum('anime_format', ['tv', 'tv_short', 'movie', 'ova', 'ona', 'special', 'music']);
+export const animeFormatEnum = pgEnum('anime_format', [
+  'tv',
+  'tv_short',
+  'movie',
+  'ova',
+  'ona',
+  'special',
+  'music',
+]);
 
 export const animeSeasonEnum = pgEnum('anime_season', ['winter', 'spring', 'summer', 'fall']);
 
@@ -1403,7 +1176,7 @@ export const anime = pgTable(
      * `games.collection_id`.
      */
     seriesId: uuid('series_id').references(() => animeSeries.id, { onDelete: 'set null' }),
-    /** AniList's `Media.id`. Resolve the match once, persist the external id — the rule `steam_appid` follows. */
+    /** AniList's `Media.id`. Resolve the match once, persist the external id — the rule `games.igdb_id` follows too. */
     anilistMediaId: integer('anilist_media_id'),
     titleRomaji: text('title_romaji').notNull(),
     titleEnglish: text('title_english'),
@@ -1451,7 +1224,9 @@ export const anime = pgTable(
       .where(sql`${t.anilistMediaId} is not null`),
     index('anime_owner_idx').on(t.ownerId),
     index('anime_owner_status_idx').on(t.ownerId, t.status),
-    index('anime_owner_series_idx').on(t.ownerId, t.seriesId).where(sql`${t.seriesId} is not null`),
+    index('anime_owner_series_idx')
+      .on(t.ownerId, t.seriesId)
+      .where(sql`${t.seriesId} is not null`),
   ],
 );
 
@@ -1473,7 +1248,7 @@ export const anime = pgTable(
  *
  * `anilist_activity_id` unique-when-present is what makes a re-sync an UPSERT
  * rather than a second copy of every entry — the same job
- * `game_trophies_owner_game_source_external_idx` does for trophies.
+ * `games_owner_igdb_id_idx` does for the Games wishlist.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export const animeWatchLog = pgTable(
@@ -1504,10 +1279,11 @@ export const animeWatchLog = pgTable(
 );
 
 /**
- * One AniList sync run. Its own table rather than a reuse of
- * `game_sync_runs`, and that is a deliberate refusal to generalise.
+ * One AniList sync run. Its own table rather than a shared one with the
+ * Games sync (which had its own tables until 2026-10-18), and that was a
+ * deliberate refusal to generalise.
  *
- * `src/server/db/games/sync.ts` types `fieldUpdatePatch` and `linkFieldPatch`
+ * `src/server/db/games/sync.ts` (since removed) typed `fieldUpdatePatch` and `linkFieldPatch`
  * as `Partial<typeof games.$inferInsert>` and inserts into `games` — the whole
  * commit path is bound to that table. Making it serve two tables would mean a
  * generic column-patching layer over arbitrary schemas, which is precisely the
@@ -1530,7 +1306,7 @@ export const animeSyncRuns = pgTable(
      * `ON DELETE SET NULL` would silently rewind an in-progress run to the very
      * beginning when a row it had already passed was deleted. This is a
      * pagination bookmark, not a reference — the same decision, for the same
-     * reason, as `game_sync_runs.last_game_id`.
+     * reason, as the Games sync runs' `last_game_id` once was.
      */
     lastAnimeId: uuid('last_anime_id'),
     /** The AniList response, fetched ONCE at run start and matched against for every chunk. */
