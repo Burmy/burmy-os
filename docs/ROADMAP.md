@@ -1397,19 +1397,19 @@ pointer-down, Escape capture, z-index against toasts) and a scripted-edit helper
 
 ## ▶ RESUME HERE
 
-**State as of 2026-10-18:** `feat/games-simplify` carries the Games simplification above. Production
-is still the Aug 29 deploy (`917555d`), and migrations `0016`–`0018` were never applied to it — the
-deployed code expects `games.collection_id` and the `anime*` tables that production does not have.
+**State as of 2026-10-18:** `feat/games-simplify` carries the Games simplification above, pushed and
+awaiting a PR. Production is the Aug 29 deploy (`917555d`) and its schema is at `0018` — verified
+against the live journal on 2026-10-18 (19 rows, newest hash = `0018`'s file, `games.collection_id`
+and the `anime*` tables present). The earlier note that `0016`–`0018` were never applied was stale.
 
 **Order of operations from here, and it is order-sensitive:**
 
-1. Apply `0016`, `0017`, `0018` to production — through the Supabase MCP as raw SQL plus the journal
-   rows (`docs/DEPLOYMENT.md`, "Applying a migration through the Supabase MCP"). This brings the
-   CURRENT deploy's schema up to what its code expects before anything else changes.
-2. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming,
+1. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming,
    Stats and Settings against the not-yet-dropped tables.
-3. Only then apply `0019` the same way. Old code read the dropped tables; the new code does not.
-4. Run the sheet reconciliation (`scripts/diff-game-log.mjs`) and link collections in the app.
+2. Only then apply `0019` — through the Supabase MCP as raw SQL plus the journal row
+   (`docs/DEPLOYMENT.md`, "Applying a migration through the Supabase MCP"). Old code read the dropped
+   tables; the new code does not.
+3. Run the sheet reconciliation (`scripts/diff-game-log.mjs`) and link collections in the app.
 
 **Still outstanding, in priority order:** a backup of the live database has never been taken; Anime
 has never run against the live AniList API; the Netlify function-region pin is unconfirmed.

@@ -15,7 +15,7 @@ explicitly dated as describing the module's design rather than a moment in time.
 | | |
 | --- | --- |
 | Branch | `feat/games-simplify` — the simplification pass (see `docs/ROADMAP.md`, "Games simplification"), not yet merged |
-| Migrations | 20 on disk (`0000`–`0019`). Production is at `0015`: **`0016`–`0018` are overdue** (the deployed code expects them), **`0019` drops the sync/trophy tables and must wait until the new code is live** |
+| Migrations | 20 on disk (`0000`–`0019`). Production is at `0018` (verified against the live journal 2026-10-18). **`0019` drops the sync/trophy tables and must wait until the new code is live** |
 | Gate | typecheck, lint, 1357 unit, 209 integration, build — all green on the branch |
 | Deployed | **Live** at `https://app.burmy.me` from the Aug 29 commit, behind Cloudflare Access |
 
@@ -117,8 +117,8 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 
 ## Outstanding (2026-10-18)
 
-See `docs/ROADMAP.md`, "▶ RESUME HERE", for the order-sensitive sequence: apply `0016`–`0018` to
-production, merge and deploy, then apply `0019`, then reconcile the sheet.
+See `docs/ROADMAP.md`, "▶ RESUME HERE", for the order-sensitive sequence: merge and deploy, then
+apply `0019`, then reconcile the sheet.
 
 - **No backup exists of the live Supabase database** — still the highest-priority gap; for Games there
   is no CSV archive to re-import from.
@@ -137,5 +137,6 @@ production, merge and deploy, then apply `0019`, then reconcile the sheet.
 - Scoping a test run: `npx vitest run --project domain <name>` — `pnpm test --project X -- name` does
   NOT scope.
 - Docker Desktop must be running for anything touching Postgres.
-- The Supabase MCP in this environment is signed into a different organization unless re-authenticated
-  against Burmy's Org; production is unreachable from here otherwise.
+- Two Supabase MCPs can be present: the locally configured `supabase` server is signed into a different
+  organization (SKAIL Org) and cannot see this project; the claude.ai Supabase connector is signed into
+  Burmy's Org and can. Check `list_organizations` before trusting either.
