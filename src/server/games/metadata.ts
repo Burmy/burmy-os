@@ -137,7 +137,11 @@ export function buildTimeToBeatQuery(gameIds: readonly number[]): string {
  * candidates, the highest-hype (least likely to be filler) games are the
  * ones kept.
  */
-export function buildUpcomingQuery(nowSeconds: number, horizonSeconds: number, hypeFloor: number): string {
+export function buildUpcomingQuery(
+  nowSeconds: number,
+  horizonSeconds: number,
+  hypeFloor: number,
+): string {
   const fields = [
     'name',
     'hypes',
@@ -299,7 +303,9 @@ export function withPlaytime(
 
   return suggestions.map((suggestion) => {
     const hoursValue = hoursByGameId.get(suggestion.externalId);
-    return hoursValue === undefined ? suggestion : { ...suggestion, averagePlaytimeHours: hoursValue };
+    return hoursValue === undefined
+      ? suggestion
+      : { ...suggestion, averagePlaytimeHours: hoursValue };
   });
 }
 
@@ -480,7 +486,19 @@ const EDITION_MARKER_WORDS = new Set([
  * unrelated remainder token wrongly "distinguishing" or (worse) wrongly
  * droppable.
  */
-const ROMAN_NUMERAL_TOKENS = new Set(['ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii']);
+const ROMAN_NUMERAL_TOKENS = new Set([
+  'ii',
+  'iii',
+  'iv',
+  'v',
+  'vi',
+  'vii',
+  'viii',
+  'ix',
+  'x',
+  'xi',
+  'xii',
+]);
 
 /**
  * Every real droppable-tagline match this module has ever seen (`Idle
@@ -523,7 +541,9 @@ function isTokenContainmentMatch(
   if (storedTokens.length === 0 || candidateTokens.length === 0) return false;
 
   const storedIsLonger = storedTokens.length > candidateTokens.length;
-  const [shorter, longer] = storedIsLonger ? [candidateTokens, storedTokens] : [storedTokens, candidateTokens];
+  const [shorter, longer] = storedIsLonger
+    ? [candidateTokens, storedTokens]
+    : [storedTokens, candidateTokens];
   const rawLonger = storedIsLonger ? rawStored : rawCandidate;
   // A single generic word ("Doom", "War") is too common to safely treat as
   // "contained" in anything that happens to start with it.
@@ -534,7 +554,8 @@ function isTokenContainmentMatch(
 
   const shorterSet = new Set(shorter);
   const remainder = longer.filter((token) => !shorterSet.has(token));
-  if (remainder.some((token) => isDistinguishingToken(token) || EDITION_MARKER_WORDS.has(token))) return false;
+  if (remainder.some((token) => isDistinguishingToken(token) || EDITION_MARKER_WORDS.has(token)))
+    return false;
   if (remainder.length === 0) return true;
 
   // A real false positive found live: the owner wishlisted "God of War
@@ -567,7 +588,9 @@ export function scoreTitleMatch(storedTitle: string, candidateTitle: string): Ti
     return { confidence: 'high', similarity: 0.95 };
   }
 
-  if (isTokenContainmentMatch(storedTitle, candidateTitle, abbreviatedStored, abbreviatedCandidate)) {
+  if (
+    isTokenContainmentMatch(storedTitle, candidateTitle, abbreviatedStored, abbreviatedCandidate)
+  ) {
     return { confidence: 'high', similarity: 0.9 };
   }
 
@@ -657,7 +680,10 @@ export function bestTitleMatchAmong<T>(
  * Thin wrapper over `bestTitleMatchAmong` — see that function for the actual
  * policy (lowest distance wins, `null` for an empty list).
  */
-export function bestTitleMatch(storedTitle: string, candidates: readonly GameSuggestion[]): BestTitleMatch | null {
+export function bestTitleMatch(
+  storedTitle: string,
+  candidates: readonly GameSuggestion[],
+): BestTitleMatch | null {
   const match = bestTitleMatchAmong(storedTitle, candidates, (candidate) => candidate.title);
   return match === null ? null : { suggestion: match.candidate, score: match.score };
 }
@@ -697,49 +723,20 @@ export interface MetadataFill {
  * are `readonly` (it's a return-value contract), so building it needs a
  * separate mutable shape, per that same documented pattern.
  */
-export function metadataFieldsToFill(current: StoredGameMetadata, suggestion: GameSuggestion): MetadataFill {
+export function metadataFieldsToFill(
+  current: StoredGameMetadata,
+  suggestion: GameSuggestion,
+): MetadataFill {
   const fill: { -readonly [K in keyof MetadataFill]: MetadataFill[K] } = {};
-  if (current.coverUrl === null && suggestion.coverUrl !== null) fill.coverUrl = suggestion.coverUrl;
+  if (current.coverUrl === null && suggestion.coverUrl !== null)
+    fill.coverUrl = suggestion.coverUrl;
   if (current.genre === null && suggestion.genre !== null) fill.genre = suggestion.genre;
-  if (current.metacritic === null && suggestion.metacritic !== null) fill.metacritic = suggestion.metacritic;
+  if (current.metacritic === null && suggestion.metacritic !== null)
+    fill.metacritic = suggestion.metacritic;
   if (current.averagePlaytimeHours === null && suggestion.averagePlaytimeHours !== null) {
     fill.averagePlaytimeHours = suggestion.averagePlaytimeHours;
   }
-  if (current.esrbRating === null && suggestion.esrbRating !== null) fill.esrbRating = suggestion.esrbRating;
+  if (current.esrbRating === null && suggestion.esrbRating !== null)
+    fill.esrbRating = suggestion.esrbRating;
   return fill;
-}
-
-/**
- * A brand-new game has no library row yet, so every one of the five
- * backfillable columns starts unset — the sync enrichment phase's own
- * "current" for `metadataFieldsToFill` (`src/features/games/sync/sync-actions.ts`'s
- * `advanceSyncEnrichmentAction`), exactly the same call `scripts/backfill-game-
- * metadata.mjs` makes per EXISTING game, just with every field guaranteed
- * null rather than possibly already set.
- */
-const NO_STORED_METADATA: StoredGameMetadata = {
-  coverUrl: null,
-  genre: null,
-  metacritic: null,
-  averagePlaytimeHours: null,
-  esrbRating: null,
-};
-
-/**
- * The metadata a brand-new, not-yet-inserted game should be enriched with:
- * the single best IGDB `suggestion` for `title`, applied ONLY when it clears
- * HIGH confidence — identical gate to `scripts/backfill-game-metadata.mjs`'s
- * `--apply` policy (see `scoreTitleMatch`'s doc comment for the full
- * confidence rule, and `SIMILARITY_FLOOR` for why even the best LOW match is
- * discarded). Returns an EMPTY `MetadataFill` (no keys), never `null`, for
- * "no suggestions," "no confident match," or "not configured" alike — the
- * caller (`markNewGameChangeEnriched`, `src/server/db/games/sync.ts`) merges
- * this straight into a payload patch with no extra branch, and an empty fill
- * is exactly what should be written when nothing was found: the new game
- * stays a letter-tile placeholder, precisely today's un-enriched behaviour.
- */
-export function resolveNewGameMetadataFill(title: string, suggestions: readonly GameSuggestion[]): MetadataFill {
-  const match = bestTitleMatch(title, suggestions);
-  if (match === null || match.score.confidence !== 'high') return {};
-  return metadataFieldsToFill(NO_STORED_METADATA, match.suggestion);
 }

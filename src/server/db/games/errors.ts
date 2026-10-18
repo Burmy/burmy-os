@@ -74,41 +74,6 @@ export class InvalidCollectionError extends Error {
 }
 
 /**
- * A sync run does not exist, or belongs to someone else. One error for both —
- * same "don't let a crafted id distinguish the two" reasoning as
- * `GameNotFoundError`.
- */
-export class SyncRunNotFoundError extends Error {
-  constructor() {
-    super('Sync run not found');
-    this.name = 'SyncRunNotFoundError';
-  }
-}
-
-/** Committing an already-`committed` run would double-apply every selected change. */
-export class SyncRunAlreadyCommittedError extends Error {
-  constructor() {
-    super('This sync run has already been committed');
-    this.name = 'SyncRunAlreadyCommittedError';
-  }
-}
-
-/**
- * Only a `ready` run may be committed. `running` has chunks still in flight
- * — approving it commits a half-populated set, and the engine would go on
- * appending changes to a run that is now `committed`. `failed`/`cancelled`
- * have nothing valid to apply. `committed` gets its OWN dedicated error
- * (`SyncRunAlreadyCommittedError` above) rather than this one, so "already
- * committed" stays the exact message a double-commit sees.
- */
-export class SyncRunNotReadyError extends Error {
-  constructor(readonly status: string) {
-    super(`This sync run is ${status}, not ready to commit.`);
-    this.name = 'SyncRunNotReadyError';
-  }
-}
-
-/**
  * Drizzle WRAPS driver errors — the SQLSTATE lives on the `cause` chain, not on
  * `error.code`. A naive `error.code === '23505'` compiles, reads correctly, and
  * silently never matches, turning every duplicate title into an unhandled 500.

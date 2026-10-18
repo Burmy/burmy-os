@@ -92,8 +92,15 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
   const collectionTargets = useMemo(() => {
     const memberIds = new Set(games.filter((g) => g.collectionId !== null).map((g) => g.id));
     return games
-      .filter((game) => !selectedIds.includes(game.id) && game.collectionId === null && !memberIds.has(game.id))
-      .map((game) => ({ id: game.id, title: game.title, subtitle: PLATFORM_LABELS[game.platform] }));
+      .filter(
+        (game) =>
+          !selectedIds.includes(game.id) && game.collectionId === null && !memberIds.has(game.id),
+      )
+      .map((game) => ({
+        id: game.id,
+        title: game.title,
+        subtitle: PLATFORM_LABELS[game.platform],
+      }));
   }, [games, selectedIds]);
 
   async function addSelectedTo(collectionId: string): Promise<void> {
@@ -103,7 +110,9 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
 
     if (result.ok) {
       setSelectedIds([]);
-      toast.success(`${count} game${count === 1 ? '' : 's'} added to ${target?.title ?? 'the collection'}`);
+      toast.success(
+        `${count} game${count === 1 ? '' : 's'} added to ${target?.title ?? 'the collection'}`,
+      );
       return;
     }
     toast.error(result.error);
@@ -285,20 +294,20 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
               PC" platform chip beside it. This appears only when there is
               something to clear, so the row's resting state is just the
               filters themselves. */}
-          {filtered ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground"
-              onClick={() => {
-                setStatus('all');
-                setPlatform('all');
-                setSearch('');
-              }}
-            >
-              Clear
-            </Button>
-          ) : null}
+            {filtered ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
+                onClick={() => {
+                  setStatus('all');
+                  setPlatform('all');
+                  setSearch('');
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
           </div>
         </div>
 

@@ -10,7 +10,6 @@ import {
   type GameSuggestion,
   metadataFieldsToFill,
   normalizeGameTitle,
-  resolveNewGameMetadataFill,
   scoreTitleMatch,
   type StoredGameMetadata,
   toSuggestions,
@@ -107,11 +106,15 @@ describe('buildUpcomingQuery', () => {
 
 describe('coverUrl', () => {
   it('defaults to the 2x big-cover preset', () => {
-    expect(coverUrl('co3dip')).toBe('https://images.igdb.com/igdb/image/upload/t_cover_big_2x/co3dip.jpg');
+    expect(coverUrl('co3dip')).toBe(
+      'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/co3dip.jpg',
+    );
   });
 
   it('accepts an explicit size preset', () => {
-    expect(coverUrl('co3dip', 't_thumb')).toBe('https://images.igdb.com/igdb/image/upload/t_thumb/co3dip.jpg');
+    expect(coverUrl('co3dip', 't_thumb')).toBe(
+      'https://images.igdb.com/igdb/image/upload/t_thumb/co3dip.jpg',
+    );
   });
 });
 
@@ -206,7 +209,9 @@ describe('withPlaytime', () => {
     const suggestions = toSuggestions(IGDB_PAYLOAD);
     expect(withPlaytime(suggestions, null)).toEqual(suggestions);
     expect(withPlaytime(suggestions, 'nope')).toEqual(suggestions);
-    expect(withPlaytime(suggestions, [{ game_id: 1942, normally: 'not a number' }])).toEqual(suggestions);
+    expect(withPlaytime(suggestions, [{ game_id: 1942, normally: 'not a number' }])).toEqual(
+      suggestions,
+    );
   });
 });
 
@@ -232,17 +237,26 @@ describe('normalizeGameTitle', () => {
 
 describe('scoreTitleMatch', () => {
   it('is HIGH confidence for an identical title', () => {
-    expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends')).toEqual({ confidence: 'high', similarity: 1 });
+    expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends')).toEqual({
+      confidence: 'high',
+      similarity: 1,
+    });
   });
 
   it('is HIGH confidence when only case, punctuation, or spacing differs', () => {
-    expect(scoreTitleMatch('quest of legends', 'Quest of Legends')).toMatchObject({ confidence: 'high' });
-    expect(scoreTitleMatch('Quest of Legends', 'Quest: of Legends!')).toMatchObject({ confidence: 'high' });
+    expect(scoreTitleMatch('quest of legends', 'Quest of Legends')).toMatchObject({
+      confidence: 'high',
+    });
+    expect(scoreTitleMatch('Quest of Legends', 'Quest: of Legends!')).toMatchObject({
+      confidence: 'high',
+    });
   });
 
   it('is HIGH confidence after stripping a trailing parenthetical store suffix', () => {
     // Mirrors the real "(itch)" artifact documented in fix-game-platforms.mjs.
-    expect(scoreTitleMatch('Quest of Legends (itch)', 'Quest of Legends')).toMatchObject({ confidence: 'high' });
+    expect(scoreTitleMatch('Quest of Legends (itch)', 'Quest of Legends')).toMatchObject({
+      confidence: 'high',
+    });
     expect(scoreTitleMatch('Quest of Legends', 'Quest of Legends (Steam Edition)')).toMatchObject({
       confidence: 'high',
     });
@@ -353,7 +367,10 @@ describe('scoreTitleMatch — abbreviations', () => {
   });
 
   it('is HIGH confidence for "Game of the Year Enhanced" vs. "GOTY Enhanced"', () => {
-    const score = scoreTitleMatch('Borderlands Game of the Year Enhanced', 'Borderlands GOTY Enhanced');
+    const score = scoreTitleMatch(
+      'Borderlands Game of the Year Enhanced',
+      'Borderlands GOTY Enhanced',
+    );
     expect(score.confidence).toBe('high');
   });
 
@@ -509,11 +526,14 @@ describe('bestTitleMatchAmong — similarity floor (no match at all)', () => {
     ['Borderlands Game of the Year Enhanced', 'Borderlands GOTY Enhanced'],
     ['Idle Slayer', 'Idle Slayer – Incremental RPG'],
     ['Tap Ninja - Idle game', 'Tap Ninja'],
-  ])('still reports "%s" as a HIGH match against "%s", never swallowed by the floor', (storedTitle, expectedSteamTitle) => {
-    const match = bestTitleMatchAmong(storedTitle, realSteamLibrary, titleOf);
-    expect(match?.score.confidence).toBe('high');
-    expect(match?.candidate).toBe(expectedSteamTitle);
-  });
+  ])(
+    'still reports "%s" as a HIGH match against "%s", never swallowed by the floor',
+    (storedTitle, expectedSteamTitle) => {
+      const match = bestTitleMatchAmong(storedTitle, realSteamLibrary, titleOf);
+      expect(match?.score.confidence).toBe('high');
+      expect(match?.candidate).toBe(expectedSteamTitle);
+    },
+  );
 });
 
 describe('metadataFieldsToFill', () => {
@@ -560,7 +580,10 @@ describe('metadataFieldsToFill', () => {
   });
 
   it('omits a field the suggestion has no value for, rather than writing null', () => {
-    const fill = metadataFieldsToFill(emptyCurrent, suggestion({ title: 'Quest of Legends', genre: 'RPG' }));
+    const fill = metadataFieldsToFill(
+      emptyCurrent,
+      suggestion({ title: 'Quest of Legends', genre: 'RPG' }),
+    );
     expect(fill).toEqual({ genre: 'RPG' });
   });
 
@@ -583,51 +606,6 @@ describe('metadataFieldsToFill', () => {
         esrbRating: 'M',
       }),
     );
-    expect(fill).toEqual({});
-  });
-});
-
-describe('resolveNewGameMetadataFill', () => {
-  it('fills every available column from a HIGH-confidence exact-title match', () => {
-    const fill = resolveNewGameMetadataFill('Elden Ring', [
-      suggestion({
-        title: 'Elden Ring',
-        coverUrl: 'https://images.igdb.com/elden-ring.jpg',
-        genre: 'RPG',
-        metacritic: 95,
-        averagePlaytimeHours: 55,
-        esrbRating: 'M',
-      }),
-    ]);
-    expect(fill).toEqual({
-      coverUrl: 'https://images.igdb.com/elden-ring.jpg',
-      genre: 'RPG',
-      metacritic: 95,
-      averagePlaytimeHours: 55,
-      esrbRating: 'M',
-    });
-  });
-
-  it('returns an empty fill — never a guess — when no suggestion clears the similarity floor', () => {
-    // "Bloody Roar 2" vs. an unrelated closest candidate: same real-data
-    // shape as the LOW-confidence, below-floor case `SIMILARITY_FLOOR`'s own
-    // doc comment documents for `bestTitleMatchAmong`.
-    const fill = resolveNewGameMetadataFill('Bloody Roar 2', [suggestion({ title: 'Portal 2', coverUrl: 'https://images.igdb.com/portal2.jpg' })]);
-    expect(fill).toEqual({});
-  });
-
-  it('returns an empty fill for an empty suggestion list (IGDB unconfigured, unreachable, or no results)', () => {
-    expect(resolveNewGameMetadataFill('Some New Game', [])).toEqual({});
-  });
-
-  it('never applies a LOW-confidence match even when it is the only candidate above the floor', () => {
-    // A remaster suffix keeps this below HIGH confidence (see
-    // `scoreTitleMatch`'s EDITION_MARKER_WORDS guard) while still similar
-    // enough to clear SIMILARITY_FLOOR — exactly the case that must still
-    // resolve to "no match," not a fuzzy guess.
-    const fill = resolveNewGameMetadataFill('Metro Last Light', [
-      suggestion({ title: 'Metro Last Light Redux', genre: 'Shooter', coverUrl: 'https://images.igdb.com/metro.jpg' }),
-    ]);
     expect(fill).toEqual({});
   });
 });
