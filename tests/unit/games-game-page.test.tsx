@@ -67,10 +67,6 @@ function game(overrides: Partial<Game> = {}): Game {
     metacritic: null,
     averagePlaytimeHours: null,
     esrbRating: null,
-    steamAppid: null,
-    psnTitleId: null,
-    psnNpCommunicationId: null,
-    lastPlayedAt: null,
     releaseDate: null,
     releasePrecision: null,
     createdAt: new Date('2026-01-01'),
@@ -333,36 +329,6 @@ describe('GamePage — Platinum toggle', () => {
   });
 });
 
-describe('GamePage Steam provenance', () => {
-  it('renders Hours as plain, non-editable text for a Steam-linked game', () => {
-    render(<GamePage {...collectionDefaults} game={game({ steamAppid: 367520 })} />);
-    expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
-    expect(screen.getAllByText(/from steam/i).length).toBeGreaterThan(0);
-  });
-
-  it('keeps Hours editable for a game with no Steam link', async () => {
-    const user = userEvent.setup();
-    render(<GamePage {...collectionDefaults} game={game({ steamAppid: null })} />);
-    await user.click(screen.getByRole('button', { name: 'Hours' }));
-    expect(screen.getByRole('textbox', { name: 'Hours' })).toBeInTheDocument();
-  });
-
-  it('keeps achievement counts read-only for a Steam-linked game', () => {
-    render(<GamePage {...collectionDefaults} game={game({ steamAppid: 367520 })} />);
-    expect(screen.queryByRole('button', { name: 'Achievements earned' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Achievements total' })).not.toBeInTheDocument();
-  });
-
-  it('keeps Rating and Status editable for a Steam-linked game', () => {
-    render(<GamePage {...collectionDefaults} game={game({ steamAppid: 367520 })} />);
-    // Rating is a directly-interactive star row now, not a click-to-reveal
-    // text field — Steam owning hours/achievements must not disable it.
-    expect(screen.getByRole('radiogroup', { name: 'Rating' })).toBeInTheDocument();
-    expect(screen.getByRole('radio', { name: '4 stars' })).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Status' })).toBeInTheDocument();
-  });
-});
-
 /**
  * Rating is the one field that commits directly on click rather than
  * revealing an input first — a star row is already the control. See
@@ -528,20 +494,6 @@ describe('GamePage play-year split', () => {
     });
     const [, drafts] = updateGamePlayYearsAction.mock.calls[0]!;
     expect(drafts).toHaveLength(1);
-  });
-
-  it('keeps the split editable even when the total is Steam-owned', () => {
-    render(
-      <GamePage
-        {...collectionDefaults}
-        game={game({
-          steamAppid: 367520,
-          hoursTenths: 490,
-          playYears: [{ year: 2024, hoursTenths: 490 }],
-        })}
-      />,
-    );
-    expect(screen.getByLabelText('Year')).not.toBeDisabled();
   });
 });
 

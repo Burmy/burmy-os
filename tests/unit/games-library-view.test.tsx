@@ -51,10 +51,6 @@ function game(overrides: Partial<Game>): Game {
     metacritic: null,
     averagePlaytimeHours: null,
     esrbRating: null,
-    steamAppid: null,
-    psnTitleId: null,
-    psnNpCommunicationId: null,
-    lastPlayedAt: null,
     releaseDate: null,
     releasePrecision: null,
     createdAt: new Date('2026-01-01'),
@@ -85,7 +81,11 @@ function galleryTitles(): string[] {
 
 describe('LibraryView', () => {
   it('renders every game in the default gallery view', () => {
-    render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' }), game({ id: 'b', title: 'Prey' })]} />);
+    render(
+      <LibraryView
+        games={[game({ id: 'a', title: 'Elden Ring' }), game({ id: 'b', title: 'Prey' })]}
+      />,
+    );
 
     expect(galleryTitles()).toEqual(['Elden Ring', 'Prey']);
   });
@@ -252,7 +252,11 @@ describe('LibraryView', () => {
   });
 
   it('offers Clear only while something is actually filtered', async () => {
-    render(<LibraryView games={[game({ id: 'a', platform: 'ps5' }), game({ id: 'b', platform: 'psp' })]} />);
+    render(
+      <LibraryView
+        games={[game({ id: 'a', platform: 'ps5' }), game({ id: 'b', platform: 'psp' })]}
+      />,
+    );
 
     expect(screen.queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
 
@@ -261,23 +265,6 @@ describe('LibraryView', () => {
 
     expect(screen.queryByRole('button', { name: /^clear$/i })).not.toBeInTheDocument();
     expect(screen.getByText('2 games')).toBeInTheDocument();
-  });
-
-  it('no longer renders a Source filter group, whose "Steam" collided with the "Steam / PC" platform chip', () => {
-    render(
-      <LibraryView
-        games={[
-          game({ id: 'a', platform: 'steam', steamAppid: 367520 }),
-          game({ id: 'b', platform: 'ps5', steamAppid: null }),
-        ]}
-      />,
-    );
-
-    // The platform chip survives; the identically-named source chip does not.
-    expect(screen.getByRole('button', { name: /^steam \/ pc/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^steam\d/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^manual/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^all sources/i })).not.toBeInTheDocument();
   });
 
   it('tells the owner the library is empty rather than rendering a blank grid', () => {

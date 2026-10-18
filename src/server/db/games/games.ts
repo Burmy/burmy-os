@@ -11,7 +11,19 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import { and, asc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { games as gamesTable } from '@/server/db/schema';
@@ -48,10 +60,6 @@ export interface Game {
   readonly metacritic: number | null;
   readonly averagePlaytimeHours: number | null;
   readonly esrbRating: string | null;
-  readonly steamAppid: number | null;
-  readonly psnTitleId: string | null;
-  readonly psnNpCommunicationId: string | null;
-  readonly lastPlayedAt: Date | null;
   /** `YYYY-MM-DD` for a wishlisted game, else `null`. Read WITH `releasePrecision`, never alone. */
   readonly releaseDate: string | null;
   /** Whether `releaseDate`'s day is real or a `-01` placeholder — see `schema.ts`. */
@@ -84,10 +92,6 @@ export interface GameInput {
   readonly metacritic?: number | null;
   readonly averagePlaytimeHours?: number | null;
   readonly esrbRating?: string | null;
-  readonly steamAppid?: number | null;
-  readonly psnTitleId?: string | null;
-  readonly psnNpCommunicationId?: string | null;
-  readonly lastPlayedAt?: Date | null;
   readonly collectionId?: string | null;
 }
 
@@ -116,10 +120,6 @@ function rowToGame(
     metacritic: row.metacritic,
     averagePlaytimeHours: row.averagePlaytimeHours,
     esrbRating: row.esrbRating,
-    steamAppid: row.steamAppid,
-    psnTitleId: row.psnTitleId,
-    psnNpCommunicationId: row.psnNpCommunicationId,
-    lastPlayedAt: row.lastPlayedAt,
     releaseDate: row.releaseDate,
     releasePrecision: row.releasePrecision,
     collectionId: row.collectionId,
@@ -144,35 +144,15 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
     .from(gamesTable)
     .where(and(...filters))
     .orderBy(
-      // ─────────────────────────────────────────────────────────────────────
-      // RECENCY, PLATFORM-BLIND.
-      //
-      // This used to sort on `first_played_year` and then a deliberate
-      // PS5 > PS4 > Steam/PC > PSP rank. Real usage rejected the platform
-      // rank outright: the library should read as "what I have been playing,"
-      // not as a console shelf.
-      //
-      // `last_played_at` alone could not do it. When this changed, only 74 of
-      // 185 rows had one and every single one came from PSN, so sorting on it
-      // would have produced PSN-then-everything-else — the exact grouping the
-      // change set out to remove. Steam's `rtime_last_played` is now captured
-      // too (`toOwnedGames` in `steam.ts`; it was always in the response, just
-      // never parsed), and `first_played_year` covers the rest.
-      //
-      // TWO HONEST APPROXIMATIONS, neither fixable with the data available:
-      //   1. A year-only game is ranked at 31 December of that year, so it
-      //      sorts ABOVE exact-dated games from the same year. Ranking it at
-      //      1 January would bury it under them instead; there is no correct
-      //      answer, only a choice, and surfacing is the kinder one.
-      //   2. `first_played_year` is FIRST played. A game first played in 2019
-      //      and still being played today ranks as 2019 until a sync gives it
-      //      a real `last_played_at`.
-      //
-      // `nulls last` is load-bearing: Postgres DESC defaults to NULLS FIRST,
-      // which would float every never-played backlog entry above everything
-      // actually played.
-      // ─────────────────────────────────────────────────────────────────────
-      sql`coalesce(${gamesTable.lastPlayedAt}, make_date(${gamesTable.firstPlayedYear}, 12, 31)) desc nulls last`,
+      // LAST EDITED FIRST. The library reads as "what I last touched":
+      // adding a game, changing its status, logging hours or fixing a typo
+      // all move it to the front. Every write path sets `updated_at` by hand
+      // (there is no DB trigger — see `updateGame`), so the column is a
+      // reliable key for this. It replaced a `last_played_at` recency that
+      // only the syncs ever filled; the column went with them. Platform
+      // plays no part, deliberately — a console-shelf ordering was rejected
+      // in real use.
+      desc(gamesTable.updatedAt),
       asc(gamesTable.title),
     );
 

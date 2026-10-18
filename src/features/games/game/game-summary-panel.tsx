@@ -40,7 +40,6 @@ export function GameSummaryPanel({
   rating,
   hoursTenths,
   platinum,
-  steamOwned,
   collectionOwned,
   onSaveField,
 }: {
@@ -51,7 +50,6 @@ export function GameSummaryPanel({
   readonly rating: number | null;
   readonly hoursTenths: number | null;
   readonly platinum: boolean;
-  readonly steamOwned: boolean;
   /**
    * This game sits inside a collection, which owns the set's single play-time
    * figure. Same "the value lives elsewhere" treatment as `steamOwned`, and
@@ -105,8 +103,8 @@ export function GameSummaryPanel({
           value={hoursTenths === null ? '' : String(hoursTenths / 10)}
           displayValue={hoursTenths === null ? undefined : formatHours(hours(hoursTenths))}
           placeholder="Not tracked"
-          disabled={steamOwned || collectionOwned}
-          disabledHint={steamOwned ? 'From Steam' : 'From the collection'}
+          disabled={collectionOwned}
+          disabledHint="From the collection"
           onSave={(value) => onSaveField('hours', value)}
         />
         <div className={cn(ROW_CLASS, 'items-center')}>

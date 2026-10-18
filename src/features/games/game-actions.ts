@@ -4,7 +4,11 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireOwner } from '@/server/auth/owner';
-import { DuplicateGameError, GameNotFoundError, InvalidCollectionError } from '@/server/db/games/errors';
+import {
+  DuplicateGameError,
+  GameNotFoundError,
+  InvalidCollectionError,
+} from '@/server/db/games/errors';
 import {
   type Game,
   type GameInput,
@@ -86,22 +90,6 @@ const playYearsSchema = z
     }),
   )
   .max(30);
-
-/**
- * A disabled Hours/Achievements field in game-dialog.tsx is a UI affordance,
- * not a security boundary — devtools can re-enable it, and even an honest
- * submission omits a disabled field from FormData entirely (native form
- * behavior), which would otherwise read as "the owner cleared this box" and
- * null it out. Either way, for a Steam-linked game these three columns are
- * dropped from the write outright so the existing (Steam-owned) values are
- * left exactly as they are. `commitSyncRun` (src/server/db/games/sync.ts)
- * writes these same columns directly and never goes through this action, so
- * this stripping can never conflict with a sync in progress.
- */
-function stripSteamOwnedFields(input: GameInput): GameInput {
-  const { hoursTenths: _hoursTenths, achievementsUnlocked: _achievementsUnlocked, achievementsTotal: _achievementsTotal, ...rest } = input;
-  return rest;
-}
 
 function toResult(error: unknown): ActionResult {
   if (error instanceof DuplicateGameError) {
@@ -318,7 +306,9 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
     // still hides it — "try editing it again" would point at a row the
     // owner can't see, and re-adding it would collide as a duplicate.
     revalidatePath('/games', 'layout');
-    return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
+    return fail(
+      'The game was saved, but its year-by-year split could not be — try editing it again.',
+    );
   }
 
   // `'layout'` covers both tab routes (`/games/library`, `/games/stats`) in
@@ -326,71 +316,6 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
   // data of its own — revalidating the exact leaf paths individually would
   // miss nothing today, but 'layout' is the one call that keeps covering both
   // if a third tab is ever added under the same route group.
-  revalidatePath('/games', 'layout');
-  return ok();
-}
-
-export async function updateGameAction(id: string, formData: FormData): Promise<ActionResult> {
-  const owner = await requireOwner();
-
-  let parsed: ParsedGame;
-  try {
-    parsed = parse(formData, 'update');
-  } catch (error) {
-    return toResult(error);
-  }
-
-  // Fetched before either check below, because a Steam-linked game changes
-  // both what gets written (stripSteamOwnedFields) and what the split has to
-  // add up to (the game's own current total, not whatever — or nothing — the
-  // form submitted for a disabled field).
-  let gameId: string;
-  let existing: Game;
-  try {
-    gameId = idSchema.parse(id);
-    existing = await getGame(owner.userId, gameId);
-  } catch (error) {
-    return toResult(error);
-  }
-
-  const steamOwned = existing.steamAppid !== null;
-  const input = steamOwned ? stripSteamOwnedFields(parsed.input) : parsed.input;
-
-  const duplicateYear = findDuplicateYear(parsed.playYears);
-  if (duplicateYear !== null) {
-    return fail(`Year ${duplicateYear} appears more than once in the split.`);
-  }
-
-  // Steam knows the total; only the owner knows which year it happened in
-  // (see game-dialog.tsx) — so the split still has to reconcile against a
-  // total, just the EXISTING Steam-owned one rather than whatever this
-  // update's own (stripped) input carries.
-  const totalTenthsForSplit = steamOwned ? (existing.hoursTenths ?? 0) : (input.hoursTenths ?? 0);
-  const validation = validateSplit(totalTenthsForSplit, parsed.playYears);
-  if (!validation.ok) {
-    return fail('The year-by-year split must add up to the total hours.');
-  }
-
-  let saved: Game;
-  try {
-    saved = await updateGame(owner.userId, gameId, input);
-  } catch (error) {
-    return toResult(error);
-  }
-
-  // See the matching comment in createGameAction — deliberately not atomic
-  // with the write above, and for the same reason.
-  try {
-    await replacePlayYears(owner.userId, saved.id, parsed.playYears);
-  } catch {
-    // Revalidate even on this failure path: `createGame`/`updateGame` above
-    // already committed the game row, so without this the library cache
-    // still hides it — "try editing it again" would point at a row the
-    // owner can't see, and re-adding it would collide as a duplicate.
-    revalidatePath('/games', 'layout');
-    return fail('The game was saved, but its year-by-year split could not be — try editing it again.');
-  }
-
   revalidatePath('/games', 'layout');
   return ok();
 }
@@ -432,10 +357,11 @@ export type GameFieldKey = keyof typeof GAME_FIELD_SCHEMAS;
 /** Same mutable-partial shape `parse()` above uses, for the same reason. */
 type MutableGameInputPatch = Partial<{ -readonly [K in keyof GameInput]: GameInput[K] }>;
 
-/** Fields whose value a Steam-linked game's own sync run owns — see `stripSteamOwnedFields`. */
-const STEAM_OWNED_FIELDS: ReadonlySet<GameFieldKey> = new Set(['hours', 'achievementsUnlocked', 'achievementsTotal']);
-
-export async function updateGameFieldAction(id: string, field: GameFieldKey, rawValue: string): Promise<ActionResult> {
+export async function updateGameFieldAction(
+  id: string,
+  field: GameFieldKey,
+  rawValue: string,
+): Promise<ActionResult> {
   const owner = await requireOwner();
 
   let gameId: string;
@@ -445,10 +371,6 @@ export async function updateGameFieldAction(id: string, field: GameFieldKey, raw
     existing = await getGame(owner.userId, gameId);
   } catch (error) {
     return toResult(error);
-  }
-
-  if (existing.steamAppid !== null && STEAM_OWNED_FIELDS.has(field)) {
-    return fail("This field is set automatically from Steam and can't be edited here.");
   }
 
   const trimmed = rawValue.trim();
@@ -489,13 +411,16 @@ export async function updateGameFieldAction(id: string, field: GameFieldKey, raw
         patch.rating = trimmed === '' ? null : GAME_FIELD_SCHEMAS.rating.parse(trimmed);
         break;
       case 'firstPlayedYear':
-        patch.firstPlayedYear = trimmed === '' ? null : GAME_FIELD_SCHEMAS.firstPlayedYear.parse(trimmed);
+        patch.firstPlayedYear =
+          trimmed === '' ? null : GAME_FIELD_SCHEMAS.firstPlayedYear.parse(trimmed);
         break;
       case 'achievementsUnlocked':
-        patch.achievementsUnlocked = trimmed === '' ? null : GAME_FIELD_SCHEMAS.achievementsUnlocked.parse(trimmed);
+        patch.achievementsUnlocked =
+          trimmed === '' ? null : GAME_FIELD_SCHEMAS.achievementsUnlocked.parse(trimmed);
         break;
       case 'achievementsTotal':
-        patch.achievementsTotal = trimmed === '' ? null : GAME_FIELD_SCHEMAS.achievementsTotal.parse(trimmed);
+        patch.achievementsTotal =
+          trimmed === '' ? null : GAME_FIELD_SCHEMAS.achievementsTotal.parse(trimmed);
         break;
       case 'priceDollars':
         patch.priceCents =
@@ -529,7 +454,11 @@ export async function updateGameFieldAction(id: string, field: GameFieldKey, raw
   // the keys actually present in `patch`, so this is a true single-column
   // patch, not a full-row overwrite (see that function's own comment).
   try {
-    await updateGame(owner.userId, gameId, { title: existing.title, platform: existing.platform, ...patch });
+    await updateGame(owner.userId, gameId, {
+      title: existing.title,
+      platform: existing.platform,
+      ...patch,
+    });
   } catch (error) {
     return toResult(error);
   }
@@ -585,7 +514,11 @@ export async function applyMetadataSuggestionAction(
   };
 
   try {
-    await updateGame(owner.userId, gameId, { ...patch, title: patch.title ?? existing.title, platform: existing.platform });
+    await updateGame(owner.userId, gameId, {
+      ...patch,
+      title: patch.title ?? existing.title,
+      platform: existing.platform,
+    });
   } catch (error) {
     return toResult(error);
   }

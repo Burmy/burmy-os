@@ -74,7 +74,6 @@ export function GamePage({
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deletePending, startDeleteTransition] = useTransition();
 
-  const steamOwned = game.steamAppid !== null;
   /**
    * This row IS a collection — it holds other games. Two consequences: it
    * cannot itself be filed into one (the one-level rule), and the money,
@@ -140,7 +139,6 @@ export function GamePage({
           rating={game.rating}
           hoursTenths={game.hoursTenths}
           platinum={game.platinum}
-          steamOwned={steamOwned}
           collectionOwned={isCollectionMember}
           onSaveField={saveField}
         />
@@ -163,7 +161,6 @@ export function GamePage({
             achievementsUnlocked={game.achievementsUnlocked}
             achievementsTotal={game.achievementsTotal}
             {...(isCollection ? { trophyRollup: rollUpTrophies(game, members) } : {})}
-            steamOwned={steamOwned}
             notes={game.notes}
             hoursTenths={game.hoursTenths}
             playYears={game.playYears}

@@ -61,9 +61,9 @@ describe('createGame', () => {
     const owner = await makeOwner('owner@burmy.test');
     await games.createGame(owner, { title: 'Elden Ring', platform: 'ps5' });
 
-    await expect(games.createGame(owner, { title: 'elden ring', platform: 'ps5' })).rejects.toBeInstanceOf(
-      errors.DuplicateGameError,
-    );
+    await expect(
+      games.createGame(owner, { title: 'elden ring', platform: 'ps5' }),
+    ).rejects.toBeInstanceOf(errors.DuplicateGameError);
   });
 
   it('allows the same title on a DIFFERENT platform — a real replay, not a duplicate', async () => {
@@ -168,100 +168,33 @@ describe('deleteGame', () => {
 
 describe('listGames', () => {
   /**
-   * Regression for the "unplayed backlog game sorts above everything the
-   * owner actually played" bug. Postgres `DESC` defaults to NULLS FIRST, so
-   * a naive `desc(firstPlayedYear)` put every no-year game at the very TOP.
-   * This is the whole protection against that regressing — see the ordering
-   * comment on `listGames` in `src/server/db/games/games.ts`.
+   * The library reads as "what I last touched": `listGames` orders by
+   * `updated_at desc`, which every write path sets by hand (there is no DB
+   * trigger — see `updateGame`). Creation stamps it too, so a fresh library
+   * reads newest-added first until something is edited. Platform plays no
+   * part at all — a console-shelf ordering was rejected in real use, and if
+   * it ever comes back this ordering breaks.
    */
-  it('orders by recency across platforms, with never-played games LAST', async () => {
+  it('orders by last edited, newest first, regardless of platform', async () => {
     const owner = await makeOwner('owner@burmy.test');
+    const first = await games.createGame(owner, { title: 'Alpha', platform: 'ps5' });
+    const second = await games.createGame(owner, { title: 'Bravo', platform: 'steam' });
+    const third = await games.createGame(owner, { title: 'Charlie', platform: 'psp' });
 
-    // Deliberately interleaved across platforms. The library used to sort by
-    // a fixed PS5 > PS4 > Steam/PC > PSP rank, which real usage rejected —
-    // it read as a console shelf rather than as "what I have been playing."
-    // If that rank ever comes back, this ordering breaks.
-    const steamNewest = await games.createGame(owner, {
-      title: 'Steam Newest',
-      platform: 'steam',
-      lastPlayedAt: new Date('2026-08-20T00:00:00.000Z'),
-    });
-    const ps4Middle = await games.createGame(owner, {
-      title: 'Ps4 Middle',
-      platform: 'ps4',
-      lastPlayedAt: new Date('2026-08-10T00:00:00.000Z'),
-    });
-    const ps5Oldest = await games.createGame(owner, {
-      title: 'Ps5 Oldest',
-      platform: 'ps5',
-      lastPlayedAt: new Date('2026-07-01T00:00:00.000Z'),
-    });
-
-    // No exact date, only a year — ranked at 31 December of that year, so it
-    // sorts ABOVE exact-dated games from earlier years and BELOW 2026's.
-    const yearOnly2025 = await games.createGame(owner, {
-      title: 'Year Only',
-      platform: 'psp',
-      firstPlayedYear: 2025,
-    });
-
-    // Never played at all. Postgres DESC defaults to NULLS FIRST, which would
-    // float this to the very top — `nulls last` in the ordering is the whole
-    // protection, and this is the regression guard for it.
-    const neverPlayed = await games.createGame(owner, { title: 'Aaa Never Played', platform: 'ps5' });
-
-    const result = await games.listGames(owner);
-
-    expect(result.map((g) => g.id)).toEqual([
-      steamNewest.id,
-      ps4Middle.id,
-      ps5Oldest.id,
-      yearOnly2025.id,
-      neverPlayed.id,
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([
+      third.id,
+      second.id,
+      first.id,
     ]);
-  });
 
-  /**
-   * The year-only fallback is `make_date(year, 12, 31)`, not January 1st. Two
-   * games "played in 2026" — one with a real August date, one with only the
-   * year — therefore put the year-only game FIRST. There is no correct answer
-   * here (the data does not say when in 2026 it was played); surfacing it is
-   * the deliberate choice, and this pins which one was made.
-   */
-  it('ranks a year-only game at the END of its year, above exact dates from the same year', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    const exactAugust = await games.createGame(owner, {
-      title: 'Exact August',
-      platform: 'ps5',
-      lastPlayedAt: new Date('2026-08-01T00:00:00.000Z'),
-    });
-    const yearOnly = await games.createGame(owner, {
-      title: 'Year Only 2026',
-      platform: 'ps5',
-      firstPlayedYear: 2026,
-    });
+    // Editing the oldest row moves it to the front.
+    await games.updateGame(owner, first.id, { title: 'Alpha', platform: 'ps5', rating: 5 });
 
-    const result = await games.listGames(owner);
-
-    expect(result.map((g) => g.id)).toEqual([yearOnly.id, exactAugust.id]);
-  });
-
-  it('breaks a tie between two games with the same recency key by title alone', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    const laterAlphabetically = await games.createGame(owner, {
-      title: 'Bravo',
-      platform: 'ps4', // platform must not influence this at all any more
-      firstPlayedYear: 2021,
-    });
-    const earlierAlphabetically = await games.createGame(owner, {
-      title: 'Alpha',
-      platform: 'ps5',
-      firstPlayedYear: 2021,
-    });
-
-    const result = await games.listGames(owner);
-
-    expect(result.map((g) => g.id)).toEqual([earlierAlphabetically.id, laterAlphabetically.id]);
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([
+      first.id,
+      third.id,
+      second.id,
+    ]);
   });
 
   /**
@@ -275,9 +208,21 @@ describe('listGames', () => {
    */
   it("fetches every game's play-year split with ONE listPlayYears call, not one per game", async () => {
     const owner = await makeOwner('owner@burmy.test');
-    const withSplit = await games.createGame(owner, { title: 'Hollow Knight', platform: 'steam', hoursTenths: 490 });
-    const otherSplit = await games.createGame(owner, { title: 'Lies of P', platform: 'ps5', hoursTenths: 300 });
-    const noSplit = await games.createGame(owner, { title: 'Returnal', platform: 'ps5', hoursTenths: 200 });
+    const withSplit = await games.createGame(owner, {
+      title: 'Hollow Knight',
+      platform: 'steam',
+      hoursTenths: 490,
+    });
+    const otherSplit = await games.createGame(owner, {
+      title: 'Lies of P',
+      platform: 'ps5',
+      hoursTenths: 300,
+    });
+    const noSplit = await games.createGame(owner, {
+      title: 'Returnal',
+      platform: 'ps5',
+      hoursTenths: 200,
+    });
 
     await playYearsDb.replacePlayYears(owner, withSplit.id, [
       { year: 2024, hoursTenths: 370 },
@@ -377,106 +322,15 @@ describe('cross-owner isolation', () => {
     const theirs = await makeOwner('theirs@burmy.test');
     const theirGame = await games.createGame(theirs, { title: 'Their Game', platform: 'ps5' });
 
-    await expect(games.getGame(mine, theirGame.id)).rejects.toBeInstanceOf(errors.GameNotFoundError);
+    await expect(games.getGame(mine, theirGame.id)).rejects.toBeInstanceOf(
+      errors.GameNotFoundError,
+    );
     await expect(
       games.updateGame(mine, theirGame.id, { title: 'Hijacked', platform: 'ps5' }),
     ).rejects.toBeInstanceOf(errors.GameNotFoundError);
-    await expect(games.deleteGame(mine, theirGame.id)).rejects.toBeInstanceOf(errors.GameNotFoundError);
-  });
-});
-
-/**
- * `games_owner_psn_title_id_idx` — the partial unique index on
- * (owner_id, psn_title_id) added alongside `psnTitleId`/`psnNpCommunicationId`/
- * `lastPlayedAt`. Mirrors the existing `games_owner_steam_appid_idx` coverage
- * this suite never had its own describe block for, but the brief specifically
- * calls out the partial-index shape as the thing worth proving against real
- * Postgres: a `WHERE psn_title_id is not null` index enforces uniqueness only
- * among MATCHED rows, and must never limit the library to one unmatched (Steam
- * or PSP) row per owner.
- */
-describe('PSN identity columns', () => {
-  it('rejects two rows sharing a psn_title_id for one owner', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    await games.createGame(owner, { title: 'Bloodborne', platform: 'ps4', psnTitleId: 'CUSA12345_00' });
-
-    await expect(
-      games.createGame(owner, { title: 'Bloodborne GOTY', platform: 'ps4', psnTitleId: 'CUSA12345_00' }),
-    ).rejects.toBeInstanceOf(errors.DuplicateGameError);
-  });
-
-  it('allows many rows with a null psn_title_id for the same owner — the point of the partial index', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-
-    // Stand-ins for the real shape: dozens of Steam and PSP rows that will
-    // never carry a PSN id at all. A non-partial unique index would allow
-    // at most one of these.
-    const steamGame = await games.createGame(owner, { title: 'Hollow Knight', platform: 'steam' });
-    const pspGame = await games.createGame(owner, { title: 'Persona 3 Portable', platform: 'psp' });
-    const anotherNullPsn = await games.createGame(owner, { title: 'Returnal', platform: 'ps5' });
-
-    expect(steamGame.psnTitleId).toBeNull();
-    expect(pspGame.psnTitleId).toBeNull();
-    expect(anotherNullPsn.psnTitleId).toBeNull();
-  });
-
-  it('allows two different owners to each have a game with the same psn_title_id', async () => {
-    const mine = await makeOwner('mine@burmy.test');
-    const theirs = await makeOwner('theirs@burmy.test');
-
-    const myGame = await games.createGame(mine, { title: 'God of War', platform: 'ps5', psnTitleId: 'CUSA99999_00' });
-    const theirGame = await games.createGame(theirs, {
-      title: 'God of War',
-      platform: 'ps5',
-      psnTitleId: 'CUSA99999_00',
-    });
-
-    expect(myGame.psnTitleId).toBe('CUSA99999_00');
-    expect(theirGame.psnTitleId).toBe('CUSA99999_00');
-  });
-
-  it('places no uniqueness constraint on psn_np_communication_id — duplicates are allowed', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-
-    // Same npCommunicationId on two different titles is a realistic shape —
-    // psn-api's trophy titles and played-game titles live in separate id
-    // spaces joined only by name, so nothing here should ever collide.
-    const first = await games.createGame(owner, {
-      title: 'Ghost of Tsushima',
-      platform: 'ps4',
-      psnNpCommunicationId: 'NPWR12345_00',
-    });
-    const second = await games.createGame(owner, {
-      title: 'Ghost of Tsushima Director’s Cut',
-      platform: 'ps5',
-      psnNpCommunicationId: 'NPWR12345_00',
-    });
-
-    expect(first.psnNpCommunicationId).toBe('NPWR12345_00');
-    expect(second.psnNpCommunicationId).toBe('NPWR12345_00');
-  });
-
-  it('round-trips psnTitleId, psnNpCommunicationId and lastPlayedAt through createGame/getGame', async () => {
-    const owner = await makeOwner('owner@burmy.test');
-    const lastPlayedAt = new Date('2026-08-01T12:00:00Z');
-
-    const created = await games.createGame(owner, {
-      title: 'Spider-Man 2',
-      platform: 'ps5',
-      psnTitleId: 'CUSA54321_00',
-      psnNpCommunicationId: 'NPWR54321_00',
-      lastPlayedAt,
-    });
-
-    expect(created.psnTitleId).toBe('CUSA54321_00');
-    expect(created.psnNpCommunicationId).toBe('NPWR54321_00');
-    expect(created.lastPlayedAt).toEqual(lastPlayedAt);
-
-    const fetched = await games.getGame(owner, created.id);
-
-    expect(fetched.psnTitleId).toBe('CUSA54321_00');
-    expect(fetched.psnNpCommunicationId).toBe('NPWR54321_00');
-    expect(fetched.lastPlayedAt).toEqual(lastPlayedAt);
+    await expect(games.deleteGame(mine, theirGame.id)).rejects.toBeInstanceOf(
+      errors.GameNotFoundError,
+    );
   });
 });
 
@@ -503,7 +357,9 @@ describe('createWishlistGame', () => {
     expect(created.status).toBe('wanted');
     expect(created.title).toBe('Fable');
     expect(created.platform).toBe('ps5');
-    expect(created.coverUrl).toBe('https://images.igdb.com/igdb/image/upload/t_cover_big_2x/cobc6d.jpg');
+    expect(created.coverUrl).toBe(
+      'https://images.igdb.com/igdb/image/upload/t_cover_big_2x/cobc6d.jpg',
+    );
 
     const fetched = await games.getGame(owner, created.id);
     expect(fetched.status).toBe('wanted');
@@ -511,7 +367,14 @@ describe('createWishlistGame', () => {
 
   it('rejects a second wishlist add for the same igdbId, for the same owner', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, { igdbId: 92550, title: 'Fable', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, {
+      igdbId: 92550,
+      title: 'Fable',
+      coverUrl: null,
+      releaseDate: null,
+      releasePrecision: null,
+      platform: 'ps5',
+    });
 
     await expect(
       games.createWishlistGame(owner, {
@@ -554,7 +417,14 @@ describe('listWishlistIgdbIds', () => {
   it('returns only this owner’s igdb ids, ignoring games with no igdbId at all', async () => {
     const owner = await makeOwner('owner@burmy.test');
     await games.createGame(owner, { title: 'Manually Added', platform: 'ps5' });
-    await games.createWishlistGame(owner, { igdbId: 111, title: 'Wishlisted', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, {
+      igdbId: 111,
+      title: 'Wishlisted',
+      coverUrl: null,
+      releaseDate: null,
+      releasePrecision: null,
+      platform: 'ps5',
+    });
 
     expect(await games.listWishlistIgdbIds(owner)).toEqual([111]);
   });
@@ -578,7 +448,14 @@ describe('listWishlistIgdbIds', () => {
   it('never returns another owner’s igdb ids', async () => {
     const mine = await makeOwner('mine@burmy.test');
     const theirs = await makeOwner('theirs@burmy.test');
-    await games.createWishlistGame(theirs, { igdbId: 333, title: 'Theirs', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(theirs, {
+      igdbId: 333,
+      title: 'Theirs',
+      coverUrl: null,
+      releaseDate: null,
+      releasePrecision: null,
+      platform: 'ps5',
+    });
 
     expect(await games.listWishlistIgdbIds(mine)).toEqual([]);
   });
@@ -587,9 +464,30 @@ describe('listWishlistIgdbIds', () => {
 describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
   it('counts only wanted rows whose release date has passed — not future dates, not TBD (null) dates', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', releasePrecision: null, platform: 'ps5' });
-    await games.createWishlistGame(owner, { igdbId: 2, title: 'Future', coverUrl: null, releaseDate: '2099-01-01', releasePrecision: null, platform: 'ps5' });
-    await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, {
+      igdbId: 1,
+      title: 'Overdue',
+      coverUrl: null,
+      releaseDate: '2020-01-01',
+      releasePrecision: null,
+      platform: 'ps5',
+    });
+    await games.createWishlistGame(owner, {
+      igdbId: 2,
+      title: 'Future',
+      coverUrl: null,
+      releaseDate: '2099-01-01',
+      releasePrecision: null,
+      platform: 'ps5',
+    });
+    await games.createWishlistGame(owner, {
+      igdbId: 3,
+      title: 'TBD',
+      coverUrl: null,
+      releaseDate: null,
+      releasePrecision: null,
+      platform: 'ps5',
+    });
 
     expect(await games.countOverdueWantedGames(owner)).toBe(1);
   });
@@ -612,7 +510,14 @@ describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
       releasePrecision: null,
       platform: 'ps5',
     });
-    const tbd = await games.createWishlistGame(owner, { igdbId: 3, title: 'TBD', coverUrl: null, releaseDate: null, releasePrecision: null, platform: 'ps5' });
+    const tbd = await games.createWishlistGame(owner, {
+      igdbId: 3,
+      title: 'TBD',
+      coverUrl: null,
+      releaseDate: null,
+      releasePrecision: null,
+      platform: 'ps5',
+    });
 
     const flipped = await games.promoteReleasedWantedGames(owner);
 
@@ -642,7 +547,14 @@ describe('countOverdueWantedGames / promoteReleasedWantedGames', () => {
 
   it('is idempotent — a second call touches zero rows once the first has already flipped everything', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    await games.createWishlistGame(owner, { igdbId: 1, title: 'Overdue', coverUrl: null, releaseDate: '2020-01-01', releasePrecision: null, platform: 'ps5' });
+    await games.createWishlistGame(owner, {
+      igdbId: 1,
+      title: 'Overdue',
+      coverUrl: null,
+      releaseDate: '2020-01-01',
+      releasePrecision: null,
+      platform: 'ps5',
+    });
 
     expect(await games.promoteReleasedWantedGames(owner)).toBe(1);
     expect(await games.promoteReleasedWantedGames(owner)).toBe(0);

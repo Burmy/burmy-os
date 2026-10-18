@@ -6,7 +6,14 @@ import { Fragment } from 'react';
 import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
 import { StatusBadge } from '@/components/games/status-badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
@@ -109,7 +116,9 @@ export function GameTable({
                 collectionTitle={group.game.title}
                 opening={member.id === openingId}
                 onOpen={onOpen}
-                {...(selectable ? { selected: selectedIds.includes(member.id), onToggleSelect } : {})}
+                {...(selectable
+                  ? { selected: selectedIds.includes(member.id), onToggleSelect }
+                  : {})}
               />
             ))}
           </Fragment>
@@ -188,7 +197,10 @@ function GameRow({
           {game.title}
         </button>
         {opening ? (
-          <Loader2 className="text-muted-foreground ml-2 inline size-3.5 animate-spin align-middle" aria-hidden />
+          <Loader2
+            className="text-muted-foreground ml-2 inline size-3.5 animate-spin align-middle"
+            aria-hidden
+          />
         ) : null}
         {memberCount === 0 ? null : (
           <span className="text-muted-foreground ml-2 text-xs">
@@ -196,15 +208,7 @@ function GameRow({
           </span>
         )}
       </TableCell>
-      <TableCell className="text-muted-foreground">
-        {PLATFORM_LABELS[game.platform]}
-        {/* Same provenance mark as game-card.tsx, folded into the existing
-            Platform cell rather than a new column — compact, and this is
-            specifically "does Steam own this game's data," independent of
-            the `platform` field itself (a `steam` platform game can still
-            be unlinked). */}
-        {game.steamAppid === null ? '' : ' · Steam'}
-      </TableCell>
+      <TableCell className="text-muted-foreground">{PLATFORM_LABELS[game.platform]}</TableCell>
       <TableCell>
         <StatusBadge status={game.status} />
       </TableCell>

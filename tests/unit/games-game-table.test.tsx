@@ -33,10 +33,6 @@ function game(overrides: Partial<Game> = {}): Game {
     metacritic: null,
     averagePlaytimeHours: null,
     esrbRating: null,
-    steamAppid: null,
-    psnTitleId: null,
-    psnNpCommunicationId: null,
-    lastPlayedAt: null,
     releaseDate: null,
     releasePrecision: null,
     createdAt: new Date('2026-01-01'),
@@ -46,26 +42,6 @@ function game(overrides: Partial<Game> = {}): Game {
     ...overrides,
   };
 }
-
-/**
- * Task 5 follow-up: the source mark landed on `game-card.tsx` (gallery view)
- * but not `game-table.tsx`, so an owner working in table view got no
- * provenance signal at all — half an answer to "can u differentiate somehow
- * what games are from the api and what are not?" Folded into the existing
- * Platform cell, same as the card folds it into its own platform/year line,
- * rather than a new column.
- */
-describe('GameTable Steam provenance', () => {
-  it('shows a Steam mark for a linked game', () => {
-    render(<GameTable openingId={null} groups={[solo({ steamAppid: 367520 })]} onOpen={vi.fn()} />);
-    expect(screen.getByText(/steam/i)).toBeInTheDocument();
-  });
-
-  it('shows no Steam mark for an unlinked game', () => {
-    render(<GameTable openingId={null} groups={[solo({ steamAppid: null })]} onOpen={vi.fn()} />);
-    expect(screen.queryByText(/steam/i)).not.toBeInTheDocument();
-  });
-});
 
 /**
  * Collections nest one level, the way the source spreadsheet drew them. The
@@ -82,12 +58,16 @@ describe('GameTable collections', () => {
   ];
 
   it('marks the collection row with its title count', () => {
-    render(<GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+    render(
+      <GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />,
+    );
     expect(screen.getByText('3 games')).toBeInTheDocument();
   });
 
   it('renders every title inside the collection as its own row', () => {
-    render(<GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+    render(
+      <GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />,
+    );
     for (const member of members) {
       expect(
         screen.getByRole('button', {
@@ -131,15 +111,11 @@ describe('GameTable open feedback', () => {
     const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
     const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
 
-    render(
-      <GameTable
-        openingId="uc1"
-        groups={[{ game: collection, members }]}
-        onOpen={vi.fn()}
-      />,
-    );
+    render(<GameTable openingId="uc1" groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
 
-    const busy = screen.getAllByRole('row').filter((row) => row.getAttribute('aria-busy') === 'true');
+    const busy = screen
+      .getAllByRole('row')
+      .filter((row) => row.getAttribute('aria-busy') === 'true');
     expect(busy).toHaveLength(1);
     expect(busy[0]?.textContent).toContain('Drake 1');
   });
@@ -151,11 +127,11 @@ describe('GameTable open feedback', () => {
     const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
     const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
 
-    render(
-      <GameTable openingId="ndc" groups={[{ game: collection, members }]} onOpen={vi.fn()} />,
-    );
+    render(<GameTable openingId="ndc" groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
 
-    const busy = screen.getAllByRole('row').filter((row) => row.getAttribute('aria-busy') === 'true');
+    const busy = screen
+      .getAllByRole('row')
+      .filter((row) => row.getAttribute('aria-busy') === 'true');
     expect(busy).toHaveLength(1);
     expect(busy[0]?.textContent).toContain('Nathan Drake Collection');
   });
@@ -194,7 +170,9 @@ describe('GameTable selection', () => {
       />,
     );
 
-    expect(screen.getByRole('checkbox', { name: 'Select Nathan Drake Collection' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('checkbox', { name: 'Select Nathan Drake Collection' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Select Drake 1' })).toBeInTheDocument();
   });
 
@@ -210,7 +188,9 @@ describe('GameTable selection', () => {
     );
 
     expect(screen.getByRole('checkbox', { name: 'Select Drake 1' })).toBeChecked();
-    expect(screen.getByRole('checkbox', { name: 'Select Nathan Drake Collection' })).not.toBeChecked();
+    expect(
+      screen.getByRole('checkbox', { name: 'Select Nathan Drake Collection' }),
+    ).not.toBeChecked();
   });
 
   it('toggles rather than navigating when the row is clicked in selection mode', async () => {

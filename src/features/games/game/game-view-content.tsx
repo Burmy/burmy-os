@@ -49,7 +49,9 @@ import { InlineEditField, InlineEditSelect } from '@/components/ui/inline-edit-r
  */
 function Section({ children }: { readonly children: React.ReactNode }): React.ReactElement {
   return (
-    <section className="grid gap-x-8 border-t pt-4 first:border-t-0 first:pt-0 lg:grid-cols-2">{children}</section>
+    <section className="grid gap-x-8 border-t pt-4 first:border-t-0 first:pt-0 lg:grid-cols-2">
+      {children}
+    </section>
   );
 }
 
@@ -78,7 +80,6 @@ export function GameDetailsContent({
   achievementsUnlocked,
   achievementsTotal,
   trophyRollup,
-  steamOwned,
   notes,
   hoursTenths,
   playYears,
@@ -103,7 +104,6 @@ export function GameDetailsContent({
    * unsplit lump when none of them carries anything yet. See `rollUpTrophies`.
    */
   readonly trophyRollup?: CollectionTrophySummary;
-  readonly steamOwned: boolean;
   readonly notes: string | null;
   readonly hoursTenths: number | null;
   readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
@@ -131,7 +131,8 @@ export function GameDetailsContent({
   // the numbers are edited. `unsplit` means no member carries anything yet,
   // so the collection's own imported lump is still the best figure there is —
   // shown, and labelled as covering the whole set rather than one game.
-  const summedFromMembers = trophyRollup !== undefined && !trophyRollup.unsplit && trophyRollup.unlocked !== null;
+  const summedFromMembers =
+    trophyRollup !== undefined && !trophyRollup.unsplit && trophyRollup.unlocked !== null;
   const unsplitLump = trophyRollup?.unsplit === true;
   const memberSumHint = 'Added up from the games in this collection';
   const rolledUnlocked = summedFromMembers ? trophyRollup.unlocked : achievementsUnlocked;
@@ -211,26 +212,20 @@ export function GameDetailsContent({
           label="Achievements earned"
           value={rolledUnlocked === null ? '' : String(rolledUnlocked)}
           placeholder="Not tracked"
-          disabled={steamOwned || summedFromMembers}
-          {...(steamOwned
-            ? { disabledHint: 'From Steam' }
-            : summedFromMembers
-              ? { disabledHint: memberSumHint }
-              : {})}
+          disabled={summedFromMembers}
+          {...(summedFromMembers ? { disabledHint: memberSumHint } : {})}
           onSave={(value) => onSaveField('achievementsUnlocked', value)}
         />
         <InlineEditField
           label="Achievements total"
           value={rolledTotal === null ? '' : String(rolledTotal)}
           placeholder="Not tracked"
-          disabled={steamOwned || summedFromMembers}
-          {...(steamOwned
-            ? { disabledHint: 'From Steam' }
-            : summedFromMembers
-              ? { disabledHint: memberSumHint }
-              : unsplitLump
-                ? { hint: 'Covers the whole set — not yet split per game' }
-                : {})}
+          disabled={summedFromMembers}
+          {...(summedFromMembers
+            ? { disabledHint: memberSumHint }
+            : unsplitLump
+              ? { hint: 'Covers the whole set — not yet split per game' }
+              : {})}
           onSave={(value) => onSaveField('achievementsTotal', value)}
         />
         {/* A play-year split apportions a game's OWN total across years. A
@@ -239,7 +234,11 @@ export function GameDetailsContent({
             carry a split. */}
         {ownedByCollection ? null : (
           <FullWidthRow>
-            <PlayYearsRow hoursTenths={hoursTenths} playYears={playYears} onSave={onSavePlayYears} />
+            <PlayYearsRow
+              hoursTenths={hoursTenths}
+              playYears={playYears}
+              onSave={onSavePlayYears}
+            />
           </FullWidthRow>
         )}
       </Section>

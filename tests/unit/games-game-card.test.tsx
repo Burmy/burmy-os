@@ -26,10 +26,6 @@ function game(overrides: Partial<Game> = {}): Game {
     metacritic: null,
     averagePlaytimeHours: null,
     esrbRating: null,
-    steamAppid: null,
-    psnTitleId: null,
-    psnNpCommunicationId: null,
-    lastPlayedAt: null,
     releaseDate: null,
     releasePrecision: null,
     createdAt: new Date('2024-01-01'),
@@ -114,7 +110,12 @@ describe('GameCard — cover-only content', () => {
   it('renders no visible text at all', () => {
     const { container } = render(
       <GameCard
-        game={game({ title: 'Bloodborne', platform: 'ps4', hoursTenths: 1360, coverUrl: 'https://x/c.jpg' })}
+        game={game({
+          title: 'Bloodborne',
+          platform: 'ps4',
+          hoursTenths: 1360,
+          coverUrl: 'https://x/c.jpg',
+        })}
         onOpen={vi.fn()}
       />,
     );
