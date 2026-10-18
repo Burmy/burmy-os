@@ -1,7 +1,6 @@
 'use client';
 
-import Link from 'next/link';
-import { Copy, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -32,9 +31,6 @@ type PlatformFilter = GamePlatform | 'all';
 // stay regardless of usefulness as a filter, because wishlist games are
 // HIDDEN from the default view and this chip is the only way to see them.
 const STATUS_CHIP_STATUSES = ['wanted'] as const satisfies readonly GameStatus[];
-// Provenance, not platform — `game.steamAppid !== null` is the same signal
-// game-dialog.tsx uses to render Hours/Achievements read-only, independent
-// of the `platform` field (a `steam` platform game can still be unlinked).
 
 /**
  * The library screen. Owns view mode, status filter, platform filter, and
@@ -42,14 +38,7 @@ const STATUS_CHIP_STATUSES = ['wanted'] as const satisfies readonly GameStatus[]
  * data already loaded, and round-tripping to the server to hide a card would
  * be latency for nothing.
  */
-export function LibraryView({
-  games,
-  duplicateCount = 0,
-}: {
-  readonly games: readonly Game[];
-  /** Pairs the Duplicates screen has something to say about — the link is hidden at 0. */
-  readonly duplicateCount?: number;
-}): React.ReactElement {
+export function LibraryView({ games }: { readonly games: readonly Game[] }): React.ReactElement {
   // Opening a game is a full cross-segment navigation with a database read at
   // the other end, and the card gave no sign it had been clicked — the wall of
   // covers just sat there. `openingId` is what the clicked card/row renders a
@@ -218,23 +207,10 @@ export function LibraryView({
           </span>
         }
         actions={
-          <div className="flex items-center gap-2">
-            {/* Only when there is something to fix. A permanent entry point
-                reading "0 duplicates" on a clean library is an invitation to
-                an empty page. */}
-            {duplicateCount > 0 ? (
-              <Button variant="outline" asChild>
-                <Link href="/games/duplicates">
-                  <Copy className="size-4" />
-                  {duplicateCount} duplicate{duplicateCount === 1 ? '' : 's'}
-                </Link>
-              </Button>
-            ) : null}
-            <Button onClick={() => setCreating(true)}>
-              <Plus className="size-4" />
-              Add game
-            </Button>
-          </div>
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="size-4" />
+            Add game
+          </Button>
         }
       />
 
