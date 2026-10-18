@@ -58,16 +58,12 @@ describe('GameTable collections', () => {
   ];
 
   it('marks the collection row with its title count', () => {
-    render(
-      <GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />,
-    );
+    render(<GameTable activeId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
     expect(screen.getByText('3 games')).toBeInTheDocument();
   });
 
   it('renders every title inside the collection as its own row', () => {
-    render(
-      <GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />,
-    );
+    render(<GameTable activeId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
     for (const member of members) {
       expect(
         screen.getByRole('button', {
@@ -80,7 +76,7 @@ describe('GameTable collections', () => {
   it('opens the member, not the collection, when a nested title is activated', async () => {
     const onOpen = vi.fn();
     const user = userEvent.setup();
-    render(<GameTable openingId={null} groups={[{ game: collection, members }]} onOpen={onOpen} />);
+    render(<GameTable activeId={null} groups={[{ game: collection, members }]} onOpen={onOpen} />);
 
     await user.click(
       screen.getByRole('button', {
@@ -95,50 +91,46 @@ describe('GameTable collections', () => {
   });
 
   it('shows no count marker on a standalone game', () => {
-    render(<GameTable openingId={null} groups={[solo()]} onOpen={vi.fn()} />);
+    render(<GameTable activeId={null} groups={[solo()]} onOpen={vi.fn()} />);
     expect(screen.queryByText(/\d+ games?$/)).not.toBeInTheDocument();
   });
 });
 
 /**
- * Clicking a cover or a row starts a cross-segment navigation with a database
- * read at the other end, and nothing on screen used to acknowledge it — in a
- * wall of near-identical tiles that reads as a missed click, so the owner
- * clicks again. `openingId` is the acknowledgement.
+ * The side panel opens BESIDE the table, so the row it is showing is
+ * highlighted — the table's equivalent of the ring on a gallery card.
+ * Both the wrapper row and the nested rows are wired separately, so each
+ * gets its own case (verified by mutation on the old spinner wiring:
+ * breaking the collection row's binding kept a member-only test green).
  */
-describe('GameTable open feedback', () => {
-  it('marks only the row being opened as busy', () => {
+describe('GameTable active row', () => {
+  function activeRows(): HTMLElement[] {
+    return screen.getAllByRole('row').filter((row) => row.hasAttribute('data-active'));
+  }
+
+  it('highlights only the row the panel is showing', () => {
     const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
     const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
 
-    render(<GameTable openingId="uc1" groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+    render(<GameTable activeId="uc1" groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
 
-    const busy = screen
-      .getAllByRole('row')
-      .filter((row) => row.getAttribute('aria-busy') === 'true');
-    expect(busy).toHaveLength(1);
-    expect(busy[0]?.textContent).toContain('Drake 1');
+    expect(activeRows()).toHaveLength(1);
+    expect(activeRows()[0]?.textContent).toContain('Drake 1');
   });
 
-  it('marks the COLLECTION row busy when it is the one being opened', () => {
-    // The wrapper row and the nested rows are wired separately, so a test that
-    // only ever opens a member leaves half the wiring unproven — verified by
-    // mutation: breaking the collection row's own binding kept that test green.
+  it('highlights the COLLECTION row when it is the one open', () => {
     const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
     const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
 
-    render(<GameTable openingId="ndc" groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+    render(<GameTable activeId="ndc" groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
 
-    const busy = screen
-      .getAllByRole('row')
-      .filter((row) => row.getAttribute('aria-busy') === 'true');
-    expect(busy).toHaveLength(1);
-    expect(busy[0]?.textContent).toContain('Nathan Drake Collection');
+    expect(activeRows()).toHaveLength(1);
+    expect(activeRows()[0]?.textContent).toContain('Nathan Drake Collection');
   });
 
-  it('marks nothing busy when no navigation is in flight', () => {
-    render(<GameTable openingId={null} groups={[solo()]} onOpen={vi.fn()} />);
-    expect(screen.queryByRole('row', { busy: true })).not.toBeInTheDocument();
+  it('highlights nothing while the panel is closed', () => {
+    render(<GameTable activeId={null} groups={[solo()]} onOpen={vi.fn()} />);
+    expect(activeRows()).toHaveLength(0);
   });
 });
 
@@ -155,14 +147,14 @@ describe('GameTable selection', () => {
   const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
 
   it('renders no checkbox column at all unless selection is wired up', () => {
-    render(<GameTable openingId={null} groups={[solo()]} onOpen={vi.fn()} />);
+    render(<GameTable activeId={null} groups={[solo()]} onOpen={vi.fn()} />);
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 
   it('offers a checkbox for the collection and for each member', () => {
     render(
       <GameTable
-        openingId={null}
+        activeId={null}
         groups={[{ game: collection, members }]}
         onOpen={vi.fn()}
         selectedIds={[]}
@@ -179,7 +171,7 @@ describe('GameTable selection', () => {
   it('reflects which rows are already selected', () => {
     render(
       <GameTable
-        openingId={null}
+        activeId={null}
         groups={[{ game: collection, members }]}
         onOpen={vi.fn()}
         selectedIds={['uc1']}
@@ -199,7 +191,7 @@ describe('GameTable selection', () => {
     const user = userEvent.setup();
     render(
       <GameTable
-        openingId={null}
+        activeId={null}
         groups={[solo()]}
         onOpen={onOpen}
         selectedIds={[]}
@@ -221,7 +213,7 @@ describe('GameTable selection', () => {
     const user = userEvent.setup();
     render(
       <GameTable
-        openingId={null}
+        activeId={null}
         groups={[solo()]}
         onOpen={onOpen}
         selectedIds={[]}
@@ -241,7 +233,7 @@ describe('GameTable selection', () => {
     const user = userEvent.setup();
     render(
       <GameTable
-        openingId={null}
+        activeId={null}
         groups={[solo()]}
         onOpen={onOpen}
         selectedIds={[]}

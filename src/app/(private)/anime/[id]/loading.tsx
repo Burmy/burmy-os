@@ -4,7 +4,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 /**
  * The show page's own shape: a sticky 2:3 cover column on the left, inline
  * detail rows on the right. Built from `Skeleton` directly rather than the
- * shared compositions, for the reason `games/[id]/loading.tsx` gives — this
+ * shared compositions, for the reason the old `games/[id]/loading.tsx` gave — this
  * layout is not one any other route has, and bending `PageHeaderSkeleton` to
  * fit would produce a fallback matching neither.
  *

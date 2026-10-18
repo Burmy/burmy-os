@@ -19,7 +19,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/components/ui/toast';
 import { Field, FieldSelect, InlineField } from '@/features/games/field-controls';
-import { isRealPlayYearDraft, type PlayYearDraft, PlayYearsPanel } from '@/features/games/play-years-panel';
+import {
+  isRealPlayYearDraft,
+  type PlayYearDraft,
+  PlayYearsPanel,
+} from '@/features/games/play-years-panel';
 import { fromHoursInput } from '@/server/games/hours';
 import {
   GAME_OWNERSHIPS,
@@ -48,13 +52,12 @@ const SEARCH_MIN_LENGTH = 3;
 type SearchStatus = 'idle' | 'loading' | 'results' | 'empty';
 
 /**
- * Add a new game — create-only. Editing an EXISTING game now lives on its
- * own page (`src/features/games/game/game-page.tsx`, reached from a
- * Library card/row click) with a Trophies section alongside the same
- * Details/Progress/Notes content this dialog still uses for the initial
- * add — this dialog stays a lightweight modal specifically because a
- * brand-new game has no id to route to yet, no trophies, and usually only
- * needs a handful of fields to start.
+ * Add a new game — create-only. Editing an EXISTING game lives in the side
+ * panel (`src/features/games/panel/game-panel.tsx`, opened from a Library
+ * card/row click) with the same Details/Progress/Notes content this dialog
+ * still uses for the initial add — this dialog stays a lightweight modal
+ * specifically because a brand-new game has no id yet and usually only needs
+ * a handful of fields to start.
  *
  * Metadata lookup is search-as-you-type: debounced 300ms after the last
  * keystroke, minimum 3 characters, with each new keystroke superseding
@@ -164,7 +167,10 @@ export function GameDialog({
     formData.set('ownership', ownership);
     formData.set('coverUrl', coverUrl);
     formData.set('metacritic', metacritic === null ? '' : String(metacritic));
-    formData.set('averagePlaytimeHours', averagePlaytimeHours === null ? '' : String(averagePlaytimeHours));
+    formData.set(
+      'averagePlaytimeHours',
+      averagePlaytimeHours === null ? '' : String(averagePlaytimeHours),
+    );
     formData.set('esrbRating', esrbRating ?? '');
     formData.set('playYears', JSON.stringify(playYears.filter(isRealPlayYearDraft)));
 
@@ -231,7 +237,9 @@ export function GameDialog({
                   Searching…
                 </p>
               ) : visibleSearchStatus === 'empty' ? (
-                <p className="text-muted-foreground text-xs">No matches found — fill the details in by hand.</p>
+                <p className="text-muted-foreground text-xs">
+                  No matches found — fill the details in by hand.
+                </p>
               ) : null}
               {error === null ? null : (
                 <p role="alert" className="text-destructive text-sm">
@@ -251,7 +259,13 @@ export function GameDialog({
                     >
                       <span className="bg-muted relative block aspect-[3/4] w-full">
                         {suggestion.coverUrl === null ? null : (
-                          <Image src={suggestion.coverUrl} alt="" fill sizes="120px" className="object-cover" />
+                          <Image
+                            src={suggestion.coverUrl}
+                            alt=""
+                            fill
+                            sizes="120px"
+                            className="object-cover"
+                          />
                         )}
                       </span>
                       <span className="line-clamp-2 p-1 text-xs">
@@ -267,7 +281,9 @@ export function GameDialog({
             {metacritic === null && averagePlaytimeHours === null && esrbRating === null ? null : (
               <p className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
                 {metacritic === null ? null : <span>Metacritic {metacritic}</span>}
-                {averagePlaytimeHours === null ? null : <span>~{averagePlaytimeHours}h to beat</span>}
+                {averagePlaytimeHours === null ? null : (
+                  <span>~{averagePlaytimeHours}h to beat</span>
+                )}
                 {esrbRating === null ? null : <span>ESRB {esrbRating}</span>}
               </p>
             )}
@@ -306,7 +322,10 @@ export function GameDialog({
                     label="Platform"
                     value={platform}
                     onChange={(value) => setPlatform(value as typeof platform)}
-                    options={PLATFORM_PICKER_OPTIONS.map((value) => ({ value, label: PLATFORM_LABELS[value] }))}
+                    options={PLATFORM_PICKER_OPTIONS.map((value) => ({
+                      value,
+                      label: PLATFORM_LABELS[value],
+                    }))}
                   />
                   <FieldSelect
                     id="ownership"
@@ -326,13 +345,33 @@ export function GameDialog({
                       rarely hand-edited — a compact click-to-edit control instead
                       of three permanently-open input boxes, matching the density
                       of the read-only Metacritic/beat-time/ESRB strip above. */}
-                  <InlineField id="genre" label="Genre" value={genre} onChange={setGenre} placeholder="Action RPG" />
-                  <InlineField id="developer" label="Developer" value={developer} onChange={setDeveloper} />
-                  <InlineField id="publisher" label="Publisher" value={publisher} onChange={setPublisher} />
+                  <InlineField
+                    id="genre"
+                    label="Genre"
+                    value={genre}
+                    onChange={setGenre}
+                    placeholder="Action RPG"
+                  />
+                  <InlineField
+                    id="developer"
+                    label="Developer"
+                    value={developer}
+                    onChange={setDeveloper}
+                  />
+                  <InlineField
+                    id="publisher"
+                    label="Publisher"
+                    value={publisher}
+                    onChange={setPublisher}
+                  />
                 </div>
               </TabsContent>
 
-              <TabsContent value="progress" forceMount className="pt-4 data-[state=inactive]:hidden">
+              <TabsContent
+                value="progress"
+                forceMount
+                className="pt-4 data-[state=inactive]:hidden"
+              >
                 <div className="grid gap-4 sm:grid-cols-2">
                   <FieldSelect
                     id="status"
@@ -341,7 +380,13 @@ export function GameDialog({
                     onChange={(value) => setStatus(value as typeof status)}
                     options={GAME_STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] }))}
                   />
-                  <Field id="hours" label="Hours played" value={hoursFieldValue} onChange={setHoursFieldValue} placeholder="23.5" />
+                  <Field
+                    id="hours"
+                    label="Hours played"
+                    value={hoursFieldValue}
+                    onChange={setHoursFieldValue}
+                    placeholder="23.5"
+                  />
                   <div className="sm:col-span-2">
                     {showSplit ? (
                       <PlayYearsPanel
@@ -385,7 +430,12 @@ export function GameDialog({
               <TabsContent value="notes" forceMount className="pt-4 data-[state=inactive]:hidden">
                 <div className="space-y-2">
                   <Label htmlFor="notes">Notes</Label>
-                  <Textarea id="notes" name="notes" placeholder="e.g. 6 hrs of that was the DLC in 2026" rows={6} />
+                  <Textarea
+                    id="notes"
+                    name="notes"
+                    placeholder="e.g. 6 hrs of that was the DLC in 2026"
+                    rows={6}
+                  />
                 </div>
               </TabsContent>
             </Tabs>

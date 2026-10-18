@@ -4,12 +4,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 const deleteGameAction = vi.fn(async () => ({ ok: true as const }));
 const createGameAction = vi.fn(async () => ({ ok: true as const }));
-const updateGameAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/games/game-actions', () => ({
   deleteGameAction,
   createGameAction,
-  updateGameAction,
 }));
 
 vi.mock('@/features/games/metadata-actions', () => ({
@@ -18,12 +16,13 @@ vi.mock('@/features/games/metadata-actions', () => ({
 
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-// Editing an existing game no longer opens an in-place `GameDialog` — it
-// navigates to `/games/[id]` (see `GamePage`). `LibraryView` calls
-// `useRouter()` itself now, which needs a mock the same way
-// `games-game-page.test.tsx` already does.
-const push = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+// Opening a game shows the side panel (see `game-panel.tsx`); `LibraryView`
+// reaches it through `useGamePanel()`, mocked here so the view renders
+// without the provider the Games layout normally supplies.
+const openGame = vi.fn();
+vi.mock('@/features/games/panel/game-panel-context', () => ({
+  useGamePanel: () => ({ openGame, close: vi.fn(), activeId: null }),
+}));
 
 const { LibraryView } = await import('@/features/games/library/library-view');
 
@@ -99,8 +98,8 @@ describe('LibraryView', () => {
     expect(screen.getByText('Elden Ring')).toBeInTheDocument();
   });
 
-  it('navigates to the game page from the table view by keyboard, not just by clicking the row', async () => {
-    push.mockClear();
+  it('opens the panel from the table view by keyboard, not just by clicking the row', async () => {
+    openGame.mockClear();
     render(<LibraryView games={[game({ id: 'a', title: 'Elden Ring' })]} />);
 
     await userEvent.click(screen.getByRole('button', { name: /^table$/i }));
@@ -110,7 +109,7 @@ describe('LibraryView', () => {
     screen.getByRole('button', { name: 'Elden Ring' }).focus();
     await userEvent.keyboard('{Enter}');
 
-    expect(push).toHaveBeenCalledWith('/games/a');
+    expect(openGame).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
   });
 
   it('filters by status', async () => {

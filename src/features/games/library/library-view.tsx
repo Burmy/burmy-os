@@ -9,13 +9,13 @@ import { FilterChip } from '@/components/ui/filter-chip';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/ui/page-header';
 import { SegmentedToggle } from '@/components/ui/segmented-toggle';
-import { useNavigate } from '@/lib/use-navigate';
 import type { Game } from '@/server/db/games/games';
 import { countableGames, groupByCollection } from '@/server/games/collections';
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { toast } from '@/components/ui/toast';
 import { addGamesToCollectionAction } from '@/features/games/game-actions';
+import { useGamePanel } from '@/features/games/panel/game-panel-context';
 import { BulkCollectionBar } from './bulk-collection-bar';
 import { GameDialog } from './game-dialog';
 import { GameGrid } from './game-grid';
@@ -39,17 +39,13 @@ const STATUS_CHIP_STATUSES = ['wanted'] as const satisfies readonly GameStatus[]
  * be latency for nothing.
  */
 export function LibraryView({ games }: { readonly games: readonly Game[] }): React.ReactElement {
-  // Opening a game is a full cross-segment navigation with a database read at
-  // the other end, and the card gave no sign it had been clicked — the wall of
-  // covers just sat there. `openingId` is what the clicked card/row renders a
-  // spinner from; it is cleared implicitly when `pending` goes false, so there
-  // is no stale id to reset. See `useNavigate`.
-  const { navigate, pending: opening } = useNavigate();
-  const [openingId, setOpeningId] = useState<string | null>(null);
+  // Opening a game is instant now — it shows the side panel beside the grid
+  // rather than navigating to a page — so the clicked card needs no spinner,
+  // only a ring saying which one is open. See `game-panel.tsx`.
+  const { openGame, activeId } = useGamePanel();
 
   function open(game: Game): void {
-    setOpeningId(game.id);
-    navigate(`/games/${game.id}`);
+    openGame(game);
   }
 
   const [view, setView] = useState<ViewMode>('gallery');
@@ -342,11 +338,11 @@ export function LibraryView({ games }: { readonly games: readonly Game[] }): Rea
           No games match this filter.
         </p>
       ) : view === 'gallery' ? (
-        <GameGrid groups={groups} openingId={opening ? openingId : null} onOpen={open} />
+        <GameGrid groups={groups} activeId={activeId} onOpen={open} />
       ) : (
         <GameTable
           groups={groups}
-          openingId={opening ? openingId : null}
+          activeId={activeId}
           onOpen={open}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}

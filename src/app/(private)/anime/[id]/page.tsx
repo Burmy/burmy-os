@@ -17,7 +17,7 @@ const HISTORY_LIMIT = 100;
  * The per-show page. A sibling of `(tabs)/` and `sync/[runId]/` rather than
  * nested inside the tabs group: the Library/Log/Stats sub-nav belongs to the
  * three list-shaped screens, not to a single-entity detail page — the same
- * shape `games/[id]` and `anime/sync/[runId]` already use, back-link included.
+ * shape `anime/sync/[runId]` already uses, back-link included.
  *
  * `getAnime` throws `AnimeNotFoundError` for a missing row AND for one
  * belonging to someone else — one error for both, so a crafted id cannot be

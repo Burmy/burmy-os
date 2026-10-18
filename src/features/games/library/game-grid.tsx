@@ -12,7 +12,7 @@ import { GameCard } from './game-card';
  * never will — IGDB has art for the collection, not for a remaster that only
  * ships inside it — so giving them cards would put three letter-tiles in a
  * wall of box art. The collection's own card carries a "3 games" marker and
- * opens a page that lists them (`GamePage`'s "Games in this collection").
+ * opens the panel, which lists them ("Games in this collection").
  *
  * Reading the titles inside a collection is what TABLE view is for, which is
  * exactly the split `game-card.tsx` already makes for every other fact about
@@ -20,12 +20,12 @@ import { GameCard } from './game-card';
  */
 export function GameGrid({
   groups,
-  openingId,
+  activeId,
   onOpen,
 }: {
   readonly groups: readonly CollectionGroup<Game>[];
-  /** The card whose navigation is in flight, if any. */
-  readonly openingId: string | null;
+  /** The game the side panel is showing, if any — its card gets a ring. */
+  readonly activeId: string | null;
   readonly onOpen: (game: Game) => void;
 }): React.ReactElement {
   return (
@@ -42,7 +42,7 @@ export function GameGrid({
           key={group.game.id}
           game={group.game}
           memberCount={group.members.length}
-          opening={group.game.id === openingId}
+          selected={group.game.id === activeId}
           onOpen={onOpen}
         />
       ))}

@@ -1,7 +1,6 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
 import { Loader2, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 
@@ -11,7 +10,10 @@ import { StatusBadge } from '@/components/games/status-badge';
 import { RatingStars } from '@/components/games/rating-stars';
 import type { CollectionMember } from '@/server/db/games/games';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
-import { addGamesToCollectionAction, updateGameCollectionAction } from '@/features/games/game-actions';
+import {
+  addGamesToCollectionAction,
+  updateGameCollectionAction,
+} from '@/features/games/game-actions';
 import { GamePickerDialog, type PickableGame } from './game-picker-dialog';
 
 /**
@@ -41,12 +43,18 @@ export function CollectionMembersPanel({
   collectionTitle,
   members,
   candidates,
+  onOpenMember,
+  onChanged,
 }: {
   readonly collectionId: string;
   readonly collectionTitle: string;
   readonly members: readonly CollectionMember[];
   /** Games that could be added — see `listCollectionCandidates` for the three exclusions. */
   readonly candidates: readonly PickableGame[];
+  /** Clicking a member swaps the game panel to it — there is no per-game route any more. */
+  readonly onOpenMember: (id: string) => void;
+  /** After a successful add or remove, so the panel showing this list can re-fetch it. */
+  readonly onChanged: () => void;
 }): React.ReactElement {
   const [picking, setPicking] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
@@ -62,7 +70,10 @@ export function CollectionMembersPanel({
 
     const result = await addGamesToCollectionAction(collectionId, added);
     if (result.ok) {
-      toast.success(`${added.length} game${added.length === 1 ? '' : 's'} added to ${collectionTitle}`);
+      toast.success(
+        `${added.length} game${added.length === 1 ? '' : 's'} added to ${collectionTitle}`,
+      );
+      onChanged();
       return;
     }
     toast.error(result.error);
@@ -77,6 +88,7 @@ export function CollectionMembersPanel({
       // Says where the game went, not just that something happened: "removed"
       // on its own reads like a deletion, and this does not delete anything.
       toast.success(`${member.title} is now a standalone game`);
+      onChanged();
       return;
     }
     toast.error(result.error);
@@ -85,7 +97,7 @@ export function CollectionMembersPanel({
   return (
     <>
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-muted-foreground text-xs font-medium">Games in this collection</h2>
+        <h3 className="text-muted-foreground text-xs font-medium">Games in this collection</h3>
         <div className="flex items-center gap-3">
           <span className="text-muted-foreground text-xs">
             {members.length} game{members.length === 1 ? '' : 's'}
@@ -106,9 +118,13 @@ export function CollectionMembersPanel({
         <ul className="bg-card divide-y rounded-md px-4">
           {members.map((member) => (
             <li key={member.id} className="flex items-center gap-1">
-              <Link
-                href={`/games/${member.id}`}
-                className="hover:bg-muted/50 -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors"
+              <button
+                type="button"
+                // The row carries cover, platform, year, status and rating; the
+                // name a screen reader hears should be the title alone.
+                aria-label={member.title}
+                onClick={() => onOpenMember(member.id)}
+                className="hover:bg-muted/50 -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors"
               >
                 <span className="bg-muted relative h-12 w-9 shrink-0 overflow-hidden rounded-md">
                   {member.coverUrl === null ? (
@@ -119,17 +135,27 @@ export function CollectionMembersPanel({
                       {member.title.trim().charAt(0).toUpperCase()}
                     </span>
                   ) : (
-                    <Image src={member.coverUrl} alt="" fill sizes="36px" className="object-cover" />
+                    <Image
+                      src={member.coverUrl}
+                      alt=""
+                      fill
+                      sizes="36px"
+                      className="object-cover"
+                    />
                   )}
                 </span>
                 <span className="min-w-0 flex-1 truncate">{member.title}</span>
-                <span className="text-muted-foreground shrink-0 text-xs">{PLATFORM_LABELS[member.platform]}</span>
+                <span className="text-muted-foreground shrink-0 text-xs">
+                  {PLATFORM_LABELS[member.platform]}
+                </span>
                 {member.firstPlayedYear === null ? null : (
-                  <span className="text-muted-foreground shrink-0 text-xs">{member.firstPlayedYear}</span>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    {member.firstPlayedYear}
+                  </span>
                 )}
                 <StatusBadge status={member.status} />
                 {member.rating === null ? null : <RatingStars rating={member.rating} />}
-              </Link>
+              </button>
 
               <Button
                 variant="ghost"

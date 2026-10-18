@@ -1,6 +1,5 @@
 'use client';
 
-import { Loader2 } from 'lucide-react';
 import { Fragment } from 'react';
 
 import { PlatinumBadge } from '@/components/games/platinum-badge';
@@ -61,14 +60,14 @@ import { formatHours, hours } from '@/server/games/hours';
  */
 export function GameTable({
   groups,
-  openingId,
+  activeId,
   onOpen,
   selectedIds,
   onToggleSelect,
 }: {
   readonly groups: readonly CollectionGroup<Game>[];
-  /** The row whose navigation is in flight — see `GameCard`'s `opening` for why this exists. */
-  readonly openingId: string | null;
+  /** The game the side panel is showing, if any — its row is highlighted. */
+  readonly activeId: string | null;
   readonly onOpen: (game: Game) => void;
   /**
    * Selection is OFF unless both of these are supplied, so every existing
@@ -103,7 +102,7 @@ export function GameTable({
             <GameRow
               game={group.game}
               memberCount={group.members.length}
-              opening={group.game.id === openingId}
+              active={group.game.id === activeId}
               onOpen={onOpen}
               {...(selectable
                 ? { selected: selectedIds.includes(group.game.id), onToggleSelect }
@@ -114,7 +113,7 @@ export function GameTable({
                 key={member.id}
                 game={member}
                 collectionTitle={group.game.title}
-                opening={member.id === openingId}
+                active={member.id === activeId}
                 onOpen={onOpen}
                 {...(selectable
                   ? { selected: selectedIds.includes(member.id), onToggleSelect }
@@ -132,7 +131,7 @@ function GameRow({
   game,
   memberCount = 0,
   collectionTitle,
-  opening = false,
+  active = false,
   onOpen,
   selected,
   onToggleSelect,
@@ -142,7 +141,8 @@ function GameRow({
   readonly memberCount?: number;
   /** Set when this row sits INSIDE a collection — indents it and names its parent for screen readers. */
   readonly collectionTitle?: string;
-  readonly opening?: boolean;
+  /** This row's game is open in the side panel. */
+  readonly active?: boolean;
   readonly onOpen: (game: Game) => void;
   /** Present only in selection mode — see `GameTable`'s own `selectable`. */
   readonly selected?: boolean;
@@ -153,8 +153,8 @@ function GameRow({
 
   return (
     <TableRow
-      className="cursor-pointer"
-      aria-busy={opening || undefined}
+      className={cn('cursor-pointer', active && 'bg-muted/60')}
+      {...(active ? { 'data-active': true } : {})}
       // In selection mode the whole row toggles instead of navigating. Two
       // intents cannot share one click, and selection is the one you are
       // repeating — you turned the mode on to pick several rows, so it gets
@@ -196,12 +196,6 @@ function GameRow({
         >
           {game.title}
         </button>
-        {opening ? (
-          <Loader2
-            className="text-muted-foreground ml-2 inline size-3.5 animate-spin align-middle"
-            aria-hidden
-          />
-        ) : null}
         {memberCount === 0 ? null : (
           <span className="text-muted-foreground ml-2 text-xs">
             {memberCount} game{memberCount === 1 ? '' : 's'}
