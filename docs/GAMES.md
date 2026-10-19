@@ -200,7 +200,7 @@ title: hours are attributed to the row that carries them.
 **Price and ownership** are the set's: one purchase, one figure on the collection row. The panel renders
 those two read-only for a member, with the hint "From the collection".
 
-**The panel's header is the cover, enlarged** (192×256, the card's 3:4, since 2026-10-19 — "a bigger
+**The panel's header is the cover, enlarged** (320px wide at the card's 3:4, since 2026-10-19 — "a bigger
 image of the game and then stuff under it"), with the title and its facts beneath it rather than
 beside a thumbnail.
 

@@ -530,10 +530,10 @@ export function GamePanel({
   );
 }
 
-/** 192×256 cover (3:4, like the card) with the same letter-tile fallback the library card uses. */
+/** 320px-wide cover at the card's 3:4 (so 427px tall) with the same letter-tile fallback the library card uses — the owner sized it by eye. */
 function CoverTile({ game }: { readonly game: Game | null }): React.ReactElement {
   return (
-    <div className="bg-muted relative h-64 w-48 shrink-0 overflow-hidden rounded-md">
+    <div className="bg-muted relative aspect-3/4 w-80 shrink-0 overflow-hidden rounded-md">
       {game === null ? null : game.coverUrl === null || game.coverUrl === '' ? (
         <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
           <span className="text-muted-foreground/40 text-5xl font-semibold">
@@ -542,7 +542,7 @@ function CoverTile({ game }: { readonly game: Game | null }): React.ReactElement
           <Gamepad2 className="text-muted-foreground/25 size-5" />
         </div>
       ) : (
-        <Image src={game.coverUrl} alt="" fill sizes="192px" className="object-cover" />
+        <Image src={game.coverUrl} alt="" fill sizes="320px" className="object-cover" />
       )}
     </div>
   );
