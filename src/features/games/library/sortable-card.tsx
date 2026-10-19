@@ -2,6 +2,7 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useMemo } from 'react';
 
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
@@ -18,6 +19,10 @@ import { GameCard } from './game-card';
  * on touch — see `game-grid.tsx`'s sensors) starts a drag, and the keyboard
  * can pick the card up with Space. The card dims while its overlay copy
  * follows the pointer.
+ *
+ * `drag` is memoised on dnd-kit's own memoised `attributes`/`listeners`, so
+ * the memoised `GameCard` under it skips every re-render a pointer move
+ * causes — only the dragged card's attributes (`aria-pressed`) change.
  */
 export function SortableCard({
   game,
@@ -40,6 +45,14 @@ export function SortableCard({
     isDragging,
   } = useSortable({ id: game.id });
 
+  const drag = useMemo(
+    () => ({
+      setActivator: setActivatorNodeRef,
+      props: { ...attributes, ...listeners } as React.ButtonHTMLAttributes<HTMLButtonElement>,
+    }),
+    [attributes, listeners, setActivatorNodeRef],
+  );
+
   return (
     <div
       ref={setNodeRef}
@@ -51,10 +64,7 @@ export function SortableCard({
         memberCount={memberCount}
         selected={selected}
         onOpen={onOpen}
-        drag={{
-          setActivator: setActivatorNodeRef,
-          props: { ...attributes, ...listeners } as React.ButtonHTMLAttributes<HTMLButtonElement>,
-        }}
+        drag={drag}
       />
     </div>
   );

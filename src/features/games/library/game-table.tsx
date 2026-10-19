@@ -19,7 +19,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { GripVertical } from 'lucide-react';
-import { Fragment, useState } from 'react';
+import { Fragment, memo, useMemo, useState } from 'react';
 
 import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
@@ -234,27 +234,26 @@ export function GameTable({
  * see `GameTable`'s `onReorder` doc.
  */
 function SortableGameRow(
-  props: Omit<Parameters<typeof GameRow>[0], 'rowRef' | 'handleRef' | 'handle'>,
+  props: Omit<GameRowProps, 'rowRef' | 'handleRef' | 'handle'>,
 ): React.ReactElement {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, isOver, activeIndex, overIndex } =
     useSortable({ id: props.game.id, transition: null });
   const dropLine: 'above' | 'below' | null =
     isOver && activeIndex !== overIndex ? (activeIndex < overIndex ? 'below' : 'above') : null;
-
-  return (
-    <GameRow
-      {...props}
-      rowRef={setNodeRef}
-      handleRef={setActivatorNodeRef}
-      handle={{
-        props: { ...attributes, ...listeners } as React.ButtonHTMLAttributes<HTMLButtonElement>,
-        dropLine,
-      }}
-    />
+  // Memoised on dnd-kit's own memoised attributes/listeners, so the memoised
+  // GameRow under it re-renders only when something about THIS row changed.
+  const handle = useMemo(
+    () => ({
+      props: { ...attributes, ...listeners } as React.ButtonHTMLAttributes<HTMLButtonElement>,
+      dropLine,
+    }),
+    [attributes, listeners, dropLine],
   );
+
+  return <GameRow {...props} rowRef={setNodeRef} handleRef={setActivatorNodeRef} handle={handle} />;
 }
 
-function GameRow({
+function GameRowImpl({
   game,
   members = [],
   collectionTitle,
@@ -408,3 +407,13 @@ function GameRow({
     </TableRow>
   );
 }
+
+type GameRowProps = Parameters<typeof GameRowImpl>[0];
+
+/**
+ * MEMOISED, for the drag: dnd-kit changes its context on every pointer move
+ * and every sortable row re-renders; the row's own work (roll-ups, totals,
+ * cells) runs only when its props changed. See `game-card.tsx` for the
+ * gallery's identical reason.
+ */
+const GameRow = memo(GameRowImpl);

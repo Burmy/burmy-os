@@ -131,7 +131,7 @@ export function GameGrid({
           grid can animate around the gap while this follows the pointer. */}
       <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
         {dragging === null || dragging === undefined ? null : (
-          <div className="scale-[1.03] rounded-md shadow-2xl">
+          <div className="scale-[1.03] rounded-md shadow-lg will-change-transform">
             <GameCard
               game={dragging.game}
               memberCount={dragging.members.length}
