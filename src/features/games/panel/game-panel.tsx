@@ -5,7 +5,6 @@ import { ChevronRight, Gamepad2, Plus, Trash2, Trophy, X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useEffect, useState, useTransition } from 'react';
 
-import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InlineEditField, InlineEditSelect, ROW_CLASS } from '@/components/ui/inline-edit-row';
@@ -513,7 +512,6 @@ function CoverTile({ game }: { readonly game: Game | null }): React.ReactElement
       ) : (
         <Image src={game.coverUrl} alt="" fill sizes="64px" className="object-cover" />
       )}
-      {game?.platinum ? <PlatinumBadge className="absolute top-1 right-1" /> : null}
     </div>
   );
 }
