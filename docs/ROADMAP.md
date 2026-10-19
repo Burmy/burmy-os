@@ -1438,7 +1438,7 @@ and the `anime*` tables present). The earlier note that `0016`–`0018` were nev
 3. Apply the split-to-DLC conversion SQL from `scripts/convert-split-to-dlc.mjs` (Clair Obscur 2026,
    Lies of P 2025, Hollow Knight 2025); verify the three games' hours and DLC rows.
 4. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming
-   (cards, Mark as played), Stats, the panel's DLC group.
+   (cards, Add to library), Stats, the panel's DLC rows.
 5. Only then apply `0020_hesitant_gateway` (the drops). Old code read those tables; the new code
    does not.
 6. Run the sheet reconciliation (`scripts/diff-game-log.mjs`), link collections in the app, rename
