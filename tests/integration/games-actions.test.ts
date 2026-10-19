@@ -253,7 +253,7 @@ describe('completeWishlistGameAction', () => {
 });
 
 describe('collection actions — a game that has DLC', () => {
-  it('refuses to file it as a readable failure result, never an unhandled error', async () => {
+  it('files it like any other game; the DLC stays with it (2026-10-19 — a member’s hours are its own)', async () => {
     const ownerId = await provisionOwner();
     const dlc = await import('@/server/db/games/dlc');
     const set = await games.createGame(ownerId, {
@@ -263,14 +263,11 @@ describe('collection actions — a game that has DLC', () => {
     const game = await games.createGame(ownerId, { title: "Drake's Fortune", platform: 'ps4' });
     await dlc.createDlc(ownerId, game.id, { name: 'DLC', year: 2021 });
 
-    const viaPicker = await actions.addGamesToCollectionAction(set.id, [game.id]);
-    expect(viaPicker.ok).toBe(false);
-    if (!viaPicker.ok) expect(viaPicker.error).toMatch(/DLC/);
-
     const viaField = await actions.updateGameCollectionAction(game.id, set.id);
-    expect(viaField.ok).toBe(false);
-    if (!viaField.ok) expect(viaField.error).toMatch(/DLC/);
+    expect(viaField.ok).toBe(true);
 
-    expect((await games.getGame(ownerId, game.id)).collectionId).toBeNull();
+    const filed = await games.getGame(ownerId, game.id);
+    expect(filed.collectionId).toBe(set.id);
+    expect(filed.dlc.map((row) => row.name)).toEqual(['DLC']);
   });
 });

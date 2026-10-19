@@ -139,7 +139,7 @@ describe('createGameDlcAction', () => {
     expect(result).toMatchObject({ ok: false, field: 'hours' });
   });
 
-  it('surfaces the collection-member refusal as a readable error, not a 500', async () => {
+  it('adds DLC on a collection member — its hours, and so its DLC, are its own (2026-10-19)', async () => {
     const ownerId = await provisionOwner();
     const setId = await playedGame(ownerId, 'Nathan Drake Collection');
     const memberId = await playedGame(ownerId, "Drake's Fortune");
@@ -147,8 +147,8 @@ describe('createGameDlcAction', () => {
 
     const result = await actions.createGameDlcAction(memberId, form({ name: 'DLC', year: '2025' }));
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toMatch(/collection/i);
+    expect(result.ok).toBe(true);
+    expect((await games.getGame(ownerId, memberId)).dlc.map((row) => row.name)).toEqual(['DLC']);
   });
 
   it('surfaces a duplicate name as a field error on name', async () => {
