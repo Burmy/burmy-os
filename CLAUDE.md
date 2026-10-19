@@ -527,7 +527,8 @@ src/lib/                  framework-free helpers usable from BOTH server and cli
                           src/server/{finance,games,anime}/ — that inverts the dependency and puts a
                           product module in every other module's bundle.
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
-src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP (dlc.ts holds the
+src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP (library-order.ts holds
+                          the sorts, the Year/Rating predicates and the drag's reorder; dlc.ts holds the
                           additive base+DLC totals every stat and the library table read)
 src/server/anime/         ANIME DOMAIN CORE — same rule
 src/server/db/games/      owner-scoped data access + the one HTTP boundary (igdb.ts)

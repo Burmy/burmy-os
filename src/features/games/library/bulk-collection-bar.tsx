@@ -4,7 +4,10 @@ import { Loader2, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { GamePickerDialog, type PickableGame } from '@/features/games/collections/game-picker-dialog';
+import {
+  GamePickerDialog,
+  type PickableGame,
+} from '@/features/games/collections/game-picker-dialog';
 
 /**
  * The bar that appears once rows are selected in the library's table view.
@@ -47,12 +50,14 @@ export function BulkCollectionBar({
       role="status"
       className="bg-card sticky top-2 z-10 flex items-center justify-between gap-4 rounded-md border px-4 py-2 shadow-sm"
     >
-      <span className="text-sm font-medium">
-        {selectedCount} selected
-      </span>
+      <span className="text-sm font-medium">{selectedCount} selected</span>
 
       <div className="flex items-center gap-2">
-        <Button size="sm" onClick={() => setPicking(true)} disabled={pending || collections.length === 0}>
+        <Button
+          size="sm"
+          onClick={() => setPicking(true)}
+          disabled={pending || collections.length === 0}
+        >
           {pending ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : null}
           Add to collection
         </Button>

@@ -1,6 +1,25 @@
 'use client';
 
-import { Fragment } from 'react';
+import {
+  DndContext,
+  type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { GripVertical } from 'lucide-react';
+import { Fragment, useState } from 'react';
 
 import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
@@ -81,6 +100,7 @@ export function GameTable({
   onOpen,
   selectedIds,
   onToggleSelect,
+  onReorder,
 }: {
   readonly groups: readonly CollectionGroup<Game>[];
   /** The game the side panel is showing, if any — its row is highlighted. */
@@ -95,13 +115,33 @@ export function GameTable({
    */
   readonly selectedIds?: readonly string[];
   readonly onToggleSelect?: (game: Game) => void;
+  /**
+   * Present exactly when the rows may be reordered (`library-view.tsx`). The
+   * sortable unit is the GROUP — a collection row drags its indented titles
+   * along — and the drag starts from a grip handle, never from the row, so a
+   * row click and the selection checkbox keep their meanings.
+   *
+   * No row-shift animation here, on purpose: rows are `<tr>`s, and CSS
+   * transforms on table rows are unreliable across browsers. Feedback is the
+   * lifted ghost that follows the pointer and a 2px line on the row the drop
+   * would land next to. The gallery is where the smooth version lives.
+   */
+  readonly onReorder?: (activeId: string, overId: string) => void;
 }): React.ReactElement {
   const selectable = selectedIds !== undefined && onToggleSelect !== undefined;
+  const sortable = onReorder !== undefined;
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const [draggingId, setDraggingId] = useState<string | null>(null);
 
-  return (
+  const table = (
     <Table>
       <TableHeader>
         <TableRow>
+          {sortable ? <TableHead className="w-8" /> : null}
           {selectable ? <TableHead className="w-8" /> : null}
           <TableHead>Title</TableHead>
           <TableHead>Platform</TableHead>
@@ -113,33 +153,104 @@ export function GameTable({
         </TableRow>
       </TableHeader>
       <TableBody>
-        {groups.map((group) => (
-          <Fragment key={group.game.id}>
-            <GameRow
-              game={group.game}
-              members={group.members}
-              active={group.game.id === activeId}
-              onOpen={onOpen}
-              {...(selectable
-                ? { selected: selectedIds.includes(group.game.id), onToggleSelect }
-                : {})}
-            />
-            {group.members.map((member) => (
-              <GameRow
-                key={member.id}
-                game={member}
-                collectionTitle={group.game.title}
-                active={member.id === activeId}
-                onOpen={onOpen}
-                {...(selectable
-                  ? { selected: selectedIds.includes(member.id), onToggleSelect }
-                  : {})}
-              />
-            ))}
-          </Fragment>
-        ))}
+        {groups.map((group) => {
+          const topLevel = {
+            game: group.game,
+            members: group.members,
+            active: group.game.id === activeId,
+            onOpen,
+            ...(selectable
+              ? { selected: selectedIds.includes(group.game.id), onToggleSelect }
+              : {}),
+          };
+          return (
+            <Fragment key={group.game.id}>
+              {sortable ? <SortableGameRow {...topLevel} /> : <GameRow {...topLevel} />}
+              {group.members.map((member) => (
+                <GameRow
+                  key={member.id}
+                  game={member}
+                  collectionTitle={group.game.title}
+                  active={member.id === activeId}
+                  onOpen={onOpen}
+                  handleColumn={sortable}
+                  {...(selectable
+                    ? { selected: selectedIds.includes(member.id), onToggleSelect }
+                    : {})}
+                />
+              ))}
+            </Fragment>
+          );
+        })}
       </TableBody>
     </Table>
+  );
+
+  if (!sortable) return table;
+
+  const dragging =
+    draggingId === null ? null : groups.find((group) => group.game.id === draggingId);
+
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={(event: DragStartEvent) => setDraggingId(String(event.active.id))}
+      onDragCancel={() => setDraggingId(null)}
+      onDragEnd={(event: DragEndEvent) => {
+        setDraggingId(null);
+        if (event.over !== null && event.over.id !== event.active.id) {
+          onReorder(String(event.active.id), String(event.over.id));
+        }
+      }}
+    >
+      <SortableContext
+        items={groups.map((group) => group.game.id)}
+        strategy={verticalListSortingStrategy}
+      >
+        {table}
+      </SortableContext>
+      {/* A `<tr>` cannot live outside a table, so the ghost is a compact line
+          of its own: the title and platform, enough to know what is in hand. */}
+      <DragOverlay dropAnimation={null}>
+        {dragging === null || dragging === undefined ? null : (
+          <div className="bg-background rounded-md border px-3 py-2 text-sm shadow-lg">
+            <span className="font-medium">{dragging.game.title}</span>
+            <span className="text-muted-foreground ml-2 text-xs">
+              {PLATFORM_LABELS[dragging.game.platform]}
+              {dragging.members.length === 0 ? '' : ` · ${dragging.members.length} games`}
+            </span>
+          </div>
+        )}
+      </DragOverlay>
+    </DndContext>
+  );
+}
+
+/**
+ * A top-level row that can be dragged: `useSortable` measures the `<tr>` and
+ * reports when the drop would land beside it, and the grip is the only
+ * activator. The transform dnd-kit computes is deliberately NOT applied —
+ * see `GameTable`'s `onReorder` doc.
+ */
+function SortableGameRow(
+  props: Omit<Parameters<typeof GameRow>[0], 'rowRef' | 'handleRef' | 'handle'>,
+): React.ReactElement {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, isOver, activeIndex, overIndex } =
+    useSortable({ id: props.game.id, transition: null });
+  const dropLine: 'above' | 'below' | null =
+    isOver && activeIndex !== overIndex ? (activeIndex < overIndex ? 'below' : 'above') : null;
+
+  return (
+    <GameRow
+      {...props}
+      rowRef={setNodeRef}
+      handleRef={setActivatorNodeRef}
+      handle={{
+        props: { ...attributes, ...listeners } as React.ButtonHTMLAttributes<HTMLButtonElement>,
+        dropLine,
+      }}
+    />
   );
 }
 
@@ -151,10 +262,25 @@ function GameRow({
   onOpen,
   selected,
   onToggleSelect,
+  rowRef,
+  handleRef,
+  handle,
+  handleColumn = false,
 }: {
   readonly game: Game;
   /** Non-empty when this row is a collection wrapper: the titles filed under it, for the roll-ups. */
   readonly members?: readonly Game[];
+  /** dnd-kit's node ref for a sortable row — see `SortableGameRow`. */
+  readonly rowRef?: (node: HTMLElement | null) => void;
+  /** dnd-kit's activator ref for the grip. A prop of its own: the React Compiler lint reads a `ref` field inside an object as a ref box. */
+  readonly handleRef?: (node: HTMLElement | null) => void;
+  /** The grip handle's drag props, plus where a drop would land relative to this row. */
+  readonly handle?: {
+    readonly props: React.ButtonHTMLAttributes<HTMLButtonElement>;
+    readonly dropLine: 'above' | 'below' | null;
+  };
+  /** A member row inside a sortable table: keeps the handle column's width with no handle in it. */
+  readonly handleColumn?: boolean;
   /** Set when this row sits INSIDE a collection — indents it and names its parent for screen readers. */
   readonly collectionTitle?: string;
   /** This row's game is open in the side panel. */
@@ -176,7 +302,15 @@ function GameRow({
 
   return (
     <TableRow
-      className={cn('cursor-pointer', active && 'bg-muted/60')}
+      {...(rowRef ? { ref: rowRef } : {})}
+      className={cn(
+        'cursor-pointer',
+        active && 'bg-muted/60',
+        // The drop indicator: an inset line on the edge the dragged row would
+        // land on. A box-shadow rather than a border so nothing reflows.
+        handle?.dropLine === 'above' && 'shadow-[inset_0_2px_0_0_currentColor]',
+        handle?.dropLine === 'below' && 'shadow-[inset_0_-2px_0_0_currentColor]',
+      )}
       {...(active ? { 'data-active': true } : {})}
       // In selection mode the whole row toggles instead of navigating. Two
       // intents cannot share one click, and selection is the one you are
@@ -185,6 +319,22 @@ function GameRow({
       onClick={() => (selectable ? onToggleSelect(game) : onOpen(game))}
       {...(selectable ? { 'data-selected': selected || undefined } : {})}
     >
+      {handle ? (
+        <TableCell className="w-8 pr-0">
+          <button
+            type="button"
+            {...(handleRef ? { ref: handleRef } : {})}
+            {...handle.props}
+            aria-label={`Drag to reorder ${game.title}`}
+            onClick={(event) => event.stopPropagation()}
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring cursor-grab touch-none rounded-sm p-0.5 focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing"
+          >
+            <GripVertical className="size-4" />
+          </button>
+        </TableCell>
+      ) : handleColumn ? (
+        <TableCell className="w-8" />
+      ) : null}
       {selectable ? (
         <TableCell className="w-8">
           <Checkbox

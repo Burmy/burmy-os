@@ -335,3 +335,35 @@ describe('GameTable collection rating', () => {
     expect(screen.getByLabelText('5 out of 5')).toBeInTheDocument();
   });
 });
+
+describe('GameTable drag handles', () => {
+  const collection = game({ id: 'ndc', title: 'Nathan Drake Collection' });
+  const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc' })];
+
+  it('offers a grip on top-level rows only, and only when the table is sortable', () => {
+    const { rerender } = render(
+      <GameTable
+        activeId={null}
+        groups={[{ game: collection, members }, solo({ id: 'er' })]}
+        onOpen={vi.fn()}
+        onReorder={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole('button', { name: 'Drag to reorder Nathan Drake Collection' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Drag to reorder Elden Ring' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Drag to reorder Drake 1/ }),
+    ).not.toBeInTheDocument();
+
+    rerender(
+      <GameTable
+        activeId={null}
+        groups={[{ game: collection, members }, solo({ id: 'er' })]}
+        onOpen={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: /Drag to reorder/ })).not.toBeInTheDocument();
+  });
+});

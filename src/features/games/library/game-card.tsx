@@ -72,6 +72,7 @@ export function GameCard({
   memberCount = 0,
   selected = false,
   onOpen,
+  drag,
 }: {
   readonly game: Game;
   /** How many titles this row wraps. Non-zero exactly when it is a collection. */
@@ -84,6 +85,18 @@ export function GameCard({
    */
   readonly selected?: boolean;
   readonly onOpen: (game: Game) => void;
+  /**
+   * Present when the card sits in a sortable gallery (`sortable-card.tsx`):
+   * the drag listeners and ARIA attributes for the button, and the ref dnd-kit
+   * uses to know which element starts a drag. Spread FIRST, so the card's own
+   * `aria-label`/`aria-pressed` win — dnd-kit's `aria-pressed` means "being
+   * dragged", and here the attribute already means "open in the panel".
+   */
+  readonly drag?: {
+    /** dnd-kit's activator ref — named so the React Compiler lint does not read it as a `useRef` box. */
+    readonly setActivator: (node: HTMLElement | null) => void;
+    readonly props: React.ButtonHTMLAttributes<HTMLButtonElement>;
+  };
 }): React.ReactElement {
   const wishlisted = game.status === 'wanted';
   const collectionLabel =
@@ -100,6 +113,8 @@ export function GameCard({
   return (
     <button
       type="button"
+      {...(drag ? drag.props : {})}
+      {...(drag ? { ref: drag.setActivator } : {})}
       // Carries status and platinum even though neither renders as visible
       // text — with the card reduced to bare art this is the entire accessible
       // description of a grid item.
@@ -112,6 +127,9 @@ export function GameCard({
       className={cn(
         'group relative aspect-3/4 w-full rounded-md text-left focus-visible:ring-ring focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none',
         selected && 'ring-ring ring-2 ring-offset-2 ring-offset-background',
+        // While draggable, a touch must be able to start a press-and-hold
+        // without the browser claiming it for a scroll gesture first.
+        drag && 'touch-manipulation',
       )}
     >
       <FoilCard tone={game.platinum ? 'platinum' : wishlisted ? 'wishlist' : null}>

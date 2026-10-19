@@ -389,6 +389,51 @@ what".)
 
 ---
 
+## Library order, Sort and the drag
+
+**"My order" is a hand order, seeded from the sheet.** `games.sort_order` holds a position and `0`
+means "unplaced". `listGames` orders by `sort_order` first and only then by the sheet keys (shelf →
+wanted → first-played year → title), so a library nobody has dragged reads exactly as the sheet did,
+and the first drop writes an explicit `1..n` onto every top-level row (`reorderGames`, one statement
+inside a transaction that refuses a list not matching the owner's rows one for one). A new game is
+inserted at `min(sort_order) − 1` — the top, by the owner's choice. "Reset order" (a quiet line under
+the filter bar, shown only once something has been placed) writes `0` everywhere, behind a confirm.
+No migration: the column had existed, unused, since the Finance-era schema. Members carry a position
+too but it is never read; `groupByCollection` files them under their set in input order.
+
+**The drag** (`@dnd-kit/core` + `sortable`, added 2026-10-19 — the case Finance's categories list
+declined it FOR: 185 cards in a responsive grid, not ten rows with arrows). The gallery is the smooth
+one: cards shift into the gap as one is dragged (`rectSortingStrategy`), a copy of the lifted card
+follows the pointer (`DragOverlay`), and the source dims in place. Three sensors on purpose — a mouse
+starts a drag after 6px, so a click still opens the panel; a touch after a 250ms press (8px
+tolerance), so a scroll still scrolls and a tap still opens; the keyboard picks a card up with Space
+and moves it with the arrows. One `PointerSensor` cannot give mouse and touch different constraints,
+hence Mouse + Touch. The table drags by a grip handle at the row start, the set and its indented
+titles as one unit, and does NOT animate row shifting: rows are `<tr>`s and CSS transforms on table
+rows are unreliable across browsers, so feedback is the ghost line in hand plus a 2px inset line on
+the row the drop would land beside. Drag is enabled exactly in My order with no filter or search
+active — a drop between two cards of a partial list has no clear meaning for the games off screen —
+and the line under the bar says "Clear the filters to reorder." when that is why it is off. The drop
+is optimistic: the cards move at once, the action runs behind, and a failure restores the previous
+order with a toast (`moveTopLevel` runs on the FULL top-level list, hidden wanted rows included, so
+they keep their relative place).
+
+**CSP.** dnd-kit sets inline `style` attributes (transform, transition) and injects no `<style>`
+element — verified by grepping the three packages on install — so it lives inside the existing
+`style-src-attr 'unsafe-inline'` exception and never touches the nonce-only `style-src`.
+
+**Sort and the two newer filters** are pure rules in `src/server/games/library-order.ts`. Sort —
+My order, Year, Hours, Rating, Title, Trophies — is a read-only view of the same list and never
+rewrites a position; numeric sorts are descending with the untracked rows last and the title as the
+tie-break, and a collection sorts on the figure it SHOWS (members rolled up, then its own DLC on
+top), with no rating of its own so last on the rating sort. Year (the years present, newest first,
+plus "No year") and Rating (5 stars, 4+ … 1+, Unrated) are selects, past the handful-of-options line
+that makes a filter a chip; they sit on the filter side of the bar with search and the chips, while
+Sort sits on the right beside the Gallery/Table toggle — display controls together, the same
+left/right split Finance keeps.
+
+---
+
 ## Lifecycle statuses
 
 Two states. One visible, one invisible:
@@ -436,12 +481,11 @@ unless its own chip is active.
 
 **The gallery pins and enlarges nothing.** It once sorted `playing` games first and gave them a
 larger card; neither the treatment nor the status exists any more. The gallery renders one uniform
-card per row, in the order `listGames` already sorted by — the owner's original sheet order (asked
-for by name on 2026-10-19, replacing "last edited first"): the PlayStation shelf first with PS5 and
+card per row, in the order `listGames` already sorted by — the owner's own hand order, seeded from
+the original sheet (see "Library order, Sort and the drag"): the PlayStation shelf first with PS5 and
 PS4 together, then PSP, then Steam/PC; inside a shelf a wanted game at the top, then newest
-first-played year first, the year-less retro rows at the bottom, title breaking ties. Editing a game
-or adding one does not move it. The sheet's own order inside a year was by hand and is not
-recoverable, hence the title tie-break.
+first-played year first, the year-less retro rows at the bottom, title breaking ties — until a card
+is dragged somewhere else. Editing a game does not move it; a new one lands at the top.
 
 ---
 

@@ -128,6 +128,9 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **`wanted` is excluded from stats in exactly one place**: `listGameStatRows`.
 - **A `wanted` game is never auto-flipped.** It stays on the wishlist, marked "Out now" once released,
   until the owner changes its status. (This reversed an earlier decision.)
+- **The library order is the owner's own, by drag.** `sort_order` `0` means unplaced (sheet keys
+  apply); a drop pins every top-level row; new games land at the top; "Reset order" returns to the
+  sheet. Drag only in My order with no filter. Sort is a read-only view. dnd-kit, inline styles only.
 - **Platinum fills the trophy count.** Toggling Platinum on sets Achievements earned to the total when
   one is known; toggling it off changes nothing else. A collection has no rating of its own.
 - **Inside a collection, hours and trophies are the individual title's; price is the set's.** The

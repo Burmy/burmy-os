@@ -1,13 +1,17 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 const deleteGameAction = vi.fn(async () => ({ ok: true as const }));
 const createGameAction = vi.fn(async () => ({ ok: true as const }));
+const reorderLibraryAction = vi.fn(async () => ({ ok: true as const }));
+const resetLibraryOrderAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/games/game-actions', () => ({
   deleteGameAction,
   createGameAction,
+  reorderLibraryAction,
+  resetLibraryOrderAction,
 }));
 
 vi.mock('@/features/games/metadata-actions', () => ({
@@ -345,5 +349,108 @@ describe('LibraryView', () => {
 
       expect(screen.getByRole('button', { name: /^wanted/i })).toHaveTextContent('Wanted2');
     });
+  });
+});
+
+/**
+ * Year, Rating and Sort (2026-10-19), and the drag that lives in My order.
+ * A card is draggable exactly when the owner is in My order with nothing
+ * filtered — dnd-kit marks a sortable activator with
+ * `aria-roledescription="sortable"`, which is the one observable fact jsdom
+ * can confirm (the drag itself needs layout and is checked in a real
+ * browser).
+ */
+describe('LibraryView — order, sort and the newer filters', () => {
+  const library = [
+    game({ id: 'a', title: 'Alpha', firstPlayedYear: 2024, rating: 5, hoursTenths: 100 }),
+    game({ id: 'b', title: 'Bravo', firstPlayedYear: 2022, rating: 3, hoursTenths: 900 }),
+    game({ id: 'c', title: 'Charlie', firstPlayedYear: null, rating: null, hoursTenths: 500 }),
+  ];
+  const cardTitles = () =>
+    screen
+      .getAllByRole('button', { name: /^(Alpha|Bravo|Charlie)/ })
+      .map((el) => el.getAttribute('aria-label'));
+
+  async function choose(user: ReturnType<typeof userEvent.setup>, label: string, option: string) {
+    await user.click(screen.getByRole('combobox', { name: label }));
+    await user.click(await screen.findByRole('option', { name: option }));
+  }
+
+  it('filters by first-played year, including the retro rows with none', async () => {
+    render(<LibraryView games={library} />);
+    const user = userEvent.setup();
+
+    await choose(user, 'Year', '2024');
+    expect(cardTitles()).toEqual(['Alpha']);
+
+    await choose(user, 'Year', 'No year');
+    expect(cardTitles()).toEqual(['Charlie']);
+  });
+
+  it('filters by minimum rating and by "Unrated"', async () => {
+    render(<LibraryView games={library} />);
+    const user = userEvent.setup();
+
+    await choose(user, 'Rating', '4+ stars');
+    expect(cardTitles()).toEqual(['Alpha']);
+
+    await choose(user, 'Rating', 'Unrated');
+    expect(cardTitles()).toEqual(['Charlie']);
+  });
+
+  it('sorts by hours without touching the order the data came in', async () => {
+    render(<LibraryView games={library} />);
+    const user = userEvent.setup();
+
+    expect(cardTitles()).toEqual(['Alpha', 'Bravo', 'Charlie']);
+    await choose(user, 'Sort', 'Hours');
+    expect(cardTitles()).toEqual(['Bravo', 'Charlie', 'Alpha']);
+    expect(reorderLibraryAction).not.toHaveBeenCalled();
+  });
+
+  it('makes cards draggable only in My order with nothing filtered', async () => {
+    render(<LibraryView games={library} />);
+    const user = userEvent.setup();
+    const sortableCards = () =>
+      screen
+        .getAllByRole('button', { name: /^(Alpha|Bravo|Charlie)/ })
+        .filter((el) => el.getAttribute('aria-roledescription') === 'sortable');
+
+    expect(sortableCards()).toHaveLength(3);
+    expect(screen.queryByText('Clear the filters to reorder.')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^PS5/ }));
+    expect(sortableCards()).toHaveLength(0);
+    expect(screen.getByText('Clear the filters to reorder.')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    await choose(user, 'Sort', 'Title');
+    expect(sortableCards()).toHaveLength(0);
+    // Not a filter, so no hint — the Sort select itself says why.
+    expect(screen.queryByText('Clear the filters to reorder.')).not.toBeInTheDocument();
+  });
+
+  it('asks before resetting the order, then calls the action', async () => {
+    render(<LibraryView games={library} customOrder />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Reset order' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(resetLibraryOrderAction).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Reset order' }));
+    await waitFor(() => expect(resetLibraryOrderAction).toHaveBeenCalledTimes(1));
+  });
+
+  it('offers Reset order only once something has been placed by hand, and only in My order', async () => {
+    const { rerender } = render(<LibraryView games={library} />);
+    const user = userEvent.setup();
+    expect(screen.queryByRole('button', { name: 'Reset order' })).not.toBeInTheDocument();
+
+    rerender(<LibraryView games={library} customOrder />);
+    expect(screen.getByRole('button', { name: 'Reset order' })).toBeInTheDocument();
+
+    await choose(user, 'Sort', 'Year');
+    expect(screen.queryByRole('button', { name: 'Reset order' })).not.toBeInTheDocument();
   });
 });

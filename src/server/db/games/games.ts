@@ -146,9 +146,16 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
     .from(gamesTable)
     .where(and(...filters))
     .orderBy(
-      // THE SHEET'S ORDER. The owner's original "Game log" sheet read as three
-      // shelves — PlayStation (PS5 and PS4 together, never split), then PSP,
-      // then Steam/PC — and within a shelf, the game not yet played at the
+      // THE OWNER'S OWN ORDER FIRST. `sort_order` is a hand position written by
+      // a drag in the library (`reorderGames`); `0` means "unplaced", which is
+      // every row until the first drop and every row again after "Reset
+      // order". A new game is inserted at `min − 1`, the top. See
+      // `src/server/games/library-order.ts`.
+      asc(gamesTable.sortOrder),
+      // THEN THE SHEET'S ORDER, which is what the whole library reads as while
+      // nothing has been dragged. The owner's original "Game log" sheet read as
+      // three shelves — PlayStation (PS5 and PS4 together, never split), then
+      // PSP, then Steam/PC — and within a shelf, the game not yet played at the
       // top, then newest first-played year first, with the retro rows that
       // have no year at the bottom. Asked for by name on 2026-10-19, replacing
       // "last edited first" (`updated_at desc`), which the owner did not want:
@@ -212,7 +219,14 @@ export async function createGame(ownerId: string, input: GameInput): Promise<Gam
   try {
     const rows = await getDb()
       .insert(gamesTable)
-      .values({ ownerId, ...input })
+      .values({
+        ownerId,
+        ...input,
+        // A new game lands at the TOP of the owner's hand order (decided
+        // 2026-10-19): one below the smallest position in the library, which
+        // is `-1` while nothing has been dragged and still sorts first.
+        sortOrder: sql`(select coalesce(min(${gamesTable.sortOrder}), 0) - 1 from ${gamesTable} where ${gamesTable.ownerId} = ${ownerId})`,
+      })
       .returning();
 
     const row = rows[0];
@@ -250,6 +264,51 @@ export async function updateGame(ownerId: string, id: string, input: GameInput):
     if (isUniqueViolation(error)) throw new DuplicateGameError(input.title);
     throw error;
   }
+}
+
+/**
+ * Writes the owner's hand order: position `1..n` for exactly the top-level
+ * rows listed, in that order. One statement, inside a transaction that is
+ * rolled back unless EVERY id matched one of the owner's rows — a stale list
+ * (a game deleted in another tab, an id that is not theirs) must never
+ * half-apply and leave two rows sharing a position. Members carry a
+ * position too but it is never read: `groupByCollection` files them under
+ * their collection whatever it says.
+ */
+export async function reorderGames(ownerId: string, orderedIds: readonly string[]): Promise<void> {
+  if (orderedIds.length === 0) return;
+  await getDb().transaction(async (tx) => {
+    const positions = sql.join(
+      orderedIds.map((id, index) => sql`(${id}::uuid, ${index + 1}::int)`),
+      sql`, `,
+    );
+    const rows = await tx.execute(sql`
+      update ${gamesTable} as g
+      set sort_order = o.pos, updated_at = now()
+      from (values ${positions}) as o(id, pos)
+      where g.id = o.id and g.owner_id = ${ownerId}
+      returning g.id
+    `);
+    if (rows.length !== orderedIds.length) throw new GameNotFoundError();
+  });
+}
+
+/** Whether any row has been placed by hand — what makes "Reset order" worth showing at all. */
+export async function hasCustomOrder(ownerId: string): Promise<boolean> {
+  const [row] = await getDb()
+    .select({ id: gamesTable.id })
+    .from(gamesTable)
+    .where(and(eq(gamesTable.ownerId, ownerId), ne(gamesTable.sortOrder, 0)))
+    .limit(1);
+  return row !== undefined;
+}
+
+/** Back to the sheet's order: `0` everywhere means "unplaced", and `listGames`'s tie-breakers take over. */
+export async function resetLibraryOrder(ownerId: string): Promise<void> {
+  await getDb()
+    .update(gamesTable)
+    .set({ sortOrder: 0, updatedAt: new Date() })
+    .where(eq(gamesTable.ownerId, ownerId));
 }
 
 export async function deleteGame(ownerId: string, id: string): Promise<void> {

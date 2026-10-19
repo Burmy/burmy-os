@@ -16,6 +16,8 @@ import {
   deleteGame,
   getGame,
   listCollectionMembers,
+  reorderGames,
+  resetLibraryOrder,
   setCollectionForGames,
   setGameCollection,
   updateGame,
@@ -757,6 +759,45 @@ export async function deleteGameAction(id: string): Promise<ActionResult> {
 
   try {
     await deleteGame(owner.userId, idSchema.parse(id));
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+const orderSchema = z
+  .array(idSchema)
+  .min(1)
+  .max(5000)
+  .refine((ids) => new Set(ids).size === ids.length, { message: 'A game is listed twice' });
+
+/**
+ * The owner's hand order after a drop — EVERY top-level id, hidden ones
+ * included, in the order the library should read (`moveTopLevel` in
+ * `src/server/games/library-order.ts` builds it). `reorderGames` refuses a
+ * list that does not match the owner's rows one for one.
+ */
+export async function reorderLibraryAction(orderedIds: readonly string[]): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await reorderGames(owner.userId, orderSchema.parse(orderedIds));
+  } catch (error) {
+    return toResult(error);
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/** Back to the sheet's order — behind a confirm in the library, since it discards every drag. */
+export async function resetLibraryOrderAction(): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  try {
+    await resetLibraryOrder(owner.userId);
   } catch (error) {
     return toResult(error);
   }

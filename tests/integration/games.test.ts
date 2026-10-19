@@ -204,6 +204,9 @@ describe('listGames', () => {
       platform: 'ps4',
       firstPlayedYear: 2026,
     });
+    // A new game lands at the top of the hand order; this test is about the
+    // sheet keys underneath, so put every row back to "unplaced" first.
+    await games.resetLibraryOrder(owner);
 
     const expected = [
       ps5Wanted.id, // PlayStation shelf: wanted first
@@ -544,5 +547,51 @@ describe('collections — hours on the members', () => {
     expect(
       (await games.listCollectionMembers(owner, trilogy.id)).map((m) => m.hoursTenths),
     ).toEqual([97]);
+  });
+});
+
+/**
+ * The owner's hand order (2026-10-19). `sort_order` is `0` ("unplaced") until
+ * the first drop pins every top-level row; a new game is inserted at the top;
+ * a reset returns to the sheet keys. `reorderGames` is all-or-nothing.
+ */
+describe('library order', () => {
+  it('reads as the sheet while nothing is placed, then follows the positions a reorder wrote', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const older = await games.createGame(owner, {
+      title: 'Bloodborne',
+      platform: 'ps4',
+      firstPlayedYear: 2022,
+    });
+    const newer = await games.createGame(owner, {
+      title: 'Prey',
+      platform: 'ps5',
+      firstPlayedYear: 2026,
+    });
+    const steam = await games.createGame(owner, { title: 'Half-Life', platform: 'steam' });
+
+    // Every new game lands at the top (min - 1), so creation order reversed...
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([steam.id, newer.id, older.id]);
+
+    // ...until a reset puts the sheet keys in charge again.
+    await games.resetLibraryOrder(owner);
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([newer.id, older.id, steam.id]);
+
+    await games.reorderGames(owner, [steam.id, older.id, newer.id]);
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([steam.id, older.id, newer.id]);
+  });
+
+  it('refuses a list that does not match the owner’s rows one for one, applying nothing', async () => {
+    const mine = await makeOwner('mine@burmy.test');
+    const theirs = await makeOwner('theirs@burmy.test');
+    const a = await games.createGame(mine, { title: 'A', platform: 'ps5' });
+    const b = await games.createGame(mine, { title: 'B', platform: 'ps5' });
+    const foreign = await games.createGame(theirs, { title: 'Theirs', platform: 'ps5' });
+    const before = (await games.listGames(mine)).map((g) => g.id);
+
+    await expect(games.reorderGames(mine, [a.id, foreign.id, b.id])).rejects.toBeInstanceOf(
+      errors.GameNotFoundError,
+    );
+    expect((await games.listGames(mine)).map((g) => g.id)).toEqual(before);
   });
 });
