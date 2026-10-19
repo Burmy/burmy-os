@@ -1,17 +1,14 @@
 'use client';
 
 import Image from 'next/image';
-import { ChevronRight, Gamepad2, Trash2, X } from 'lucide-react';
+import { ChevronRight, Gamepad2, Trash2, Trophy, X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useEffect, useState, useTransition } from 'react';
 
 import { PlatinumBadge } from '@/components/games/platinum-badge';
-import { RatingStars } from '@/components/games/rating-stars';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { InlineEditField, InlineEditSelect, ROW_CLASS } from '@/components/ui/inline-edit-row';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
@@ -28,6 +25,7 @@ import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { rollUpTrophies } from '@/server/games/collections';
+import { gameTotals } from '@/server/games/dlc';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatReleaseCountdown } from '@/server/games/release-date';
 import {
@@ -38,6 +36,7 @@ import {
   PLATFORM_PICKER_OPTIONS,
   STATUS_LABELS,
 } from '@/server/games/taxonomy';
+import { DlcGroup } from './dlc-group';
 import { type GamePanelSeed, isFullGame } from './game-panel-context';
 import { type GamePanelData, getGamePanelAction } from './panel-actions';
 import { PlayYearsRow } from './play-years-row';
@@ -102,8 +101,16 @@ export function GamePanel({
   const [, startLoad] = useTransition();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // `null` = "not decided by the owner yet": open when the game holds members,
+  // collapsed when it holds none. Reset whenever a different game opens.
+  const [collectionOpen, setCollectionOpen] = useState<boolean | null>(null);
 
   const seedId = seed?.id ?? null;
+  const [seenSeedId, setSeenSeedId] = useState(seedId);
+  if (seenSeedId !== seedId) {
+    setSeenSeedId(seedId);
+    setCollectionOpen(null);
+  }
 
   useEffect(() => {
     if (seedId === null) return;
@@ -176,6 +183,19 @@ export function GamePanel({
   // Known from the seed alone — no fetch needed to decide these.
   const isCollectionMember = game !== null && game.collectionId !== null;
   const parent = current?.collection ?? null;
+  const collectionShown = collectionOpen ?? (current !== null && current.members.length > 0);
+
+  // DLC is additive: the rows below show the BASE figure the owner edits,
+  // with the total (base + DLC) as a quiet suffix when there is any DLC.
+  const totals = game === null || game.dlc.length === 0 ? null : gameTotals(game, game.dlc);
+  const hoursHint =
+    totals?.hoursTenths == null ? undefined : `${formatHours(hours(totals.hoursTenths))} with DLC`;
+  const priceHint =
+    totals?.priceCents == null ? undefined : `$${(totals.priceCents / 100).toFixed(2)} with DLC`;
+  const earnedHint =
+    totals?.achievementsUnlocked == null ? undefined : `${totals.achievementsUnlocked} with DLC`;
+  const totalHint =
+    totals?.achievementsTotal == null ? undefined : `${totals.achievementsTotal} with DLC`;
 
   return (
     <DialogPrimitive.Root
@@ -286,6 +306,7 @@ export function GamePanel({
                     placeholder="Not tracked"
                     disabled={isCollectionMember}
                     disabledHint="From the collection"
+                    {...(hoursHint === undefined ? {} : { hint: hoursHint })}
                     onSave={(value) => saveField('hours', value)}
                   />
                   <InlineEditField
@@ -311,28 +332,31 @@ export function GamePanel({
                       <SkeletonRow label="Achievements total" />
                     </>
                   ) : (
-                    <AchievementRows data={current} onSaveField={saveField} />
+                    <AchievementRows
+                      data={current}
+                      onSaveField={saveField}
+                      {...(earnedHint === undefined ? {} : { earnedHint })}
+                      {...(totalHint === undefined ? {} : { totalHint })}
+                    />
                   )}
                   <div className={cn(ROW_CLASS, 'items-center')}>
-                    <Label
-                      htmlFor="platinum-toggle"
-                      className="text-muted-foreground cursor-pointer font-normal"
-                    >
-                      Platinum
-                    </Label>
-                    <Checkbox
-                      id="platinum-toggle"
-                      checked={game.platinum}
-                      onCheckedChange={(checked) => {
-                        void saveField('platinum', checked === true ? 'true' : '').then(
-                          (result) => {
-                            if (!result.ok) toast.error(result.error);
-                          },
-                        );
+                    <span className="text-muted-foreground">Platinum</span>
+                    <PlatinumToggle
+                      on={game.platinum}
+                      onToggle={() => {
+                        void saveField('platinum', game.platinum ? '' : 'true').then((result) => {
+                          if (!result.ok) toast.error(result.error);
+                        });
                       }}
                     />
                   </div>
                 </Group>
+
+                {/* A title inside a collection carries no DLC — its figures,
+                    and so its DLC, live on the collection row. */}
+                {isCollectionMember ? null : (
+                  <DlcGroup gameId={game.id} dlc={game.dlc} base={game} onChanged={refresh} />
+                )}
 
                 <Group title="Details">
                   <InlineEditSelect
@@ -375,6 +399,7 @@ export function GamePanel({
                     }
                     disabled={isCollectionMember}
                     disabledHint="From the collection"
+                    {...(priceHint === undefined ? {} : { hint: priceHint })}
                     onSave={(value) => saveField('priceDollars', value)}
                   />
                   <InlineEditField
@@ -412,20 +437,39 @@ export function GamePanel({
                     />
                   </Group>
                 ) : (
+                  // Collapsed behind a button while it holds nothing — most
+                  // games never become a set, and an empty explanatory box on
+                  // every one of them was noise. Open by default once it has
+                  // members, where the list IS the content.
                   <section>
-                    <CollectionMembersPanel
-                      collectionId={game.id}
-                      collectionTitle={game.title}
-                      members={current.members}
-                      candidates={current.collectionCandidates}
-                      onOpenMember={(id) => onOpen({ id })}
-                      onChanged={refresh}
-                    />
+                    <div className="mb-1 flex items-center justify-between">
+                      <h3 className="text-muted-foreground text-xs font-medium">Collection</h3>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCollectionOpen(!collectionShown)}
+                      >
+                        {collectionShown ? 'Hide collection' : 'Show collection'}
+                      </Button>
+                    </div>
+                    {collectionShown ? (
+                      <CollectionMembersPanel
+                        collectionId={game.id}
+                        collectionTitle={game.title}
+                        members={current.members}
+                        candidates={current.collectionCandidates}
+                        onOpenMember={(id) => onOpen({ id })}
+                        onChanged={refresh}
+                      />
+                    ) : null}
                   </section>
                 )}
 
+                {/* One "Notes" on screen: the group heading. The field keeps
+                    the word as its accessible name only. */}
                 <Group title="Notes">
                   <InlineEditField
+                    hideLabel
                     label="Notes"
                     value={game.notes ?? ''}
                     placeholder="No notes yet — click to add some."
@@ -487,7 +531,7 @@ function CoverTile({ game }: { readonly game: Game | null }): React.ReactElement
 }
 
 /**
- * `platform · status · ★★★★☆ · 3 games`, then a quieter line of IGDB facts
+ * `platform · status · 3 games`, then a quieter line of IGDB facts
  * when the game has any — a critic score and a time-to-beat answer "is this
  * worth starting" at a glance. ESRB is stored too but never shown; it has
  * not earned a line.
@@ -509,12 +553,6 @@ function MetaLine({
         <span>{PLATFORM_LABELS[game.platform]}</span>
         <span aria-hidden>·</span>
         <span>{STATUS_LABELS[game.status]}</span>
-        {game.rating === null ? null : (
-          <>
-            <span aria-hidden>·</span>
-            <RatingStars rating={game.rating} />
-          </>
-        )}
         {memberCount === 0 ? null : (
           <>
             <span aria-hidden>·</span>
@@ -543,9 +581,14 @@ function MetaLine({
 function AchievementRows({
   data,
   onSaveField,
+  earnedHint,
+  totalHint,
 }: {
   readonly data: GamePanelData;
   readonly onSaveField: (field: GameFieldKey, value: string) => Promise<ActionResult>;
+  /** "52 with DLC" — the base + DLC total, when the game has DLC. */
+  readonly earnedHint?: string;
+  readonly totalHint?: string;
 }): React.ReactElement {
   const rollup = data.members.length > 0 ? rollUpTrophies(data.game, data.members) : undefined;
   const summedFromMembers = rollup !== undefined && !rollup.unsplit && rollup.unlocked !== null;
@@ -561,7 +604,14 @@ function AchievementRows({
         value={unlocked === null ? '' : String(unlocked)}
         placeholder="Not tracked"
         disabled={summedFromMembers}
-        {...(summedFromMembers ? { disabledHint: memberSumHint } : {})}
+        {...(summedFromMembers
+          ? {
+              disabledHint:
+                earnedHint === undefined ? memberSumHint : `${memberSumHint} · ${earnedHint}`,
+            }
+          : earnedHint === undefined
+            ? {}
+            : { hint: earnedHint })}
         onSave={(value) => onSaveField('achievementsUnlocked', value)}
       />
       <InlineEditField
@@ -570,13 +620,50 @@ function AchievementRows({
         placeholder="Not tracked"
         disabled={summedFromMembers}
         {...(summedFromMembers
-          ? { disabledHint: memberSumHint }
-          : unsplitLump
-            ? { hint: 'Covers the whole set — not yet split per game' }
-            : {})}
+          ? {
+              disabledHint:
+                totalHint === undefined ? memberSumHint : `${memberSumHint} · ${totalHint}`,
+            }
+          : totalHint !== undefined
+            ? { hint: totalHint }
+            : unsplitLump
+              ? { hint: 'Covers the whole set — not yet split per game' }
+              : {})}
         onSave={(value) => onSaveField('achievementsTotal', value)}
       />
     </>
+  );
+}
+
+/**
+ * The owner's own platinum claim as a real toggle — the checkbox it replaced
+ * was the smallest control in the panel for the one fact worth showing off.
+ * `aria-label` keeps the name "Platinum" stable while the visible text says
+ * which state it is in; `aria-pressed` carries the state.
+ */
+function PlatinumToggle({
+  on,
+  onToggle,
+}: {
+  readonly on: boolean;
+  readonly onToggle: () => void;
+}): React.ReactElement {
+  return (
+    <button
+      type="button"
+      aria-label="Platinum"
+      aria-pressed={on}
+      onClick={onToggle}
+      className={cn(
+        'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
+        on
+          ? 'border-slate-400/50 bg-gradient-to-br from-slate-100 via-slate-300 to-slate-400 text-slate-800 shadow-sm'
+          : 'text-muted-foreground hover:text-foreground border-input',
+      )}
+    >
+      <Trophy className="size-3.5" strokeWidth={2.25} aria-hidden />
+      {on ? 'Earned' : 'Not earned'}
+    </button>
   );
 }
 

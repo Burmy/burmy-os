@@ -50,8 +50,7 @@ import { cn } from '@/lib/utils';
  * `field` is simply ignored here.
  */
 export type InlineEditResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: string };
+  { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 /**
  * One label/value row.
@@ -105,8 +104,10 @@ export function InlineEditField({
   disabled = false,
   disabledHint,
   hint,
+  hideLabel = false,
   onSave,
 }: {
+  /** Always the accessible name of the control, even when `hideLabel` keeps it off screen. */
   readonly label: string;
   readonly value: string;
   /** What to show when not editing, if nicer than the raw value (e.g. "22.1h" vs "22.1"). Defaults to `value`. */
@@ -121,6 +122,12 @@ export function InlineEditField({
    * but means something narrower than the label suggests".
    */
   readonly hint?: string;
+  /**
+   * Render without the label column: the value stands alone (a Notes block
+   * under its own group heading, a cell in a compact DLC row) and the label
+   * is kept `sr-only` so the control still has a name.
+   */
+  readonly hideLabel?: boolean;
   readonly onSave: (value: string) => Promise<InlineEditResult>;
 }): React.ReactElement {
   const [editing, setEditing] = useState(false);
@@ -138,8 +145,8 @@ export function InlineEditField({
   const Field = multiline ? Textarea : Input;
 
   return (
-    <div className={ROW_CLASS}>
-      <span className="text-muted-foreground">{label}</span>
+    <div className={hideLabel ? 'min-w-0 py-1.5 text-sm' : ROW_CLASS}>
+      <span className={hideLabel ? 'sr-only' : 'text-muted-foreground'}>{label}</span>
       {disabled ? (
         <span>
           {displayValue ?? (value || placeholder)}

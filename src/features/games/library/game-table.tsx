@@ -18,6 +18,7 @@ import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import type { CollectionGroup } from '@/server/games/collections';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
+import { gameTotals } from '@/server/games/dlc';
 import { formatHours, hours } from '@/server/games/hours';
 
 /**
@@ -150,6 +151,8 @@ function GameRow({
 }): React.ReactElement {
   const nested = collectionTitle !== undefined;
   const selectable = selected !== undefined && onToggleSelect !== undefined;
+  // Base + DLC — the library reads totals; only the panel shows the split.
+  const totals = gameTotals(game, game.dlc);
 
   return (
     <TableRow
@@ -211,13 +214,13 @@ function GameRow({
           ONE play time and ONE trophy list, and they are on the row directly
           above. See `docs/GAMES.md`, "Collections." */}
       <TableCell className="tabular text-right">
-        {game.hoursTenths === null ? '—' : formatHours(hours(game.hoursTenths))}
+        {totals.hoursTenths === null ? '—' : formatHours(hours(totals.hoursTenths))}
       </TableCell>
       <TableCell className="tabular text-right">{game.firstPlayedYear ?? '—'}</TableCell>
       <TableCell className="tabular text-right">
-        {game.achievementsUnlocked === null
+        {totals.achievementsUnlocked === null
           ? '—'
-          : `${game.achievementsUnlocked}${game.achievementsTotal === null ? '' : ` / ${game.achievementsTotal}`}`}
+          : `${totals.achievementsUnlocked}${totals.achievementsTotal === null ? '' : ` / ${totals.achievementsTotal}`}`}
       </TableCell>
       <TableCell>
         <RatingStars rating={game.rating} />

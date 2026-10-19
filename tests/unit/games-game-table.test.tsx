@@ -248,3 +248,33 @@ describe('GameTable selection', () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 });
+
+describe('GameTable totals', () => {
+  it('shows base + DLC hours and trophies in the row', () => {
+    render(
+      <GameTable
+        activeId={null}
+        groups={[
+          solo({
+            dlc: [
+              {
+                id: 'dlc-1',
+                gameId: 'game-1',
+                name: 'Shadow of the Erdtree',
+                year: 2025,
+                hoursTenths: 60,
+                priceCents: 3999,
+                achievementsUnlocked: 10,
+                achievementsTotal: 12,
+              },
+            ],
+          }),
+        ]}
+        onOpen={vi.fn()}
+      />,
+    );
+    const row = screen.getByRole('button', { name: 'Elden Ring' }).closest('tr');
+    expect(row).toHaveTextContent('142h');
+    expect(row).toHaveTextContent('52 / 54');
+  });
+});

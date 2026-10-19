@@ -40,6 +40,21 @@ vi.mock('@/features/games/game-actions', () => ({
     addGamesToCollectionAction(...args),
 }));
 
+const createGameDlcAction = vi.fn(
+  async (_gameId: string, _formData: FormData): Promise<ActionResult> => ({ ok: true }),
+);
+const updateGameDlcFieldAction = vi.fn(
+  async (_dlcId: string, _field: string, _value: string): Promise<ActionResult> => ({ ok: true }),
+);
+const deleteGameDlcAction = vi.fn(async (_dlcId: string): Promise<ActionResult> => ({ ok: true }));
+
+vi.mock('@/features/games/dlc-actions', () => ({
+  createGameDlcAction: (...args: [string, FormData]) => createGameDlcAction(...args),
+  updateGameDlcFieldAction: (...args: [string, string, string]) =>
+    updateGameDlcFieldAction(...args),
+  deleteGameDlcAction: (...args: [string]) => deleteGameDlcAction(...args),
+}));
+
 vi.mock('@/components/ui/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 let pathname = '/games/library';
@@ -182,7 +197,8 @@ describe('GamePanel — opening and closing', () => {
     expect(screen.getByText('136h')).toBeInTheDocument();
 
     await act(async () => resolve(panelData({ game: game({ title: 'Hades' }) })));
-    expect(await screen.findByText('Games in this collection')).toBeInTheDocument();
+    // No members, so the block is collapsed behind its button — see the polish tests.
+    expect(await screen.findByRole('button', { name: 'Show collection' })).toBeInTheDocument();
   });
 
   it('shows a skeleton when opened with only an id, until the fetch lands', async () => {
@@ -366,14 +382,24 @@ describe('GamePanel — inline editing', () => {
     );
   });
 
-  it('saves the platinum checkbox immediately', async () => {
+  it('saves the platinum toggle immediately, on and off', async () => {
     await openPanel(game({ platinum: false }));
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('checkbox', { name: 'Platinum' }));
-
+    const toggle = screen.getByRole('button', { name: 'Platinum', pressed: false });
+    await user.click(toggle);
     await waitFor(() =>
       expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'platinum', 'true'),
+    );
+  });
+
+  it('turns platinum back off with an empty value', async () => {
+    await openPanel(game({ platinum: true }));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Platinum', pressed: true }));
+    await waitFor(() =>
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'platinum', ''),
     );
   });
 
@@ -519,6 +545,7 @@ describe('GamePanel — collections', () => {
     // member. For a standalone game, filing happens from the OTHER end — the
     // collection's "Add games" — or the table's multi-select; this panel
     // offers "Add games" for its own prospective members.
+    await user.click(screen.getByRole('button', { name: 'Show collection' }));
     expect(screen.getByRole('button', { name: 'Add games' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Add games' }));
     expect(await screen.findByRole('textbox', { name: 'Search games' })).toBeInTheDocument();
@@ -583,5 +610,154 @@ describe('GamePanel — remove', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Remove game' })).not.toBeDisabled(),
     );
+  });
+});
+
+const DLC = {
+  id: 'dlc-1',
+  gameId: 'game-1',
+  name: 'Shadow of the Erdtree',
+  year: 2025,
+  hoursTenths: 60,
+  priceCents: 3999,
+  achievementsUnlocked: 10,
+  achievementsTotal: 12,
+};
+
+describe('GamePanel — polish', () => {
+  it('shows the rating once: no stars in the header, the editable row stays', async () => {
+    await openPanel(game({ rating: 5 }));
+
+    expect(screen.queryByLabelText('5 out of 5')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('radio')).toHaveLength(5);
+  });
+
+  it('labels Notes once', async () => {
+    await openPanel(game());
+
+    const visible = screen
+      .getAllByText('Notes')
+      .filter((element) => !element.classList.contains('sr-only'));
+    expect(visible).toHaveLength(1);
+    // The field keeps an accessible name even though its visible label is gone.
+    expect(screen.getByRole('button', { name: 'Notes' })).toBeInTheDocument();
+  });
+
+  it('hides an empty collection block behind Show collection, and reveals Add games', async () => {
+    await openPanel(game());
+    const user = userEvent.setup();
+
+    expect(screen.queryByText('Games in this collection')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Add games' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Show collection' }));
+    expect(screen.getByText('Games in this collection')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add games' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide collection' }));
+    expect(screen.queryByText('Games in this collection')).not.toBeInTheDocument();
+  });
+
+  it('opens the collection block by default when it has members', async () => {
+    await openPanel(game({ id: 'ndc', title: NDC.title }), { members: [member()] });
+
+    expect(screen.getByText('Games in this collection')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide collection' })).toBeInTheDocument();
+  });
+});
+
+describe('GamePanel — DLC', () => {
+  it('lists a DLC row with its figures and a totals line', async () => {
+    await openPanel(game({ dlc: [DLC] }));
+
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: name' })).toHaveTextContent(
+      'Shadow of the Erdtree',
+    );
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: year' })).toHaveTextContent(
+      '2025',
+    );
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: hours' })).toHaveTextContent(
+      '6h',
+    );
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: price' })).toHaveTextContent(
+      '$39.99',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Shadow of the Erdtree: trophies earned' }),
+    ).toHaveTextContent('10');
+    expect(
+      screen.getByRole('button', { name: 'Shadow of the Erdtree: trophies total' }),
+    ).toHaveTextContent('12');
+    // 136h + 6h, $65.65 + $39.99, 42/42 + 10/12.
+    expect(screen.getByText('Total · 142h · $105.64 · 52/54 trophies')).toBeInTheDocument();
+  });
+
+  it('shows the base figure with the total beside it in Progress and Details', async () => {
+    await openPanel(game({ dlc: [DLC] }));
+
+    expect(screen.getByRole('button', { name: 'Hours' })).toHaveTextContent('136h');
+    expect(screen.getByText('142h with DLC')).toBeInTheDocument();
+    expect(screen.getByText('$105.64 with DLC')).toBeInTheDocument();
+    expect(screen.getByText('52 with DLC')).toBeInTheDocument();
+    expect(screen.getByText('54 with DLC')).toBeInTheDocument();
+  });
+
+  it('shows no suffix and no totals line when there is no DLC', async () => {
+    await openPanel(game());
+
+    expect(screen.queryByText(/with DLC/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Total · /)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add DLC' })).toBeInTheDocument();
+  });
+
+  it('has no DLC group at all for a collection member', async () => {
+    await openPanel(game({ id: 'uc1', collectionId: 'ndc' }), {
+      collection: NDC,
+      collectionOptions: [NDC],
+    });
+
+    expect(screen.queryByRole('button', { name: 'Add DLC' })).not.toBeInTheDocument();
+  });
+
+  it('adds a DLC from a name and a year', async () => {
+    await openPanel(game());
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Add DLC' }));
+    await user.type(screen.getByRole('textbox', { name: 'Name' }), 'Elden DLC');
+    await user.type(screen.getByRole('textbox', { name: 'Year' }), '2026');
+    await user.click(screen.getByRole('button', { name: 'Save DLC' }));
+
+    await waitFor(() => expect(createGameDlcAction).toHaveBeenCalledTimes(1));
+    const [gameId, formData] = createGameDlcAction.mock.calls[0]!;
+    expect(gameId).toBe('game-1');
+    expect(formData.get('name')).toBe('Elden DLC');
+    expect(formData.get('year')).toBe('2026');
+    // The panel re-fetches itself after the save.
+    await waitFor(() => expect(getGamePanelAction).toHaveBeenCalledTimes(2));
+  });
+
+  it('edits one cell of a DLC row', async () => {
+    await openPanel(game({ dlc: [DLC] }));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Shadow of the Erdtree: hours' }));
+    const input = screen.getByRole('textbox', { name: 'Shadow of the Erdtree: hours' });
+    await user.clear(input);
+    await user.type(input, '7{Enter}');
+
+    await waitFor(() =>
+      expect(updateGameDlcFieldAction).toHaveBeenCalledWith('dlc-1', 'hours', '7'),
+    );
+  });
+
+  it('removes a DLC after confirming', async () => {
+    await openPanel(game({ dlc: [DLC] }));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Remove Shadow of the Erdtree' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(deleteGameDlcAction).toHaveBeenCalledWith('dlc-1'));
   });
 });
