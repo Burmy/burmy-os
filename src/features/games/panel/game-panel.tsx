@@ -98,9 +98,6 @@ export function GamePanel({
   const [, startLoad] = useTransition();
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // `null` = "not decided by the owner yet": open when the game holds members,
-  // collapsed when it holds none. Reset whenever a different game opens.
-  const [collectionOpen, setCollectionOpen] = useState<boolean | null>(null);
   // "Add to library" on a wanted game: the same pre-filled dialog the wishlist
   // card opens. The dialog is a modal above this non-modal panel (z-50 > z-40).
   const [completing, setCompleting] = useState(false);
@@ -109,7 +106,6 @@ export function GamePanel({
   const [seenSeedId, setSeenSeedId] = useState(seedId);
   if (seenSeedId !== seedId) {
     setSeenSeedId(seedId);
-    setCollectionOpen(null);
     setCompleting(false);
   }
 
@@ -184,7 +180,6 @@ export function GamePanel({
   // Known from the seed alone — no fetch needed to decide these.
   const isCollectionMember = game !== null && game.collectionId !== null;
   const parent = current?.collection ?? null;
-  const collectionShown = collectionOpen ?? (current !== null && current.members.length > 0);
 
   // DLC is additive. While a game has DLC, the Hours / Price / Trophies rows
   // show base + DLC and are READ-ONLY; the base is edited on its own line in
@@ -274,7 +269,7 @@ export function GamePanel({
             {game === null ? (
               <PanelSkeleton />
             ) : (
-              <div className="space-y-5">
+              <div className="space-y-3">
                 <div>
                   <RatingRow rating={game.rating} onSave={(value) => saveField('rating', value)} />
                   {/* Only while wanted: it is what sorts the game into "Your
@@ -424,12 +419,11 @@ export function GamePanel({
                     <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
                   )}
 
-                  {/* A row that HOLDS games lists them (and can add more); a
-                      standalone row can become a collection the same way. A
-                      title INSIDE a set gets the "Part of" picker instead —
-                      it cannot hold games of its own (the one-level rule).
-                      Collapsed while it holds nothing; open by default once
-                      it has members, where the list IS the content. */}
+                  {/* A row that HOLDS games lists them, then "+ Add games to
+                      collection"; a standalone row can become a collection
+                      the same way. A title INSIDE a set gets the "Part of"
+                      picker instead — it cannot hold games of its own (the
+                      one-level rule). */}
                   {current === null ? (
                     <SkeletonRow label="Collection" />
                   ) : isCollectionMember ? (
@@ -439,30 +433,14 @@ export function GamePanel({
                       onSave={saveCollection}
                     />
                   ) : (
-                    <ActionRow
-                      label="Collection"
-                      action={
-                        <button
-                          type="button"
-                          aria-label={collectionShown ? 'Hide collection' : 'Show collection'}
-                          onClick={() => setCollectionOpen(!collectionShown)}
-                          className="text-muted-foreground hover:text-foreground text-sm transition-colors"
-                        >
-                          {collectionShown ? 'Hide' : 'Show'}
-                        </button>
-                      }
-                    >
-                      {collectionShown ? (
-                        <CollectionMembersPanel
-                          collectionId={game.id}
-                          collectionTitle={game.title}
-                          members={current.members}
-                          candidates={current.collectionCandidates}
-                          onOpenMember={(id) => onOpen({ id })}
-                          onChanged={refresh}
-                        />
-                      ) : null}
-                    </ActionRow>
+                    <CollectionMembersPanel
+                      collectionId={game.id}
+                      collectionTitle={game.title}
+                      members={current.members}
+                      candidates={current.collectionCandidates}
+                      onOpenMember={(id) => onOpen({ id })}
+                      onChanged={refresh}
+                    />
                   )}
                 </div>
 
@@ -692,33 +670,6 @@ function PlatinumToggle({
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-/**
- * A row whose value is a quiet text action on the right (and, below it,
- * whatever the action reveals). Plain text with no border, like every other
- * action in the panel — the owner asked for no outlined buttons.
- */
-function ActionRow({
-  label,
-  action,
-  children,
-}: {
-  readonly label: string;
-  readonly action: React.ReactNode;
-  readonly children?: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="py-1.5 text-sm">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-muted-foreground">{label}</span>
-        {action}
-      </div>
-      {children === null || children === undefined ? null : (
-        <div className="mt-1.5">{children}</div>
-      )}
-    </div>
-  );
 }
 
 function Group({

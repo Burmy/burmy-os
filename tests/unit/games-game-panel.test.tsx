@@ -205,8 +205,9 @@ describe('GamePanel — opening and closing', () => {
     expect(screen.getByText('136h')).toBeInTheDocument();
 
     await act(async () => resolve(panelData({ game: game({ title: 'Hades' }) })));
-    // No members, so the block is collapsed behind its button — see the polish tests.
-    expect(await screen.findByRole('button', { name: 'Show collection' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'Add games to collection' }),
+    ).toBeInTheDocument();
   });
 
   it('shows a skeleton when opened with only an id, until the fetch lands', async () => {
@@ -506,7 +507,6 @@ describe('GamePanel — collections', () => {
       },
     );
 
-    expect(screen.getByText('Games in this collection')).toBeInTheDocument();
     expect(screen.getByText('Uncharted 2: Among Thieves Remastered')).toBeInTheDocument();
     expect(screen.getAllByText('2 games').length).toBeGreaterThan(0);
     // Summed from the members, so not editable here.
@@ -539,7 +539,9 @@ describe('GamePanel — collections', () => {
     expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Price paid' })).not.toBeInTheDocument();
     expect(screen.getAllByText('From the collection').length).toBeGreaterThan(0);
-    expect(screen.queryByText('Games in this collection')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Add games to collection' }),
+    ).not.toBeInTheDocument();
     // The "Part of" field keeps its picker; the header link navigates.
     expect(screen.getByRole('button', { name: `Part of ${NDC.title}` })).toBeInTheDocument();
 
@@ -561,9 +563,7 @@ describe('GamePanel — collections', () => {
     // member. For a standalone game, filing happens from the OTHER end — the
     // collection's "Add games" — or the table's multi-select; this panel
     // offers "Add games" for its own prospective members.
-    await user.click(screen.getByRole('button', { name: 'Show collection' }));
-    expect(screen.getByRole('button', { name: 'Add games' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Add games' }));
+    await user.click(screen.getByRole('button', { name: 'Add games to collection' }));
     expect(await screen.findByRole('textbox', { name: 'Search games' })).toBeInTheDocument();
   });
 
@@ -679,27 +679,31 @@ describe('GamePanel — polish', () => {
     expect(screen.getByRole('button', { name: 'Notes' })).toBeInTheDocument();
   });
 
-  it('keeps the collection members behind a Show button on a row while empty, and reveals Add games', async () => {
+  it('offers a plain + Add games to collection line on a standalone game — no toggle, no empty box', async () => {
     await openPanel(game());
-    const user = userEvent.setup();
 
-    expect(screen.getByText('Collection')).toBeInTheDocument();
-    expect(screen.queryByText('Games in this collection')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Add games' })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Show collection' }));
-    expect(screen.getByText('Games in this collection')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Add games' })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: 'Hide collection' }));
+    expect(screen.getByRole('button', { name: 'Add games to collection' })).toHaveTextContent(
+      'Add games to collection',
+    );
+    expect(screen.queryByRole('button', { name: /collection$/ })).toBe(
+      screen.getByRole('button', { name: 'Add games to collection' }),
+    );
+    expect(screen.queryByText(/Nothing in this collection/)).not.toBeInTheDocument();
     expect(screen.queryByText('Games in this collection')).not.toBeInTheDocument();
   });
 
-  it('opens the collection members by default when it has members', async () => {
+  it('lists the members above that line, each with its own remove', async () => {
     await openPanel(game({ id: 'ndc', title: NDC.title }), { members: [member()] });
 
-    expect(screen.getByText('Games in this collection')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Hide collection' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: "Uncharted: Drake's Fortune Remastered" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', {
+        name: `Remove Uncharted: Drake's Fortune Remastered from ${NDC.title}`,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add games to collection' })).toBeInTheDocument();
   });
 });
 
@@ -742,6 +746,21 @@ describe('GamePanel — DLC', () => {
     ).toHaveTextContent('10');
     // No box around the grid, no modal anywhere: every cell edits in place.
     expect(screen.queryByRole('dialog', { name: 'Shadow of the Erdtree' })).not.toBeInTheDocument();
+  });
+
+  it('the Base game row shows the First played year, and editing it saves firstPlayedYear', async () => {
+    await openPanel(game({ dlc: [DLC], firstPlayedYear: 2022 }));
+    const user = userEvent.setup();
+
+    expect(screen.getByRole('button', { name: 'Base game: year' })).toHaveTextContent('2022');
+    await user.click(screen.getByRole('button', { name: 'Base game: year' }));
+    const input = screen.getByRole('textbox', { name: 'Base game: year' });
+    await user.clear(input);
+    await user.type(input, '2023{Enter}');
+
+    await waitFor(() =>
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'firstPlayedYear', '2023'),
+    );
   });
 
   it('has no DLC row at all for a collection member', async () => {

@@ -135,7 +135,17 @@ export function DlcGrid({
               {game.dlc.length === 0 ? null : (
                 <tr>
                   <td className="py-0.5 pr-3">Base game</td>
-                  <td className="text-muted-foreground py-0.5 pr-3 text-right">—</td>
+                  {/* The base game's year IS First played — one field, shown
+                      in both places, saved through the same action. */}
+                  <Cell>
+                    <InlineEditField
+                      hideLabel
+                      label="Base game: year"
+                      value={game.firstPlayedYear === null ? '' : String(game.firstPlayedYear)}
+                      placeholder="—"
+                      onSave={(value) => onSaveField('firstPlayedYear', value)}
+                    />
+                  </Cell>
                   <Cell>
                     <InlineEditField
                       hideLabel

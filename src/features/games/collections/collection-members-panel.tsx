@@ -96,30 +96,12 @@ export function CollectionMembersPanel({
 
   return (
     <>
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-muted-foreground text-xs font-medium">Games in this collection</h3>
-        <div className="flex items-center gap-3">
-          <span className="text-muted-foreground text-xs">
-            {members.length} game{members.length === 1 ? '' : 's'}
-          </span>
-          <button
-            type="button"
-            onClick={() => setPicking(true)}
-            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm transition-colors"
-          >
-            <Plus className="size-3.5" aria-hidden />
-            Add games
-          </button>
-        </div>
-      </div>
-
-      {members.length === 0 ? (
-        <p className="text-muted-foreground bg-card rounded-md px-4 py-6 text-sm">
-          Nothing in this collection yet. Add the titles the set contains and they&apos;ll count
-          individually in your library.
-        </p>
-      ) : (
-        <ul className="bg-card divide-y rounded-md px-4">
+      {/* The members, then one plain line to add more — the same shape as
+          the DLC grid's "+ Add DLC" beneath it, by owner decision ("keep
+          the collection and DLC consistent"). No heading, no count, no
+          empty-state box: with nothing filed, the line is all there is. */}
+      {members.length === 0 ? null : (
+        <ul className="divide-y">
           {members.map((member) => (
             <li key={member.id} className="flex items-center gap-1">
               <button
@@ -182,6 +164,16 @@ export function CollectionMembersPanel({
           ))}
         </ul>
       )}
+
+      <button
+        type="button"
+        aria-label="Add games to collection"
+        onClick={() => setPicking(true)}
+        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 py-1 text-sm transition-colors"
+      >
+        <Plus className="size-3.5" aria-hidden />
+        Add games to collection
+      </button>
 
       <GamePickerDialog
         open={picking}
