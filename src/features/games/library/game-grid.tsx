@@ -73,7 +73,7 @@ export function GameGrid({
           220px minimum would mean one. The drag engine measures the grid at
           lift, so the column count can be whatever it is. `gap-6` is the
           app's shared 24px step. */}
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-[repeat(auto-fill,minmax(350px,1fr))]">
         {groups.map((group, index) => (
           // The wrapper is what the drag moves: its transform is written
           // directly, with the transition below for the cards stepping aside
