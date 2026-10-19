@@ -107,7 +107,7 @@ export function DlcGrid({
   const showGrid = game.dlc.length > 0 || adding;
 
   return (
-    <div className="py-1.5 text-sm">
+    <div className="py-1 text-sm">
       {showGrid ? (
         <div className="overflow-x-auto">
           <table className="w-full border-collapse">

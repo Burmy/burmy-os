@@ -269,7 +269,7 @@ export function GamePanel({
             {game === null ? (
               <PanelSkeleton />
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <div>
                   <RatingRow rating={game.rating} onSave={(value) => saveField('rating', value)} />
                   {/* Only while wanted: it is what sorts the game into "Your
@@ -415,8 +415,16 @@ export function GamePanel({
                     title inside a collection carries no DLC — its figures,
                     and so its DLC, live on the collection row. */}
                 <div>
+                  {/* Indented to the value column, with the label column
+                      empty: the part names inside the grid are VALUES, and at
+                      the far left they read as row labels. */}
                   {isCollectionMember ? null : (
-                    <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
+                    <div className={ROW_CLASS}>
+                      <span aria-hidden />
+                      <div className="min-w-0">
+                        <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
+                      </div>
+                    </div>
                   )}
 
                   {/* A row that HOLDS games lists them, then "+ Add games to
@@ -433,29 +441,31 @@ export function GamePanel({
                       onSave={saveCollection}
                     />
                   ) : (
-                    <CollectionMembersPanel
-                      collectionId={game.id}
-                      collectionTitle={game.title}
-                      members={current.members}
-                      candidates={current.collectionCandidates}
-                      onOpenMember={(id) => onOpen({ id })}
-                      onChanged={refresh}
-                    />
+                    <div className={ROW_CLASS}>
+                      <span aria-hidden />
+                      <div className="min-w-0">
+                        <CollectionMembersPanel
+                          collectionId={game.id}
+                          collectionTitle={game.title}
+                          members={current.members}
+                          candidates={current.collectionCandidates}
+                          onOpenMember={(id) => onOpen({ id })}
+                          onChanged={refresh}
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {/* One "Notes" on screen: the group heading. The field keeps
-                    the word as its accessible name only. */}
-                <Group title="Notes">
-                  <InlineEditField
-                    hideLabel
-                    label="Notes"
-                    value={game.notes ?? ''}
-                    placeholder="No notes yet — click to add some."
-                    multiline
-                    onSave={(value) => saveField('notes', value)}
-                  />
-                </Group>
+                {/* A row like every other field — the owner wants one shape
+                    throughout, not a heading with the text beneath. */}
+                <InlineEditField
+                  label="Notes"
+                  value={game.notes ?? ''}
+                  placeholder="No notes yet — click to add some."
+                  multiline
+                  onSave={(value) => saveField('notes', value)}
+                />
               </div>
             )}
           </div>
@@ -656,7 +666,7 @@ function PlatinumToggle({
       aria-pressed={on}
       onClick={onToggle}
       className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
+        'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
         on
           ? 'border-slate-400/50 bg-gradient-to-br from-slate-100 via-slate-300 to-slate-400 text-slate-800 shadow-sm'
           : 'text-muted-foreground hover:text-foreground -ml-2.5 border-transparent',
@@ -670,21 +680,6 @@ function PlatinumToggle({
 
 function formatPrice(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
-}
-
-function Group({
-  title,
-  children,
-}: {
-  readonly title: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <section>
-      <h3 className="text-muted-foreground mb-1 text-xs font-medium">{title}</h3>
-      <div>{children}</div>
-    </section>
-  );
 }
 
 function SkeletonRow({ label }: { readonly label: string }): React.ReactElement {

@@ -667,11 +667,12 @@ describe('GamePanel — polish', () => {
     expect(screen.getAllByRole('radio')).toHaveLength(5);
   });
 
-  it('has no section headings except Notes', async () => {
+  it('has no section headings at all — Notes is a row like every other field', async () => {
     await openPanel(game());
 
     expect(screen.queryByText('Progress')).not.toBeInTheDocument();
     expect(screen.queryByText('Details')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Notes' })).not.toBeInTheDocument();
     const visible = screen
       .getAllByText('Notes')
       .filter((element) => !element.classList.contains('sr-only'));
