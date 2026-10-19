@@ -238,9 +238,9 @@ export function GamePanel({
               from, enlarged, rather than a row with a thumbnail (owner,
               2026-10-19: "a bigger image of the game and then stuff under
               it"). 192px wide keeps the rows within reach on a laptop. */}
-          <header className="border-b p-4 pr-12">
+          <header className="flex flex-col items-center border-b p-4 pr-12 text-center">
             <CoverTile game={game} />
-            <div className="mt-3 min-w-0">
+            <div className="mt-3 flex w-full min-w-0 flex-col items-center">
               {game === null ? (
                 <Skeleton className="h-6 w-48" />
               ) : (

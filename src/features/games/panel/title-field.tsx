@@ -125,7 +125,7 @@ export function TitleField({
           setDraft(game.title);
           setEditing(true);
         }}
-        className="hover:text-muted-foreground -mx-1 -my-0.5 block max-w-full rounded-md px-1 py-0.5 text-left text-lg leading-tight font-semibold transition-colors"
+        className="hover:text-muted-foreground -mx-1 -my-0.5 block max-w-full rounded-md px-1 py-0.5 text-center text-lg leading-tight font-semibold transition-colors"
       >
         <span className="line-clamp-2">{game.title}</span>
       </button>
