@@ -61,7 +61,9 @@ describe('owner boundary', () => {
     await expect(
       actions.createGameDlcAction(id, form({ name: 'DLC', year: '2025' })),
     ).rejects.toThrow();
-    await expect(actions.updateGameDlcFieldAction(id, 'name', 'x')).rejects.toThrow();
+    await expect(
+      actions.updateGameDlcAction(id, form({ name: 'x', year: '2025' })),
+    ).rejects.toThrow();
     await expect(actions.deleteGameDlcAction(id)).rejects.toThrow();
   });
 });
@@ -160,52 +162,80 @@ describe('createGameDlcAction', () => {
   });
 });
 
-describe('updateGameDlcFieldAction', () => {
+describe('updateGameDlcAction', () => {
   async function seeded(): Promise<{ ownerId: string; gameId: string; dlcId: string }> {
     const ownerId = await provisionOwner();
     const gameId = await playedGame(ownerId);
-    const row = await dlc.createDlc(ownerId, gameId, { name: 'DLC', year: 2025, hoursTenths: 60 });
+    const row = await dlc.createDlc(ownerId, gameId, {
+      name: 'DLC',
+      year: 2025,
+      hoursTenths: 60,
+      priceCents: 1999,
+    });
     return { ownerId, gameId, dlcId: row.id };
   }
 
-  it('renames', async () => {
+  it('replaces the whole row from the form: a figure left blank is cleared', async () => {
     const { ownerId, gameId, dlcId } = await seeded();
-    expect(await actions.updateGameDlcFieldAction(dlcId, 'name', 'Shadow of the Erdtree')).toEqual({
-      ok: true,
+
+    const result = await actions.updateGameDlcAction(
+      dlcId,
+      form({ name: 'Shadow of the Erdtree', year: '2026', hours: '2.5' }),
+    );
+
+    expect(result).toEqual({ ok: true });
+    const [row] = await dlc.listDlcForGame(ownerId, gameId);
+    expect(row).toMatchObject({
+      name: 'Shadow of the Erdtree',
+      year: 2026,
+      hoursTenths: 25,
+      priceCents: null,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
     });
-    expect((await dlc.listDlcForGame(ownerId, gameId))[0]?.name).toBe('Shadow of the Erdtree');
   });
 
-  it('clears a nullable figure on an empty commit', async () => {
+  it('stores dollars as cents and both trophy counts', async () => {
     const { ownerId, gameId, dlcId } = await seeded();
-    expect(await actions.updateGameDlcFieldAction(dlcId, 'hours', '')).toEqual({ ok: true });
-    expect((await dlc.listDlcForGame(ownerId, gameId))[0]?.hoursTenths).toBeNull();
-  });
-
-  it('stores dollars as cents and parses hours into tenths', async () => {
-    const { ownerId, gameId, dlcId } = await seeded();
-    await actions.updateGameDlcFieldAction(dlcId, 'priceDollars', '19.99');
-    await actions.updateGameDlcFieldAction(dlcId, 'hours', '2.5');
+    await actions.updateGameDlcAction(
+      dlcId,
+      form({
+        name: 'DLC',
+        year: '2025',
+        priceDollars: '19.99',
+        achievementsUnlocked: '10',
+        achievementsTotal: '12',
+      }),
+    );
     const [row] = await dlc.listDlcForGame(ownerId, gameId);
     expect(row?.priceCents).toBe(1999);
-    expect(row?.hoursTenths).toBe(25);
+    expect(row?.achievementsUnlocked).toBe(10);
+    expect(row?.achievementsTotal).toBe(12);
   });
 
-  it('refuses to blank the name or the year', async () => {
+  it('refuses a blank name or year as a field error', async () => {
     const { dlcId } = await seeded();
-    expect((await actions.updateGameDlcFieldAction(dlcId, 'name', '')).ok).toBe(false);
-    expect((await actions.updateGameDlcFieldAction(dlcId, 'year', '')).ok).toBe(false);
+    expect(
+      await actions.updateGameDlcAction(dlcId, form({ name: '', year: '2025' })),
+    ).toMatchObject({
+      ok: false,
+      field: 'name',
+    });
+    expect(await actions.updateGameDlcAction(dlcId, form({ name: 'DLC', year: '' }))).toMatchObject(
+      {
+        ok: false,
+        field: 'year',
+      },
+    );
   });
 
   it('is a not-found for a row that belongs to someone else', async () => {
-    // provisionOwner(email) only inserts a user row; the request owner is
-    // always OWNER_EMAIL, so seed the other owner's row through the DAL.
     await provisionOwner();
     const otherId = await provisionOwner('other@burmy.test');
     const otherGame = await games.createGame(otherId, { title: 'Elden Ring', platform: 'ps5' });
     const row = await dlc.createDlc(otherId, otherGame.id, { name: 'DLC', year: 2025 });
 
-    const result = await actions.updateGameDlcFieldAction(row.id, 'year', '2026');
+    const result = await actions.updateGameDlcAction(row.id, form({ name: 'DLC', year: '2026' }));
 
     expect(result.ok).toBe(false);
     expect((await dlc.listDlcForGame(otherId, otherGame.id))[0]?.year).toBe(2025);
