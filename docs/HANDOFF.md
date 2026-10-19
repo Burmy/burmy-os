@@ -116,7 +116,7 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
   DLC' everywhere", "I don't like the outlines", "the user should remain on the panel", "random
   numbers, hard to tell what's what". One label/value row per field, Notes included; DLC as labelled rows
   edited in place (part names in the label column, figures under a small header; the base game's
-  year is First played); every row 36px; years as
+  year is First played); every row 36px, no block gaps; years as
   rows with a plus beside First played; the collection is a members list plus "+ Add games to
   collection", no toggle.
 - **DLC adds; the year split attributes.** Never derive the base figures from DLC rows or make DLC

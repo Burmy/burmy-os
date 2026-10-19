@@ -698,8 +698,8 @@ achievement counts, the platinum toggle; platform, ownership, price, genre, deve
 then the parts grid (see "DLC") and the collection — its members as a list, then a plain
 "+ Add games to collection" line, the same shape as the grid's "+ Add DLC", each its own
 left-aligned row; then Notes, an ordinary row like every other field; and Remove. **Every row is
-the same height (36px)** — a fixed minimum, not padding around content — with one identical 8px
-gap between the three blocks; measured in a real browser, because the owner read a 35/40/47px mix
+the same height (36px)** — a fixed minimum, not padding around content — with no gap between the
+three blocks at all (an 8px one was tried and read as "padding under Platinum"); measured in a real browser, because the owner read a 35/40/47px mix
 as "inconsistent", correctly. No outlined buttons anywhere in the panel: every action is quiet text
 with a plus or a word, by owner decision.
 

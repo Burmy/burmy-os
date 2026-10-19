@@ -269,7 +269,7 @@ export function GamePanel({
             {game === null ? (
               <PanelSkeleton />
             ) : (
-              <div className="space-y-2">
+              <div>
                 <div>
                   <RatingRow rating={game.rating} onSave={(value) => saveField('rating', value)} />
                   {/* Only while wanted: it is what sorts the game into "Your
@@ -653,7 +653,7 @@ function PlatinumToggle({
       aria-pressed={on}
       onClick={onToggle}
       className={cn(
-        'inline-flex h-6 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
+        'inline-flex h-6 items-center gap-1.5 justify-self-start rounded-md border px-3 text-xs font-medium transition-colors',
         on
           ? 'border-slate-400/50 bg-gradient-to-br from-slate-100 via-slate-300 to-slate-400 text-slate-800 shadow-sm'
           : 'text-muted-foreground hover:text-foreground -ml-2.5 border-transparent',
