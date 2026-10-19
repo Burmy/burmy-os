@@ -686,7 +686,7 @@ state, not a prop, and the action's own `revalidatePath` only refreshes the page
 from inside the panel (a member, the parent collection) has only an id and shows a skeleton until that
 fetch lands. Stale data stays on screen while a re-fetch is in flight; nothing flickers.
 
-**Layout — one column of single-line rows, no section headings.** A compact header — cover, the
+**Layout — one column of label/value rows, no section headings at all.** A compact header — cover, the
 click-to-edit title with its IGDB search-as-you-type, the platform (plus a "Wanted" pill and an
 "Add to library" button for a wishlisted game — `played` is never printed anywhere), and a muted
 `Metacritic N · ~Nh to beat` line when IGDB supplied either (ESRB is stored but never shown; the
@@ -695,8 +695,10 @@ blocks of rows separated by a little space, no headings: rating, release date wh
 first played (with a **+** beside the year that starts a year split — see below), the year rows,
 achievement counts, the platinum toggle; platform, ownership, price, genre, developer, publisher;
 then the parts grid (see "DLC") and the collection — its members as a list, then a plain
-"+ Add games to collection" line, the same shape as the grid's "+ Add DLC"; then Notes — the one heading, because it is a block of
-text, not a row — and Remove. No outlined buttons anywhere in the panel: every action is quiet text
+"+ Add games to collection" line, the same shape as the grid's "+ Add DLC" — both INDENTED to the
+value column with the label column empty, because the part names inside the grid are values and at
+the far left they read as row labels; then Notes, an ordinary row like every other field; and
+Remove. No outlined buttons anywhere in the panel: every action is quiet text
 with a plus or a word, by owner decision.
 
 **Years are rows, not an editor.** The split used to hide behind "Split across years" and its own
@@ -712,8 +714,7 @@ everywhere", "keep everything consistent"; every row is one line and no value ca
 "+ Add games to collection" is all there is; with members, they are listed above it, each with its
 own remove. A member gets the "Part of" picker instead. (The earlier Show/Hide row was dropped the
 day it shipped: "keep the collection and DLC consistent, just have an add games button like the
-add DLC button".) The Notes field keeps the word as its accessible name only
-(`InlineEditField`'s `hideLabel`). Every field keeps its per-field inline
+add DLC button".) Notes is a plain label/value row. Every field keeps its per-field inline
 save through `updateGameFieldAction`; a collection member's hours, price and ownership stay read-only
 ("From the collection") exactly as before. Creating a game is still the small modal — a new row needs
 only a handful of fields to start.

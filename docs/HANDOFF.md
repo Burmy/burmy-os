@@ -114,9 +114,10 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **The panel has no section headings, no value hints, no outlined buttons and no modals for
   editing.** Owner feedback across three rounds: "white space and double lines", "a lot of 'with
   DLC' everywhere", "I don't like the outlines", "the user should remain on the panel", "random
-  numbers, hard to tell what's what". One line per row; DLC as a labelled grid edited in place (the base game's
-  year is First played); years as rows with a plus beside First played; the collection is a
-  members list plus "+ Add games to collection", no toggle.
+  numbers, hard to tell what's what". One label/value row per field, Notes included; DLC as a labelled grid
+  edited in place (the base game's year is First played), indented to the value column; years as
+  rows with a plus beside First played; the collection is a members list plus "+ Add games to
+  collection", no toggle.
 - **DLC adds; the year split attributes.** Never derive the base figures from DLC rows or make DLC
   "add up" to anything.
 - **No syncs, no trophy list.** Hours, achievement counts and platinum are hand-entered. Do not
