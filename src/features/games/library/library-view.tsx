@@ -1,7 +1,7 @@
 'use client';
 
 import { Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -78,9 +78,12 @@ export function LibraryView({
   // only a ring saying which one is open. See `game-panel.tsx`.
   const { openGame, activeId } = useGamePanel();
 
-  function open(game: Game): void {
-    openGame(game);
-  }
+  // STABLE, so the memoised cards and rows keep their identity across a
+  // re-render: a drop commits the new order through React, and with a fresh
+  // `onOpen` every time that commit re-rendered all 181 cards — a 150ms task
+  // at the end of every drag, traced. With these stable the commit touches
+  // 181 wrapper divs and nothing underneath.
+  const open = useCallback((game: Game): void => openGame(game), [openGame]);
 
   const [view, setView] = useState<ViewMode>('gallery');
   const [status, setStatus] = useState<StatusFilter>('all');
@@ -142,11 +145,11 @@ export function LibraryView({
    */
   const [selectedIds, setSelectedIds] = useState<readonly string[]>([]);
 
-  function toggleSelect(game: Game): void {
+  const toggleSelect = useCallback((game: Game): void => {
     setSelectedIds((current) =>
       current.includes(game.id) ? current.filter((id) => id !== game.id) : [...current, game.id],
     );
-  }
+  }, []);
 
   function changeView(next: ViewMode): void {
     if (next !== 'table') setSelectedIds([]);
