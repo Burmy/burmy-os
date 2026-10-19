@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { requireOwner } from '@/server/auth/owner';
 import { type DlcInput, createDlc, deleteDlc, updateDlc } from '@/server/db/games/dlc';
 import {
-  DlcOnCollectionMemberError,
   DuplicateDlcError,
   GameNotFoundError,
 } from '@/server/db/games/errors';
@@ -61,7 +60,6 @@ function toResult(error: unknown): ActionResult {
   if (error instanceof DuplicateDlcError) {
     return fail(`"${error.duplicateName}" is already recorded on this game.`, 'name');
   }
-  if (error instanceof DlcOnCollectionMemberError) return fail(error.message);
   if (error instanceof GameNotFoundError) return fail(error.message);
   if (error instanceof z.ZodError) {
     const issue = error.issues[0];

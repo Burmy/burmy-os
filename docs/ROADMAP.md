@@ -1381,6 +1381,11 @@ every glance. Decided through a product interview, then built on `feat/games-sim
 - **Upcoming** opens with "Your wishlist" and no longer auto-flips a released wanted game to backlog:
   released games show "Out now" until the owner moves them. The feed hides games already in the
   library. A hand-added wanted game can be given a release date in the panel.
+- **Hours are individual inside a collection** (2026-10-19, owner: "I feel like hours should be
+  individual"): a member carries its own hours, year split and DLC; the collection shows the members'
+  sum read-only, falling back to its own unsplit lump while no member has any — the rule trophies
+  already followed (`rollUpHours`, `collectionAdjustedRows`). Price stays one figure on the set. The
+  two DLC-on-member refusals (`DlcOnCollectionMemberError`, `GameHasDlcError`) were removed.
 - **Library order** is the sheet's (changed 2026-10-19, from "last edited first"): the PlayStation
   shelf (PS5 + PS4 together), then PSP, then Steam/PC; within a shelf wanted first, then newest
   first-played year first, year-less rows last, title as the tie-break. Editing or adding a game does

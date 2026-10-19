@@ -128,6 +128,10 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **`wanted` is excluded from stats in exactly one place**: `listGameStatRows`.
 - **A `wanted` game is never auto-flipped.** It stays on the wishlist, marked "Out now" once released,
   until the owner changes its status. (This reversed an earlier decision.)
+- **Inside a collection, hours and trophies are the individual title's; price is the set's.** The
+  collection shows the members' sum read-only and falls back to its own unsplit lump while no member
+  carries the figure (`rollUpHours`/`rollUpTrophies`; `collectionAdjustedRows` at the stats boundary).
+  A member can split its hours across years and carry DLC. Hours joined this rule on 2026-10-19.
 - **Library order is the owner's sheet order** — PlayStation (PS5 + PS4 together), PSP, Steam/PC;
   wanted first, then newest first-played year, year-less rows last, title as tie-break. It replaced
   "last edited first" on 2026-10-19; an edit or a new row never jumps to the front.

@@ -494,3 +494,55 @@ describe('listWishlistIgdbIds', () => {
     expect(await games.listWishlistIgdbIds(mine)).toEqual([]);
   });
 });
+
+/**
+ * Hours roll up from the members (2026-10-19), at the same read boundary
+ * trophies already did: a collection whose games carry their own hours
+ * contributes none of its own to any stat, while an unsplit set keeps its
+ * lump. `listCollectionMembers` carries the hours the panel sums.
+ */
+describe('collections — hours on the members', () => {
+  it('listGameStatRows nulls a rolled-up collection’s own hours and keeps an unsplit lump', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const trilogy = await games.createGame(owner, {
+      title: 'Crysis Remastered Trilogy',
+      platform: 'ps4',
+      hoursTenths: 320,
+    });
+    const crysis = await games.createGame(owner, {
+      title: 'Crysis Remastered',
+      platform: 'ps4',
+      hoursTenths: 97,
+    });
+    await games.setGameCollection(owner, crysis.id, trilogy.id);
+    const ndc = await games.createGame(owner, {
+      title: 'Nathan Drake Collection',
+      platform: 'ps4',
+      hoursTenths: 442,
+    });
+    const drake = await games.createGame(owner, { title: "Drake's Fortune", platform: 'ps4' });
+    await games.setGameCollection(owner, drake.id, ndc.id);
+
+    const rows = new Map((await games.listGameStatRows(owner)).map((row) => [row.id, row]));
+
+    expect(rows.get(trilogy.id)?.hoursTenths).toBeNull();
+    expect(rows.get(crysis.id)?.hoursTenths).toBe(97);
+    expect(rows.get(ndc.id)?.hoursTenths).toBe(442);
+    expect(rows.get(drake.id)?.hoursTenths).toBeNull();
+  });
+
+  it('listCollectionMembers carries each member’s own hours', async () => {
+    const owner = await makeOwner('owner@burmy.test');
+    const trilogy = await games.createGame(owner, { title: 'Crysis Trilogy', platform: 'ps4' });
+    const crysis = await games.createGame(owner, {
+      title: 'Crysis Remastered',
+      platform: 'ps4',
+      hoursTenths: 97,
+    });
+    await games.setGameCollection(owner, crysis.id, trilogy.id);
+
+    expect(
+      (await games.listCollectionMembers(owner, trilogy.id)).map((m) => m.hoursTenths),
+    ).toEqual([97]);
+  });
+});

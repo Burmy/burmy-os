@@ -285,3 +285,42 @@ describe('GameTable columns', () => {
     expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Hours (and trophies) roll up onto the collection's row from the titles
+ * inside it, the same figure the panel shows — see `rollUpHours`. A set whose
+ * members carry nothing still shows its own unsplit lump.
+ */
+describe('GameTable collection roll-ups', () => {
+  it('shows the members’ summed hours on the collection row and each member’s own on its row', () => {
+    const collection = game({
+      id: 'trilogy',
+      title: 'Crysis Remastered Trilogy',
+      hoursTenths: 320,
+    });
+    const members = [
+      game({ id: 'c1', title: 'Crysis Remastered', collectionId: 'trilogy', hoursTenths: 97 }),
+      game({ id: 'c2', title: 'Crysis 2 Remastered', collectionId: 'trilogy', hoursTenths: 133 }),
+      game({ id: 'c3', title: 'Crysis 3 Remastered', collectionId: 'trilogy', hoursTenths: 102 }),
+    ];
+    render(<GameTable activeId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+
+    // 9.7 + 13.3 + 10.2 — the wrapper's own 32.0 is superseded, never added.
+    expect(screen.getByText('33.2h')).toBeInTheDocument();
+    expect(screen.queryByText('32h')).not.toBeInTheDocument();
+    expect(screen.getByText('9.7h')).toBeInTheDocument();
+    expect(screen.getByText('13.3h')).toBeInTheDocument();
+  });
+
+  it('keeps an unsplit collection’s own hours while no member carries any', () => {
+    const collection = game({ id: 'ndc', title: 'Nathan Drake Collection', hoursTenths: 442 });
+    const members = [
+      game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc', hoursTenths: null }),
+      game({ id: 'uc2', title: 'Drake 2', collectionId: 'ndc', hoursTenths: null }),
+    ];
+    render(<GameTable activeId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+
+    expect(screen.getByText('44.2h')).toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+  });
+});

@@ -24,7 +24,7 @@ import {
 import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
-import { rollUpTrophies } from '@/server/games/collections';
+import { rollUpHours, rollUpTrophies } from '@/server/games/collections';
 import { gameTotals } from '@/server/games/dlc';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatReleaseCountdown } from '@/server/games/release-date';
@@ -185,7 +185,23 @@ export function GamePanel({
   // the DLC list (`DlcDialog`, target `base`). With no DLC the rows ARE the
   // base and edit directly — one number, one place.
   const hasDlc = game !== null && game.dlc.length > 0;
-  const totals = game === null || !hasDlc ? null : gameTotals(game, game.dlc);
+  // HOURS ROLL UP FROM THE MEMBERS exactly as trophies do (`rollUpHours`): a
+  // collection whose games carry their own hours shows their sum, read-only,
+  // and keeps First played alone in place of the year rows — the hours being
+  // split across years are the members', edited on each member. A member's
+  // own Hours row is editable like any other game's.
+  const hoursRollup =
+    game !== null && current !== null && current.members.length > 0
+      ? rollUpHours(game, current.members)
+      : null;
+  const hoursSummedFromMembers = hoursRollup !== null && !hoursRollup.unsplit;
+  const baseHoursTenths = hoursSummedFromMembers
+    ? hoursRollup.hoursTenths
+    : (game?.hoursTenths ?? null);
+  const totals =
+    game === null || !hasDlc
+      ? null
+      : gameTotals({ ...game, hoursTenths: baseHoursTenths }, game.dlc);
 
   return (
     <DialogPrimitive.Root
@@ -295,20 +311,22 @@ export function GamePanel({
                         ? totals.hoursTenths === null
                           ? undefined
                           : formatHours(hours(totals.hoursTenths))
-                        : game.hoursTenths === null
+                        : baseHoursTenths === null
                           ? undefined
-                          : formatHours(hours(game.hoursTenths))
+                          : formatHours(hours(baseHoursTenths))
                     }
                     placeholder="Not tracked"
-                    disabled={isCollectionMember || hasDlc}
-                    {...(isCollectionMember ? { disabledHint: 'From the collection' } : {})}
+                    disabled={hoursSummedFromMembers || hasDlc}
+                    {...(hoursSummedFromMembers
+                      ? { disabledHint: 'Added up from the games in this collection' }
+                      : {})}
                     onSave={(value) => saveField('hours', value)}
                   />
                   {/* A play-year split apportions the BASE game's own hours
-                      across years. A title inside a collection has no hours
-                      of its own — the set's hours are one figure on the
-                      collection — so a member gets First played alone. */}
-                  {isCollectionMember ? (
+                      across years. A collection whose games carry the hours
+                      has none of its own to split — the split lives on each
+                      member — so it gets First played alone. */}
+                  {hoursSummedFromMembers ? (
                     <InlineEditField
                       label="First played"
                       value={game.firstPlayedYear === null ? '' : String(game.firstPlayedYear)}
@@ -411,12 +429,10 @@ export function GamePanel({
                 </div>
 
                 {/* The parts grid (base game + DLC) and the collection. A
-                    title inside a collection carries no DLC — its figures,
-                    and so its DLC, live on the collection row. */}
+                    title inside a collection carries its own hours, so it
+                    carries its own DLC too — the grid is for every game. */}
                 <div>
-                  {isCollectionMember ? null : (
-                    <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
-                  )}
+                  <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
 
                   {/* A row that HOLDS games lists them, then "+ Add games to
                       collection"; a standalone row can become a collection

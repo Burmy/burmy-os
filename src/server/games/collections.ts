@@ -6,8 +6,8 @@
  * THE COLLECTION COUNTING RULE, IN ONE SENTENCE
  *
  *   Anything that counts GAMES excludes collection rows.
- *   Anything that sums HOURS or MONEY includes everything.
- *   Anything that sums TROPHIES goes through `trophyAdjustedRows` first.
+ *   Anything that sums MONEY includes everything.
+ *   Anything that sums HOURS or TROPHIES goes through `collectionAdjustedRows` first.
  *
  * A collection ("Uncharted: The Nathan Drake Collection") is one purchase
  * with one price and one play time, wrapping several distinct games the owner
@@ -16,19 +16,22 @@
  * alongside its own three titles would report four games where there are
  * three, and double its platform in every distribution.
  *
- * Hours and money need no rule at all, and that is the point: a title inside
- * a collection carries NULL hours and NULL price, so every existing `SUM` and
- * `reduce` in `stats.ts` already excludes it for free. Only the COUNTS need
- * this filter, which is why it is a helper applied at a few named call sites
- * rather than a filter at the read boundary the way `wanted` is
- * (`listGameStatRows`) — filtering collections out there would take their
- * hours and money with them.
+ * Money needs no rule at all, and that is the point: a title inside a
+ * collection carries NULL price (one boxed set was one purchase), so every
+ * existing `SUM` and `reduce` in `stats.ts` already excludes it for free.
+ * Only the COUNTS need this filter, which is why it is a helper applied at a
+ * few named call sites rather than a filter at the read boundary the way
+ * `wanted` is (`listGameStatRows`) — filtering collections out there would
+ * take their money with them.
  *
- * TROPHIES ARE THE EXCEPTION, and it is not an inconsistency — it is PSN's
- * own model. See `rollUpTrophies` at the bottom of this file: hours cannot be
- * split per title and trophies genuinely can, so a member CAN carry its own,
- * and a flat sum over every row would then double-count. That is what
- * `trophyAdjustedRows` is for.
+ * HOURS AND TROPHIES ROLL UP FROM THE MEMBERS. A title inside a set carries
+ * its own trophies (PSN's model from the start) and, since 2026-10-19 at the
+ * owner's request ("hours should be individual"), its own hours too. The
+ * collection reports the SUM of what its members carry, and falls back to its
+ * own stored figure only while no member carries any — see `rollUpTrophies`
+ * and `rollUpHours` at the bottom of this file. A flat sum over every row
+ * would then count a figure twice, which is what `collectionAdjustedRows` is
+ * for. Price stays one figure on the collection.
  *
  * Derived from the rows themselves rather than a stored flag: a row is a
  * collection exactly when some other row names it. One pass, no extra query,
@@ -80,12 +83,12 @@ export interface CollectionGroup<T extends CollectionRow> {
  * its own titles in input order.
  *
  * Input order is preserved rather than re-sorted, because the caller has
- * already sorted — and a collection's members are all but guaranteed NOT to
- * sort adjacent to it. `listGames` orders by recency, and a title inside a
- * collection carries no hours and usually no year, so it lands at the far end
- * of the library from the collection that holds its play data. A single
- * ordered pass would routinely reach a member before its parent, so this
- * takes two passes over the same array.
+ * already sorted — and a collection's members are not guaranteed to sort
+ * adjacent to it. `listGames` orders by shelf, then first-played year, then
+ * title, and a title inside a collection sorts on ITS OWN year and title, so
+ * it can land well away from the collection that wraps it. A single ordered
+ * pass would routinely reach a member before its parent, so this takes two
+ * passes over the same array.
  *
  * THREE THINGS THAT MUST NEVER MAKE A ROW DISAPPEAR, since this function
  * decides what the library renders:
@@ -146,8 +149,10 @@ export function groupByCollection<T extends CollectionRow>(
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * The header of this file used to say a collection carries "one trophy list"
- * alongside its one price and one play time. That is true of price and hours
- * and false of trophies, and PSN's own data model is the evidence:
+ * alongside its one price and one play time. That is true of price, was
+ * false of trophies from the start, and stopped being true of hours on
+ * 2026-10-19 (`rollUpHours`, below, at the owner's request). PSN's own data
+ * model is the evidence for trophies:
  *
  *   getUserPlayedGames  -> one entry per PRODUCT, keyed by `titleId`
  *                          (CUSA…/PPSA…), carrying ONE cumulative
@@ -277,4 +282,91 @@ export function trophyAdjustedRows<T extends CollectionRow & TrophyBearingRow>(
     }
     return row;
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hours — the same precedence rule, asked for by the owner on 2026-10-19
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * HOURS BELONG TO THE INDIVIDUAL TITLE TOO. "I feel like hours should be
+ * individual" — the owner, 2026-10-19, and the rule is deliberately the one
+ * trophies already follow rather than a third variant:
+ *
+ *   If any member carries hours, the collection's figure is the SUM of its
+ *   members. Otherwise the collection's own stored figure is used, and
+ *   reported as UNSPLIT.
+ *
+ * The fallback keeps the two Uncharted sets honest: they were imported as one
+ * lump each (42.9h, 44.2h) with no per-game figure anywhere, and they keep
+ * showing that lump until the owner types hours on a member — at which point
+ * the lump stops counting and the members do. Derived, not stored, for the
+ * reason `rollUpTrophies` gives: precedence cannot disagree with itself.
+ *
+ * A member's hours are its own in every sense: it can split them across
+ * years (`game_play_years`) and carry DLC, exactly like a standalone game.
+ * Price is NOT rolled up — a boxed set was bought once.
+ */
+export interface HourBearingRow {
+  readonly hoursTenths: number | null;
+}
+
+export interface CollectionHoursSummary {
+  readonly hoursTenths: number | null;
+  /** The figure is the collection's own unsplit lump rather than a sum of its members. */
+  readonly unsplit: boolean;
+}
+
+export function rollUpHours(
+  collection: HourBearingRow,
+  members: readonly HourBearingRow[],
+): CollectionHoursSummary {
+  const contributing = members.filter((row) => row.hoursTenths !== null);
+
+  if (contributing.length === 0) {
+    return { hoursTenths: collection.hoursTenths, unsplit: collection.hoursTenths !== null };
+  }
+
+  return {
+    hoursTenths: contributing.reduce((total, row) => total + (row.hoursTenths ?? 0), 0),
+    unsplit: false,
+  };
+}
+
+/**
+ * Hours for a whole library, with each collection whose members carry hours
+ * contributing none of its own — the members are still in the array and
+ * already carry them. Same shape and same reason as `trophyAdjustedRows`.
+ */
+export function hoursAdjustedRows<T extends CollectionRow & HourBearingRow>(
+  rows: readonly T[],
+): (Omit<T, 'hoursTenths'> & HourBearingRow)[] {
+  const collections = collectionIdsIn(rows);
+  if (collections.size === 0) return [...rows];
+
+  const membersByCollection = new Map<string, T[]>();
+  for (const row of rows) {
+    if (row.collectionId === null || row.collectionId === row.id) continue;
+    const existing = membersByCollection.get(row.collectionId);
+    if (existing) existing.push(row);
+    else membersByCollection.set(row.collectionId, [row]);
+  }
+
+  return rows.map((row) => {
+    if (!collections.has(row.id)) return row;
+    const summary = rollUpHours(row, membersByCollection.get(row.id) ?? []);
+    return summary.unsplit ? row : { ...row, hoursTenths: null };
+  });
+}
+
+/**
+ * Both roll-ups at once — what `listGameStatRows` applies at the read
+ * boundary so that no stat builder has to remember either rule.
+ */
+export function collectionAdjustedRows<T extends CollectionRow & HourBearingRow & TrophyBearingRow>(
+  rows: readonly T[],
+) {
+  // Return type left to inference: spelling the nested `Omit` out by hand is
+  // what `tsc` refuses to unify, and the inferred shape is what callers need.
+  return hoursAdjustedRows(trophyAdjustedRows(rows));
 }

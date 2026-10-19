@@ -192,10 +192,11 @@ export function buildYearlyBreakdown(
     target.playedGames.add(attribution.gameId);
   }
 
-  // A collection is not itself a game that was started, but its achievements
-  // ARE the real ones (its titles carry none) — so this loop walks every row
-  // and applies the counting rule to `startedCount` alone. See
-  // `countableGames`.
+  // A collection is not itself a game that was started, but an UNSPLIT set's
+  // achievements are the real ones (its titles carry none) — a rolled-up set
+  // already arrives with null hours and trophies from `collectionAdjustedRows`
+  // and its members carry them instead. So this loop walks every row and
+  // applies the counting rule to `startedCount` alone. See `countableGames`.
   const collections = collectionIdsIn(rows);
 
   for (const row of rows) {

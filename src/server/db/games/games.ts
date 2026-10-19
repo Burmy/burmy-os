@@ -14,13 +14,12 @@
 import { and, asc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
-import { gameDlc, games as gamesTable } from '@/server/db/schema';
-import { trophyAdjustedRows } from '@/server/games/collections';
+import { games as gamesTable } from '@/server/db/schema';
+import { collectionAdjustedRows } from '@/server/games/collections';
 import type { GameStatRow } from '@/server/games/stats';
 import type { GameOwnership, GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import {
   DuplicateGameError,
-  GameHasDlcError,
   DuplicateWishlistGameError,
   GameNotFoundError,
   InvalidCollectionError,
@@ -310,16 +309,17 @@ export async function listGameStatRows(ownerId: string): Promise<GameStatRow[]> 
     .from(gamesTable)
     .where(and(eq(gamesTable.ownerId, ownerId), ne(gamesTable.status, 'wanted')));
 
-  // TROPHIES ARE ADJUSTED HERE, AT THE SAME BOUNDARY `wanted` IS FILTERED,
-  // and for the same reason its own doc comment gives: six call sites is six
-  // chances to forget one, and a stat function added later would silently
-  // miss the rule. A collection whose members carry their own trophies stops
-  // contributing its (now superseded) lump, so no achievement is counted
-  // twice — see `trophyAdjustedRows` for the double-count this prevents.
+  // HOURS AND TROPHIES ARE ADJUSTED HERE, AT THE SAME BOUNDARY `wanted` IS
+  // FILTERED, and for the same reason its own doc comment gives: six call
+  // sites is six chances to forget one, and a stat function added later would
+  // silently miss the rule. A collection whose members carry their own hours
+  // or trophies stops contributing its (now superseded) lump, so nothing is
+  // counted twice — see `collectionAdjustedRows` for the double-count this
+  // prevents.
   //
-  // HOURS AND MONEY ARE NOT TOUCHED. A member carries NULL for both, so those
-  // sums are already correct and the collection is genuinely where they live.
-  return trophyAdjustedRows(
+  // MONEY IS NOT TOUCHED. A member carries NULL price, so that sum is already
+  // correct and the collection is genuinely where the purchase lives.
+  return collectionAdjustedRows(
     rows.map((row) => ({
       ...row,
       platform: row.platform as GamePlatform,
@@ -465,11 +465,13 @@ export interface CollectionMember {
   readonly rating: number | null;
   readonly firstPlayedYear: number | null;
   /**
-   * A member's OWN trophies. Carried because trophies, unlike hours and price,
-   * genuinely belong to the individual title — PSN gives the Nathan Drake
-   * Collection three separate trophy lists and one cumulative playDuration.
-   * The collection's page sums these; see `rollUpTrophies`.
+   * A member's OWN hours and trophies. Carried because both belong to the
+   * individual title — trophies by PSN's model (three lists for the Nathan
+   * Drake Collection), hours by the owner's decision of 2026-10-19. The
+   * collection's panel sums these; see `rollUpHours` and `rollUpTrophies`.
+   * Price is not here: one boxed set was one purchase, on the collection.
    */
+  readonly hoursTenths: number | null;
   readonly achievementsUnlocked: number | null;
   readonly achievementsTotal: number | null;
   readonly platinum: boolean;
@@ -489,6 +491,7 @@ export async function listCollectionMembers(
       status: gamesTable.status,
       rating: gamesTable.rating,
       firstPlayedYear: gamesTable.firstPlayedYear,
+      hoursTenths: gamesTable.hoursTenths,
       achievementsUnlocked: gamesTable.achievementsUnlocked,
       achievementsTotal: gamesTable.achievementsTotal,
       platinum: gamesTable.platinum,
@@ -563,26 +566,17 @@ async function assertCollectionTargetValid(
     .limit(1);
 
   if (ownMember) throw new InvalidCollectionError('already-a-collection');
-
-  // A member carries no hours, price or trophies of its own, and so cannot
-  // carry DLC either (`errors.ts`, `GameHasDlcError`). The owner moves the
-  // DLC to the collection first, then files the game.
-  const [ownDlc] = await getDb()
-    .select({ id: gameDlc.id })
-    .from(gameDlc)
-    .where(and(eq(gameDlc.ownerId, ownerId), eq(gameDlc.gameId, gameId)))
-    .limit(1);
-
-  if (ownDlc) throw new GameHasDlcError();
 }
 
 /**
  * Files a game into a collection, or takes it out of one (`null`).
  *
- * Removing a game from its collection does NOT give it back the hours, price
- * or trophies that live on the collection — those were never its own. It
- * simply becomes an ordinary standalone entry again, which is the same thing
- * `ON DELETE SET NULL` does when a collection is deleted outright.
+ * Removing a game from its collection does NOT hand it the price, or an
+ * unsplit lump of hours or trophies, that lives on the collection — those
+ * were never its own; whatever hours, trophies, year split and DLC the member
+ * carried itself simply stay with it. It becomes an ordinary standalone entry
+ * again, which is the same thing `ON DELETE SET NULL` does when a collection
+ * is deleted outright.
  */
 export async function setGameCollection(
   ownerId: string,

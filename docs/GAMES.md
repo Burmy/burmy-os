@@ -174,11 +174,12 @@ that skipped it is how a two-level chain no view can render would get into the d
 `src/server/games/collections.ts` is the only home for it (`collectionIdsIn`, `countableGames`,
 `groupByCollection`) — pure TypeScript, same framework-free boundary as `stats.ts`, which imports it.
 
-The sums need no rule at all, and that is the point: a title inside a collection carries `NULL` hours,
-`NULL` price and `platinum = false`, so every existing `SUM` and `reduce` already excludes it for free.
-Only the COUNTS need the filter, which is why it is applied at a few named call sites rather than at the
-read boundary the way `wanted` is — filtering collections out in `listGameStatRows` would take their
-hours and money with them.
+Money needs no rule at all, and that is the point: a title inside a collection carries `NULL` price (one
+boxed set was one purchase), so every existing `SUM` and `reduce` already excludes it for free. Only the
+COUNTS need the filter, which is why it is applied at a few named call sites rather than at the read
+boundary the way `wanted` is — filtering collections out in `listGameStatRows` would take their money
+with them. Hours and trophies ROLL UP from the members instead (next section), and every stat reads
+them through `collectionAdjustedRows` at that same boundary so nothing is counted twice.
 
 Applied in: `buildLibrarySummary` (`totalGames`, `playedCount`), `buildYearlyBreakdown`
 (`startedCount`), the dashboard's
@@ -189,11 +190,26 @@ title: hours are attributed to the row that carries them.
 
 ### Where the figures live
 
-A title inside a collection has no hours, price, trophies, play-year split or DLC of its own — the set
-has one of each, on the collection (see "DLC" below for how a collection's DLC trophies add on top of
-the member roll-up). The panel renders exactly those fields read-only for a member, with
-the hint "From the collection". Taking a game back out of a collection does **not** hand it those figures —
-they were never its own, which is also what `ON DELETE SET NULL` does when the collection is deleted.
+**Price and ownership** are the set's: one purchase, one figure on the collection row. The panel renders
+those two read-only for a member, with the hint "From the collection".
+
+**Hours and trophies are the individual title's.** A member carries its own hours (with its own year
+split and its own DLC, like any game) and its own trophies, and the collection reports the SUM of what
+its members carry — `rollUpHours` and `rollUpTrophies` in `src/server/games/collections.ts`, one
+precedence rule for both: if any member carries the figure, the collection's own stored value is
+superseded and ignored; while no member carries it, the collection's own lump is shown and labelled as
+covering the whole set ("unsplit"). That fallback is what keeps the two Uncharted sets honest — they
+were imported as one lump each with no per-game figure anywhere, and stay that way until the owner
+types hours on a member. Hours joined trophies in this rule on 2026-10-19 at the owner's request ("I
+feel like hours should be individual"); before that a member carried `NULL` hours by design. The
+collection's panel shows the rolled-up Hours and Achievements rows read-only ("Added up from the games
+in this collection") and First played alone in place of the year rows; the table shows the same
+roll-up on the collection's row. Every stat reads through `collectionAdjustedRows`, which nulls a
+rolled-up collection's own hours and trophies so the members are counted exactly once.
+
+Taking a game back out of a collection keeps whatever it carried itself and does **not** hand it the
+price or an unsplit lump — those were never its own, which is also what `ON DELETE SET NULL` does when
+the collection is deleted.
 
 ### How the two views render it
 
@@ -330,12 +346,11 @@ separately, and a total is what they want to read.
 a game *started* (`startedCount` is untouched), but its year counts as a year the game was *played*
 (`playedCount`). `unattributedTenths` never includes DLC — DLC is not attributed.
 
-**Collections.** A title inside a collection cannot carry DLC: its hours and price live on the
-collection row, so its DLC goes there too. The DAL refuses the insert
-(`DlcOnCollectionMemberError`) and refuses filing a game that already has DLC into a collection
-(`GameHasDlcError`); the panel hides the group for a member. Trophies are the one figure a collection
-gets from its MEMBERS (`rollUpTrophies`), so a collection's own DLC trophies add on top of that
-roll-up: `gameTotals` is applied after `trophyAdjustedRows`, never before. One rule throughout: DLC
+**Collections.** A title inside a collection carries its own hours and trophies, so it carries its own
+DLC too — the grid is on every game's panel. (Until 2026-10-19 a member carried no hours and the DAL
+refused DLC on one; both refusals went with that rule.) A collection gets hours and trophies from its
+MEMBERS (`rollUpHours`, `rollUpTrophies`), so a collection's own DLC adds on top of that roll-up:
+`gameTotals` is applied after `collectionAdjustedRows`, never before. One rule throughout: DLC
 adds to whatever row it is on.
 
 **Nulls stay null.** `sumDlc` returns `null` for a figure no row carries, and `gameTotals` returns
@@ -722,8 +737,8 @@ everywhere", "keep everything consistent"; every row is one line and no value ca
 own remove. A member gets the "Part of" picker instead. (The earlier Show/Hide row was dropped the
 day it shipped: "keep the collection and DLC consistent, just have an add games button like the
 add DLC button".) Notes is a plain label/value row. Every field keeps its per-field inline
-save through `updateGameFieldAction`; a collection member's hours, price and ownership stay read-only
-("From the collection") exactly as before. Creating a game is still the small modal — a new row needs
+save through `updateGameFieldAction`; a collection member's price and ownership stay read-only ("From
+the collection"), while its hours are its own since 2026-10-19 (see "Where the figures live"). Creating a game is still the small modal — a new row needs
 only a handful of fields to start.
 
 ---

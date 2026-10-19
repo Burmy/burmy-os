@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   type CollectionRow,
+  collectionAdjustedRows,
   collectionIdsIn,
   countableGames,
   groupByCollection,
+  hoursAdjustedRows,
+  rollUpHours,
   rollUpTrophies,
   trophyAdjustedRows,
 } from '@/server/games/collections';
@@ -118,7 +121,11 @@ describe('rollUpTrophies', () => {
     // PSN's real shape for the Nathan Drake Collection: three separate trophy
     // lists, one per remastered game, each with its own platinum.
     expect(
-      rollUpTrophies(NONE, [trophies(48, 48, true), trophies(50, 50, true), trophies(56, 56, true)]),
+      rollUpTrophies(NONE, [
+        trophies(48, 48, true),
+        trophies(50, 50, true),
+        trophies(56, 56, true),
+      ]),
     ).toEqual({ unlocked: 154, total: 154, platinum: true, unsplit: false });
   });
 
@@ -162,8 +169,12 @@ describe('rollUpTrophies', () => {
   });
 
   it('needs EVERY member platinumed before the set counts as platinum', () => {
-    expect(rollUpTrophies(NONE, [trophies(48, 48, true), trophies(20, 50, false)]).platinum).toBe(false);
-    expect(rollUpTrophies(NONE, [trophies(48, 48, true), trophies(50, 50, true)]).platinum).toBe(true);
+    expect(rollUpTrophies(NONE, [trophies(48, 48, true), trophies(20, 50, false)]).platinum).toBe(
+      false,
+    );
+    expect(rollUpTrophies(NONE, [trophies(48, 48, true), trophies(50, 50, true)]).platinum).toBe(
+      true,
+    );
   });
 
   it('counts a platinum-only member as carrying data', () => {
@@ -230,5 +241,94 @@ describe('trophyAdjustedRows', () => {
       row('elden', null, trophies(42, 42, true)),
     ];
     expect(trophyAdjustedRows(rows).find((r) => r.id === 'elden')).toEqual(rows[2]);
+  });
+});
+
+/**
+ * Hours follow the trophy rule since 2026-10-19 ("I feel like hours should be
+ * individual" — the owner). Same precedence, same adjusted-rows shape, and
+ * the two Uncharted sets — imported as one lump each — keep their lump until
+ * a member carries hours of its own.
+ */
+describe('rollUpHours', () => {
+  it('sums the members when any carries hours, ignoring the collection’s own figure', () => {
+    expect(
+      rollUpHours({ hoursTenths: 320 }, [
+        { hoursTenths: 97 },
+        { hoursTenths: 133 },
+        { hoursTenths: 102 },
+      ]),
+    ).toEqual({ hoursTenths: 332, unsplit: false });
+  });
+
+  it('falls back to the collection’s own lump while no member has any', () => {
+    expect(
+      rollUpHours({ hoursTenths: 442 }, [{ hoursTenths: null }, { hoursTenths: null }]),
+    ).toEqual({
+      hoursTenths: 442,
+      unsplit: true,
+    });
+  });
+
+  it('stops being unsplit the moment one member carries hours, even with the rest untracked', () => {
+    expect(
+      rollUpHours({ hoursTenths: 442 }, [{ hoursTenths: 150 }, { hoursTenths: null }]),
+    ).toEqual({
+      hoursTenths: 150,
+      unsplit: false,
+    });
+  });
+
+  it('is not unsplit when nothing carries hours at all', () => {
+    expect(rollUpHours({ hoursTenths: null }, [{ hoursTenths: null }])).toEqual({
+      hoursTenths: null,
+      unsplit: false,
+    });
+  });
+});
+
+describe('hoursAdjustedRows / collectionAdjustedRows', () => {
+  const hourRow = (id: string, collectionId: string | null, hoursTenths: number | null) => ({
+    id,
+    collectionId,
+    hoursTenths,
+    achievementsUnlocked: null,
+    achievementsTotal: null,
+    platinum: false,
+  });
+
+  it('nulls a collection whose members carry the hours, and leaves the members alone', () => {
+    const rows = [
+      hourRow('trilogy', null, 320),
+      hourRow('c1', 'trilogy', 97),
+      hourRow('c2', 'trilogy', 133),
+    ];
+    const adjusted = hoursAdjustedRows(rows);
+    expect(adjusted.find((r) => r.id === 'trilogy')?.hoursTenths).toBeNull();
+    expect(adjusted.filter((r) => r.id !== 'trilogy')).toEqual(rows.slice(1));
+  });
+
+  it('leaves an unsplit collection’s own lump in place', () => {
+    const rows = [hourRow('ndc', null, 442), hourRow('uc1', 'ndc', null)];
+    expect(hoursAdjustedRows(rows)).toEqual(rows);
+  });
+
+  it('applies both roll-ups at once', () => {
+    const rows = [
+      {
+        ...hourRow('set', null, 500),
+        achievementsUnlocked: 99,
+        achievementsTotal: 99,
+        platinum: true,
+      },
+      { ...hourRow('m1', 'set', 200), achievementsUnlocked: 10, achievementsTotal: 20 },
+    ];
+    const set = collectionAdjustedRows(rows).find((r) => r.id === 'set');
+    expect(set).toMatchObject({
+      hoursTenths: null,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
+      platinum: false,
+    });
   });
 });

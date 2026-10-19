@@ -11,6 +11,7 @@ import { StatusBadge } from '@/components/games/status-badge';
 import { RatingStars } from '@/components/games/rating-stars';
 import { cn } from '@/lib/utils';
 import type { CollectionMember } from '@/server/db/games/games';
+import { formatHours, hours } from '@/server/games/hours';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import {
   addGamesToCollectionAction,
@@ -35,10 +36,10 @@ import { GamePickerDialog, type PickableGame } from './game-picker-dialog';
  * neither is a shortcut around the one-level rule.
  * ─────────────────────────────────────────────────────────────────────────────
  *
- * Each row still shows only what genuinely belongs to the individual game —
- * its art, platform, year and the owner's rating. Hours, price and (for now)
- * trophies live on the collection and describe the whole set; repeating them
- * per row would either be a lie or a blank column on every line.
+ * Each row shows only what genuinely belongs to the individual game — its
+ * art, platform, year, its own hours when it has them, and the owner's
+ * rating. Price lives on the collection and describes the whole purchase;
+ * repeating it per row would be a lie.
  */
 export function CollectionMembersPanel({
   collectionId,
@@ -139,6 +140,11 @@ export function CollectionMembersPanel({
                 {member.firstPlayedYear === null ? null : (
                   <span className="text-muted-foreground shrink-0 text-xs">
                     {member.firstPlayedYear}
+                  </span>
+                )}
+                {member.hoursTenths === null ? null : (
+                  <span className="text-muted-foreground tabular shrink-0 text-xs">
+                    {formatHours(hours(member.hoursTenths))}
                   </span>
                 )}
                 <StatusBadge status={member.status} />

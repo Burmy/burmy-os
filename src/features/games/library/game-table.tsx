@@ -15,10 +15,27 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
-import type { CollectionGroup } from '@/server/games/collections';
+import { type CollectionGroup, rollUpHours, rollUpTrophies } from '@/server/games/collections';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import { gameTotals } from '@/server/games/dlc';
 import { formatHours, hours } from '@/server/games/hours';
+
+/** A collection row with each rolled-up figure in place of its own — see `rollUpHours`/`rollUpTrophies`. */
+function rolledUp(game: Game, members: readonly Game[]): Game {
+  const hoursSummary = rollUpHours(game, members);
+  const trophies = rollUpTrophies(game, members);
+  return {
+    ...game,
+    ...(hoursSummary.unsplit ? {} : { hoursTenths: hoursSummary.hoursTenths }),
+    ...(trophies.unsplit
+      ? {}
+      : {
+          achievementsUnlocked: trophies.unlocked,
+          achievementsTotal: trophies.total,
+          platinum: trophies.platinum,
+        }),
+  };
+}
 
 /**
  * The dense view — deliberately close to the spreadsheet this replaces, because
@@ -100,7 +117,7 @@ export function GameTable({
           <Fragment key={group.game.id}>
             <GameRow
               game={group.game}
-              memberCount={group.members.length}
+              members={group.members}
               active={group.game.id === activeId}
               onOpen={onOpen}
               {...(selectable
@@ -128,7 +145,7 @@ export function GameTable({
 
 function GameRow({
   game,
-  memberCount = 0,
+  members = [],
   collectionTitle,
   active = false,
   onOpen,
@@ -136,8 +153,8 @@ function GameRow({
   onToggleSelect,
 }: {
   readonly game: Game;
-  /** Non-zero when this row is a collection wrapper. */
-  readonly memberCount?: number;
+  /** Non-empty when this row is a collection wrapper: the titles filed under it, for the roll-ups. */
+  readonly members?: readonly Game[];
   /** Set when this row sits INSIDE a collection — indents it and names its parent for screen readers. */
   readonly collectionTitle?: string;
   /** This row's game is open in the side panel. */
@@ -149,8 +166,13 @@ function GameRow({
 }): React.ReactElement {
   const nested = collectionTitle !== undefined;
   const selectable = selected !== undefined && onToggleSelect !== undefined;
-  // Base + DLC — the library reads totals; only the panel shows the split.
-  const totals = gameTotals(game, game.dlc);
+  const memberCount = members.length;
+  // A collection whose games carry their own hours or trophies shows the
+  // roll-up (`rollUpHours`, `rollUpTrophies`) and its own lump otherwise —
+  // the same figure its panel shows. Then base + DLC on top: the library
+  // reads totals; only the panel shows the split.
+  const base = memberCount === 0 ? game : rolledUp(game, members);
+  const totals = gameTotals(base, game.dlc);
 
   return (
     <TableRow
@@ -204,10 +226,9 @@ function GameRow({
         )}
       </TableCell>
       <TableCell className="text-muted-foreground">{PLATFORM_LABELS[game.platform]}</TableCell>
-      {/* A title inside a collection reads "—" across Hours, Achievements and
-          Platinum, and that is correct rather than missing data: the set has
-          ONE play time and ONE trophy list, and they are on the row directly
-          above. See `docs/GAMES.md`, "Collections." */}
+      {/* A title inside a collection shows its OWN hours and trophies when it
+          carries them, and "—" when the set still holds one unsplit figure on
+          the row directly above. See `docs/GAMES.md`, "Collections." */}
       <TableCell className="tabular text-right">
         {totals.hoursTenths === null ? '—' : formatHours(hours(totals.hoursTenths))}
       </TableCell>
@@ -226,7 +247,7 @@ function GameRow({
             instead) — this sr-only text is the table view's own
             equivalent, since a table cell has no such wrapper to fold
             it into. */}
-        {game.platinum ? (
+        {base.platinum ? (
           <span className="inline-flex items-center gap-1.5">
             <PlatinumBadge />
             <span className="sr-only">Platinum</span>

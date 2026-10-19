@@ -103,7 +103,7 @@ describe('createDlc / listDlcForGame', () => {
     ).rejects.toBeInstanceOf(errors.DuplicateDlcError);
   });
 
-  it('refuses DLC on a collection member', async () => {
+  it('allows DLC on a collection member — its hours are its own (2026-10-19)', async () => {
     const owner = await makeOwner('owner@burmy.test');
     const set = await games.createGame(owner, {
       title: 'Nathan Drake Collection',
@@ -112,9 +112,10 @@ describe('createDlc / listDlcForGame', () => {
     const member = await games.createGame(owner, { title: "Drake's Fortune", platform: 'ps4' });
     await games.setGameCollection(owner, member.id, set.id);
 
-    await expect(
-      dlc.createDlc(owner, member.id, { name: 'Lost Legacy', year: 2021 }),
-    ).rejects.toBeInstanceOf(errors.DlcOnCollectionMemberError);
+    const row = await dlc.createDlc(owner, member.id, { name: 'Lost Legacy', year: 2021 });
+
+    expect(row.gameId).toBe(member.id);
+    expect((await games.getGame(owner, member.id)).dlc.map((d) => d.name)).toEqual(['Lost Legacy']);
   });
 
   it('is a not-found for a game belonging to someone else', async () => {
@@ -211,7 +212,7 @@ describe('cascade and the Game shape', () => {
     expect(updated.dlc.map((row) => row.name)).toEqual(['DLC']);
   });
 
-  it('refuses a collection target when the game has DLC', async () => {
+  it('files a game that has DLC into a collection — the DLC stays with it (2026-10-19)', async () => {
     const owner = await makeOwner('owner@burmy.test');
     const set = await games.createGame(owner, {
       title: 'Nathan Drake Collection',
@@ -220,9 +221,10 @@ describe('cascade and the Game shape', () => {
     const game = await games.createGame(owner, { title: "Drake's Fortune", platform: 'ps4' });
     await dlc.createDlc(owner, game.id, { name: 'DLC', year: 2021 });
 
-    await expect(games.setGameCollection(owner, game.id, set.id)).rejects.toBeInstanceOf(
-      errors.GameHasDlcError,
-    );
-    expect((await games.getGame(owner, game.id)).collectionId).toBeNull();
+    await games.setGameCollection(owner, game.id, set.id);
+
+    const filed = await games.getGame(owner, game.id);
+    expect(filed.collectionId).toBe(set.id);
+    expect(filed.dlc.map((d) => d.name)).toEqual(['DLC']);
   });
 });

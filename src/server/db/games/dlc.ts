@@ -16,7 +16,6 @@ import { gameDlc, games } from '@/server/db/schema';
 import type { GameDlcRow } from '@/server/games/dlc';
 
 import {
-  DlcOnCollectionMemberError,
   DuplicateDlcError,
   GameNotFoundError,
   isUniqueViolation,
@@ -81,7 +80,6 @@ export async function createDlc(
         .where(and(eq(games.id, gameId), eq(games.ownerId, ownerId)))
         .limit(1);
       if (!game) throw new GameNotFoundError();
-      if (game.collectionId !== null) throw new DlcOnCollectionMemberError();
 
       const [row] = await tx
         .insert(gameDlc)

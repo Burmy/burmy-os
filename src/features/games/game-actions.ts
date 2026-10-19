@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { requireOwner } from '@/server/auth/owner';
 import {
   DuplicateGameError,
-  GameHasDlcError,
   GameNotFoundError,
   InvalidCollectionError,
 } from '@/server/db/games/errors';
@@ -102,10 +101,6 @@ function toResult(error: unknown): ActionResult {
   if (error instanceof GameNotFoundError) return fail(error.message);
   // Carries its own owner-facing sentence per `reason` — see the class.
   if (error instanceof InvalidCollectionError) return fail(error.message);
-  // A game with DLC cannot become a member (its DLC belongs on the collection
-  // row). Reachable from the picker, the multi-select and the Part-of field —
-  // every one must read the sentence, not hit the error boundary.
-  if (error instanceof GameHasDlcError) return fail(error.message);
   if (error instanceof z.ZodError) {
     const issue = error.issues[0];
     const path = issue?.path[0];

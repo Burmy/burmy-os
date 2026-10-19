@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionResult } from '@/features/games/action-result';
+import { formatHours, hours } from '@/server/games/hours';
 import type { GameSuggestion } from '@/server/games/metadata';
 
 const searchGameMetadataAction = vi.fn(async (_title: string): Promise<GameSuggestion[]> => []);
@@ -122,6 +123,7 @@ function member(overrides: Partial<Member> = {}): Member {
     platform: 'ps4',
     rating: null,
     firstPlayedYear: null,
+    hoursTenths: null,
     achievementsUnlocked: null,
     achievementsTotal: null,
     platinum: false,
@@ -526,9 +528,44 @@ describe('GamePanel — collections', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('shows a member with hours and price read-only, and a Part of link that swaps to the collection', async () => {
+  it('sums hours from the members, read-only, and drops the year rows for a rolled-up collection', async () => {
+    await openPanel(game({ id: 'ndc', title: NDC.title, hoursTenths: 440 }), {
+      members: [
+        member({ id: 'uc1', hoursTenths: 97 }),
+        member({ id: 'uc2', title: 'Uncharted 2: Among Thieves Remastered', hoursTenths: 133 }),
+      ],
+    });
+
+    // 9.7 + 13.3 — the wrapper's own 44.0 is superseded, not added.
+    expect(screen.getByText(formatHours(hours(230)))).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText('Added up from the games in this collection').length,
+    ).toBeGreaterThan(0);
+    // The members' hours are what would be split, so no year rows here.
+    expect(screen.queryByRole('button', { name: 'Add a year' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'First played' })).toBeInTheDocument();
+  });
+
+  it('keeps an unsplit collection’s own hours editable while no member carries any', async () => {
+    await openPanel(game({ id: 'ndc', title: NDC.title, hoursTenths: 440 }), {
+      members: [member({ id: 'uc1' }), member({ id: 'uc2', title: 'Uncharted 2' })],
+    });
+
+    expect(screen.getByRole('button', { name: 'Hours' })).toBeInTheDocument();
+    expect(
+      screen.queryByText('Added up from the games in this collection'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows a member with its own editable hours, price read-only, and a Part of link that swaps to the collection', async () => {
     await openPanel(
-      game({ id: 'uc1', title: "Uncharted: Drake's Fortune Remastered", collectionId: 'ndc' }),
+      game({
+        id: 'uc1',
+        title: "Uncharted: Drake's Fortune Remastered",
+        collectionId: 'ndc',
+        hoursTenths: 97,
+      }),
       {
         collection: NDC,
         collectionOptions: [NDC],
@@ -536,7 +573,11 @@ describe('GamePanel — collections', () => {
     );
     const user = userEvent.setup();
 
-    expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
+    // Hours are the member's own — editable, with its year rows and DLC line.
+    expect(screen.getByRole('button', { name: 'Hours' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add a year' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add DLC' })).toBeInTheDocument();
+    // Price is the set's.
     expect(screen.queryByRole('button', { name: 'Price paid' })).not.toBeInTheDocument();
     expect(screen.getAllByText('From the collection').length).toBeGreaterThan(0);
     expect(
@@ -642,9 +683,12 @@ describe('GamePanel — years', () => {
     await waitFor(() => expect(updateGamePlayYearsAction).toHaveBeenCalledWith('game-1', []));
   });
 
-  it('hides years entirely for a collection member', async () => {
-    await openPanel(game({ collectionId: 'ndc' }), { collection: NDC, collectionOptions: [NDC] });
-    expect(screen.queryByRole('button', { name: 'Add a year' })).not.toBeInTheDocument();
+  it('gives a collection member its own year rows — its hours are its own (2026-10-19)', async () => {
+    await openPanel(game({ collectionId: 'ndc', hoursTenths: 97 }), {
+      collection: NDC,
+      collectionOptions: [NDC],
+    });
+    expect(screen.getByRole('button', { name: 'Add a year' })).toBeInTheDocument();
   });
 });
 
@@ -764,13 +808,13 @@ describe('GamePanel — DLC', () => {
     );
   });
 
-  it('has no DLC row at all for a collection member', async () => {
+  it('offers Add DLC on a collection member — its hours, and so its DLC, are its own (2026-10-19)', async () => {
     await openPanel(game({ id: 'uc1', collectionId: 'ndc' }), {
       collection: NDC,
       collectionOptions: [NDC],
     });
 
-    expect(screen.queryByRole('button', { name: 'Add DLC' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add DLC' })).toBeInTheDocument();
   });
 
   it('Add DLC adds an inline row: name and year, saved in place', async () => {

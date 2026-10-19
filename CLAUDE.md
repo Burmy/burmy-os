@@ -338,15 +338,18 @@ These are verified, not folklore. Do not "fix" them back.
   happened in.** The total is the one number the owner edits; the split is an attribution of it that
   must sum to it. Do not "normalize" this by deriving the total from the rows — 157 of 160 games have no
   rows at all. See `docs/GAMES.md`, "Play-year attribution."
-- **Collections: anything that COUNTS games excludes collection rows; anything that SUMS hours, money
-  or trophies includes everything.** A boxed set is one `games` row wrapping several titles via a
-  nullable self-FK (`games.collection_id`), so counting it alongside its own three titles reports four
-  games where there are three. The sums need no rule at all — a title inside a collection carries NULL
-  hours, NULL price and `platinum = false`, so every existing `SUM` already excludes it for free. The
-  rule lives in `src/server/games/collections.ts` and nowhere else. A member cannot carry DLC either
-  (its DLC goes on the collection row), and a collection's DLC trophies add ON TOP of the member
-  roll-up — `gameTotals` runs after `trophyAdjustedRows`, never before. See `docs/GAMES.md`,
-  "Collections" and "DLC."
+- **Collections: anything that COUNTS games excludes collection rows; money includes everything;
+  HOURS and TROPHIES roll up from the members.** A boxed set is one `games` row wrapping several
+  titles via a nullable self-FK (`games.collection_id`), so counting it alongside its own three titles
+  reports four games where there are three. Price needs no rule — a member carries NULL price, so every
+  `SUM` already excludes it. Hours and trophies are the individual title's (hours since 2026-10-19, at
+  the owner's request): if any member carries the figure the collection's own stored value is
+  superseded, otherwise the collection's unsplit lump counts. Every stat reads through
+  `collectionAdjustedRows` (`src/server/games/collections.ts`, the only home for the rule), which
+  nulls a rolled-up collection's own hours and trophies so nothing is counted twice. A member carries
+  its own year split and DLC like any game, and a collection's DLC adds ON TOP of the member roll-up —
+  `gameTotals` runs after `collectionAdjustedRows`, never before. See `docs/GAMES.md`, "Collections"
+  and "DLC."
 - **DLC is ADDITIVE; the year split is ATTRIBUTED. Do not make either behave like the other.**
   `games.hours_tenths`/`price_cents`/achievement counts are the BASE game's figures; a `game_dlc` row
   carries its own and every total outside the panel is base + DLC via `gameTotals`

@@ -978,3 +978,76 @@ describe('DLC in every builder', () => {
     expect(summary.totalHoursTenths).toBe(1360);
   });
 });
+
+/**
+ * Hours on the MEMBERS (2026-10-19). The rows arrive from `listGameStatRows`
+ * already through `collectionAdjustedRows`: a collection whose games carry
+ * their own hours has `null` of its own, so every sum counts the members
+ * exactly once and each member's hours land in its OWN first-played year.
+ */
+describe('collections — hours on the members', () => {
+  const rows = (): GameStatRow[] => [
+    game({
+      id: 'trilogy',
+      title: 'Crysis Remastered Trilogy',
+      platform: 'ps4',
+      hoursTenths: null,
+      priceCents: 3306,
+      achievementsUnlocked: null,
+      achievementsTotal: null,
+      firstPlayedYear: 2021,
+      collectionId: null,
+    }),
+    game({
+      id: 'c1',
+      title: 'Crysis Remastered',
+      platform: 'ps4',
+      hoursTenths: 97,
+      priceCents: null,
+      achievementsUnlocked: 34,
+      firstPlayedYear: 2021,
+      collectionId: 'trilogy',
+    }),
+    game({
+      id: 'c2',
+      title: 'Crysis 2 Remastered',
+      platform: 'ps4',
+      hoursTenths: 133,
+      priceCents: null,
+      achievementsUnlocked: 24,
+      firstPlayedYear: 2022,
+      collectionId: 'trilogy',
+    }),
+    game({
+      id: 'c3',
+      title: 'Crysis 3 Remastered',
+      platform: 'ps4',
+      hoursTenths: 102,
+      priceCents: null,
+      achievementsUnlocked: 25,
+      firstPlayedYear: 2022,
+      collectionId: 'trilogy',
+    }),
+  ];
+
+  it('sums the members’ hours once and still counts three games, one purchase', () => {
+    const summary = buildLibrarySummary(rows(), []);
+    expect(summary.totalHoursTenths).toBe(97 + 133 + 102);
+    expect(summary.totalGames).toBe(3);
+    expect(buildFinancialSummary(rows(), []).totalSpendCents).toBe(3306);
+  });
+
+  it('credits each member’s hours and trophies to its own year', () => {
+    const { rows: years } = buildYearlyBreakdown(rows(), [], []);
+    expect(years.find((row) => row.year === 2021)).toMatchObject({
+      startedCount: 1,
+      hoursTenths: 97,
+      achievements: 34,
+    });
+    expect(years.find((row) => row.year === 2022)).toMatchObject({
+      startedCount: 2,
+      hoursTenths: 133 + 102,
+      achievements: 24 + 25,
+    });
+  });
+});
