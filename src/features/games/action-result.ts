@@ -7,15 +7,18 @@
  * database being unreachable — still THROW, so a security refusal never gets
  * flattened into something that renders like a typo.
  */
+/** The form fields an action can point a failure at — the game form's three plus a DLC row's two. */
+export type ActionField = 'title' | 'hours' | 'rating' | 'name' | 'year';
+
 export type ActionResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly error: string; readonly field?: 'title' | 'hours' | 'rating' };
+  | { readonly ok: false; readonly error: string; readonly field?: ActionField };
 
 export function ok(): ActionResult {
   return { ok: true };
 }
 
-export function fail(error: string, field?: 'title' | 'hours' | 'rating'): ActionResult {
+export function fail(error: string, field?: ActionField): ActionResult {
   // `exactOptionalPropertyTypes` is on — spread the key in conditionally rather
   // than assigning `undefined`.
   return { ok: false, error, ...(field ? { field } : {}) };

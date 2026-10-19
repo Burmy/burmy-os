@@ -201,3 +201,53 @@ describe('updateGameFieldAction — releaseDate', () => {
     expect((await games.getGame(ownerId, created.id)).releaseDate).toBeNull();
   });
 });
+
+describe('completeWishlistGameAction', () => {
+  it('refuses a game that is not wanted', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createGame(ownerId, { title: 'Elden Ring', platform: 'ps5' });
+
+    const result = await actions.completeWishlistGameAction(game.id, baseFormData({ hours: '10' }));
+
+    expect(result.ok).toBe(false);
+    expect((await games.getGame(ownerId, game.id)).hoursTenths).toBeNull();
+  });
+
+  it('moves a wanted game into the library with the figures from the form and a replaced split', async () => {
+    const ownerId = await provisionOwner();
+    const game = await games.createGame(ownerId, {
+      title: 'Marvel’s Wolverine',
+      platform: 'ps5',
+      status: 'wanted',
+      releaseDate: '2026-10-01',
+      releasePrecision: 'day',
+    });
+
+    const result = await actions.completeWishlistGameAction(
+      game.id,
+      baseFormData({
+        title: 'Marvel’s Wolverine',
+        hours: '16',
+        priceDollars: '69.99',
+        firstPlayedYear: '2026',
+        rating: '4',
+        ownership: 'digital',
+        // The form has no status control in complete mode; a stray value must not win.
+        status: 'wanted',
+        playYears: JSON.stringify([{ year: '2026', hours: '16' }]),
+      }),
+    );
+
+    expect(result).toEqual({ ok: true });
+    const saved = await games.getGame(ownerId, game.id);
+    expect(saved).toMatchObject({
+      status: 'played',
+      hoursTenths: 160,
+      priceCents: 6999,
+      firstPlayedYear: 2026,
+      rating: 4,
+      ownership: 'digital',
+    });
+    expect(saved.playYears).toEqual([{ year: 2026, hoursTenths: 160 }]);
+  });
+});

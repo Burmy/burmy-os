@@ -321,6 +321,68 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
 }
 
 /**
+ * "Mark as played" from the wishlist: the moment a wanted game enters the
+ * library. The add-game dialog opens pre-filled in complete mode and submits
+ * here, so the owner records hours, price, year and rating as the game comes
+ * in rather than opening the panel afterwards. Parsed exactly like a create
+ * (same schema, same split checks) but written onto the EXISTING row — no
+ * duplicate — with the status forced to `played` whatever the form carried.
+ *
+ * Refuses a row that is no longer `wanted` (edited in another tab, say): the
+ * form was built for a wishlist entry and would blank figures a played game
+ * already has.
+ */
+export async function completeWishlistGameAction(
+  id: string,
+  formData: FormData,
+): Promise<ActionResult> {
+  const owner = await requireOwner();
+
+  let gameId: string;
+  let existing: Game;
+  let parsed: ParsedGame;
+  try {
+    gameId = idSchema.parse(id);
+    existing = await getGame(owner.userId, gameId);
+    parsed = parse(formData, 'update');
+  } catch (error) {
+    return toResult(error);
+  }
+
+  if (existing.status !== 'wanted') {
+    return fail('Only a wishlisted game can be added to the library this way.');
+  }
+
+  const duplicateYear = findDuplicateYear(parsed.playYears);
+  if (duplicateYear !== null) {
+    return fail(`Year ${duplicateYear} appears more than once in the split.`);
+  }
+  const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
+  if (!validation.ok) {
+    return fail('The year-by-year split must add up to the total hours.');
+  }
+
+  try {
+    await updateGame(owner.userId, gameId, { ...parsed.input, status: 'played' });
+  } catch (error) {
+    return toResult(error);
+  }
+
+  // Same two-write shape as `createGameAction`, for the same reasons.
+  try {
+    await replacePlayYears(owner.userId, gameId, parsed.playYears);
+  } catch {
+    revalidatePath('/games', 'layout');
+    return fail(
+      'The game was saved, but its year-by-year split could not be — try editing it again.',
+    );
+  }
+
+  revalidatePath('/games', 'layout');
+  return ok();
+}
+
+/**
  * One scalar field per key, for the per-field inline-editing UI
  * (`game-page.tsx`) — click a value, edit just that one, it saves on its
  * own. Deliberately ONE generic action rather than ~14 near-identical
