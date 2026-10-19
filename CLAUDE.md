@@ -343,7 +343,17 @@ These are verified, not folklore. Do not "fix" them back.
   nullable self-FK (`games.collection_id`), so counting it alongside its own three titles reports four
   games where there are three. The sums need no rule at all — a title inside a collection carries NULL
   hours, NULL price and `platinum = false`, so every existing `SUM` already excludes it for free. The
-  rule lives in `src/server/games/collections.ts` and nowhere else. See `docs/GAMES.md`, "Collections."
+  rule lives in `src/server/games/collections.ts` and nowhere else. A member cannot carry DLC either
+  (its DLC goes on the collection row), and a collection's DLC trophies add ON TOP of the member
+  roll-up — `gameTotals` runs after `trophyAdjustedRows`, never before. See `docs/GAMES.md`,
+  "Collections" and "DLC."
+- **DLC is ADDITIVE; the year split is ATTRIBUTED. Do not make either behave like the other.**
+  `games.hours_tenths`/`price_cents`/achievement counts are the BASE game's figures; a `game_dlc` row
+  carries its own and every total outside the panel is base + DLC via `gameTotals`
+  (`src/server/games/dlc.ts`). `game_play_years` apportions the BASE total and must sum to it; DLC
+  hours never enter the split and are credited to the DLC's own year. The owner chose attribution for
+  DLC first and reversed it — the reversal is final. Every Stats builder takes the DLC rows as an
+  argument; a caller that forgets them silently under-counts, which is why the parameter is required.
 - **A RUNTIME import from a `server/db/**` module into a client component drags `postgres` into the
   browser bundle and fails the build with `Can't resolve 'fs'`.** `import type` from the same module is
   fine — types are erased — which is why `transactions-table.tsx` has always imported `LedgerPage`,
@@ -507,7 +517,8 @@ src/lib/                  framework-free helpers usable from BOTH server and cli
                           src/server/{finance,games,anime}/ — that inverts the dependency and puts a
                           product module in every other module's bundle.
 src/server/finance/       DOMAIN CORE — pure TS, no React, no Next, no HTTP
-src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP
+src/server/games/         GAMES DOMAIN CORE — pure TS, no React, no Next, no HTTP (dlc.ts holds the
+                          additive base+DLC totals every stat and the library table read)
 src/server/anime/         ANIME DOMAIN CORE — same rule
 src/server/db/games/      owner-scoped data access + the one HTTP boundary (igdb.ts)
 src/server/db/anime/      same, with anilist-client.ts as its one HTTP boundary

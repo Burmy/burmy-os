@@ -1386,6 +1386,28 @@ every glance. Decided through a product interview, then built on `feat/games-sim
 - **`scripts/diff-game-log.mjs`** compares the original sheet export with production and emits the
   inserts for whatever the app is missing — pure, with platforms assigned by the owner per row.
 
+**Second pass, same branch (2026-10-18, after the owner looked at it running):**
+
+- **Two statuses.** `backlog` and `playing` are gone ("there is no backlog"); a game is `played` or
+  `wanted`. Migration `0019` retires both; the Stats Backlog card went with them.
+- **DLC rows** (`game_dlc`, migration `0019`): name, year played, hours, price, trophies earned/total,
+  ADDITIVE to the game's base figures. Every Stats builder takes them; the year-by-year table credits
+  a DLC to its own year; the panel has a DLC group with a totals line; the library table shows totals.
+  See `docs/GAMES.md`, "DLC". The three imported `"+N"` splits convert into DLC rows
+  (`scripts/convert-split-to-dlc.mjs`).
+- **Wishlist as cover cards**, and "Mark as played" opens the add-game dialog pre-filled in complete
+  mode (`completeWishlistGameAction`), so figures are entered as the game enters the library.
+- **Panel polish:** rating shown once, Notes labelled once, a real platinum toggle, the collection
+  block collapsed behind a button while empty.
+- **Migrations re-split:** `0019` is the ADDITIVE one (table, status default, status UPDATE) and
+  `0020` the idempotent drops — see `docs/DEPLOYMENT.md`. Design and plan:
+  `docs/superpowers/specs/2026-10-18-games-dlc-and-two-statuses-design.md`,
+  `docs/superpowers/plans/2026-10-18-games-dlc-and-two-statuses.md`.
+- A noted gap, not fixed here: `tests/integration/entry-points.test.ts` walks `src/app` only, so
+  feature action files (`game-actions.ts`, `dlc-actions.ts`, …) are not enumerated by the
+  owner-boundary test; each new action file carries its own refusal test instead. Widening that test
+  to `src/features/**` is a separate task.
+
 Also fixed on the way: `/anime` had never been added to the entry-points test's pure-redirect
 allowlist, so the private-page guard test had been red since the Anime merge.
 
@@ -1404,12 +1426,19 @@ and the `anime*` tables present). The earlier note that `0016`–`0018` were nev
 
 **Order of operations from here, and it is order-sensitive:**
 
-1. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming,
-   Stats and Settings against the not-yet-dropped tables.
-2. Only then apply `0019` — through the Supabase MCP as raw SQL plus the journal row
-   (`docs/DEPLOYMENT.md`, "Applying a migration through the Supabase MCP"). Old code read the dropped
-   tables; the new code does not.
-3. Run the sheet reconciliation (`scripts/diff-game-log.mjs`) and link collections in the app.
+1. On production, through the Supabase MCP: `UPDATE games SET status = 'wanted' WHERE title =
+   'Control Resonant' AND status = 'backlog'` (owner decision, title-keyed, by hand).
+2. Apply `0019_worried_micromacro` (ADDITIVE: `game_dlc`, `played` default, backlog/playing →
+   played) — raw SQL plus the journal row, `docs/DEPLOYMENT.md`, "Applying a migration through the
+   Supabase MCP". Safe while the OLD code is live.
+3. Apply the split-to-DLC conversion SQL from `scripts/convert-split-to-dlc.mjs` (Clair Obscur 2026,
+   Lies of P 2025, Hollow Knight 2025); verify the three games' hours and DLC rows.
+4. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming
+   (cards, Mark as played), Stats, the panel's DLC group.
+5. Only then apply `0020_hesitant_gateway` (the drops). Old code read those tables; the new code
+   does not.
+6. Run the sheet reconciliation (`scripts/diff-game-log.mjs`), link collections in the app, rename
+   the three `DLC` placeholders and fill their trophies/price in the panel.
 
 **Still outstanding, in priority order:** a backup of the live database has never been taken; Anime
 has never run against the live AniList API; the Netlify function-region pin is unconfirmed.

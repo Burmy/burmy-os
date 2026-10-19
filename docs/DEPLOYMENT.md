@@ -463,7 +463,7 @@ right answer differs per script:
 | `migrate.mjs`, `provision-owner.mjs` | None — running against production is their purpose |
 | `pnpm db:seed` | **Refuses** unless `DATABASE_URL`'s host is `localhost`/`127.0.0.1`/`::1` |
 | `backfill-game-metadata.mjs`, `fix-game-platforms.mjs`, `import-game-log.mjs`, `seed-play-year-splits.mjs` | **Refuse** a non-local database outright — run locally, then migrate the result deliberately |
-| `diff-game-log.mjs` | **No database access at all** — reads the sheet CSV and a JSON export of production rows, writes a report and an SQL file; the SQL is applied by hand (through the MCP) after the owner reads the report |
+| `diff-game-log.mjs`, `convert-split-to-dlc.mjs` | **No database access at all** — pure emitters: they read files the operator fetched by hand and write an SQL file that is applied by hand (`psql` locally, the MCP in production) after the owner reads it |
 
 **Why `db:seed`'s guard is a hostname check and not `NODE_ENV`.** It was added after `pnpm db:seed`
 was once run against the real Supabase database by accident, immediately after legitimately pointing

@@ -15,7 +15,7 @@ explicitly dated as describing the module's design rather than a moment in time.
 | | |
 | --- | --- |
 | Branch | `feat/games-simplify` — the simplification pass (see `docs/ROADMAP.md`, "Games simplification"), not yet merged |
-| Migrations | 20 on disk (`0000`–`0019`). Production is at `0018` (verified against the live journal 2026-10-18). **`0019` drops the sync/trophy tables and must wait until the new code is live** |
+| Migrations | 21 on disk (`0000`–`0020`). Production is at `0018` (verified against the live journal 2026-10-18). **`0019` is additive (DLC table, two statuses) and goes on BEFORE the deploy; `0020` drops the sync/trophy tables and must wait until the new code is live** |
 | Gate | typecheck, lint, 1357 unit, 209 integration, build — all green on the branch |
 | Deployed | **Live** at `https://app.burmy.me` from the Aug 29 commit, behind Cloudflare Access |
 
@@ -35,12 +35,17 @@ still the small modal.
 exclude the wrapper, sums include everything. Linked in the app from either end, or several at once
 from the table.
 
-**Upcoming** — "Your wishlist" (every wanted game, released first with "Out now", quick status menu)
-above IGDB's next-12-months feed, which hides anything already in the library. A wanted game stays
-wanted until the owner moves it; a hand-added one can be given a release date in the panel.
+**Upcoming** — "Your wishlist" as cover cards (every wanted game, released first with "Out now" on
+the art, a "Mark as played" button that opens the add dialog pre-filled) above IGDB's next-12-months
+feed, which hides anything already in the library. A wanted game stays wanted until the owner moves
+it; a hand-added one can be given a release date in the panel.
 
 **Stats** — computed at read time from the rows: library and money cards (plus "Trophies earned" from
 the hand-entered counts), year by year, trends, breakdowns, Top 3, highlights.
+
+**DLC** — rows on a game (name, year played, hours, price, trophies), ADDITIVE to the base figures;
+every total outside the panel is base + DLC. Two statuses only: `played` and `wanted`. See
+`docs/GAMES.md`, "DLC" and "Lifecycle statuses".
 
 **Removed 2026-10-18, by owner decision:** the Steam and PSN syncs, the per-trophy list, the
 Duplicates screen, the Settings → Games section. Git history before `3324656` has the implementations.
@@ -101,6 +106,10 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 ## Design decisions the owner made — do not silently revisit
 
 - **`played` renders no badge.** It's a non-null sentinel, not a nullable column.
+- **Only `played` and `wanted`.** `backlog` and `playing` were removed on 2026-10-18 ("there is no
+  backlog"). Do not propose a third state.
+- **DLC adds; the year split attributes.** Never derive the base figures from DLC rows or make DLC
+  "add up" to anything.
 - **No syncs, no trophy list.** Hours, achievement counts and platinum are hand-entered. Do not
   propose re-adding Steam or PSN; the owner removed them after seven weeks of real use.
 - **The panel has no URL.** Chosen over a deep link; closing is Esc, the X, or a route change.
@@ -117,8 +126,8 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 
 ## Outstanding (2026-10-18)
 
-See `docs/ROADMAP.md`, "▶ RESUME HERE", for the order-sensitive sequence: merge and deploy, then
-apply `0019`, then reconcile the sheet.
+See `docs/ROADMAP.md`, "▶ RESUME HERE", for the order-sensitive sequence: Control Resonant by hand →
+`0019` → the split-to-DLC SQL → merge and deploy → `0020` → reconcile the sheet.
 
 - **No backup exists of the live Supabase database** — still the highest-priority gap; for Games there
   is no CSV archive to re-import from.

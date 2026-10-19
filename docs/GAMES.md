@@ -34,8 +34,8 @@ not an incidental one.
 ### The `games` table
 
 One row per game owned, wanted, or played — replacing one line of the spreadsheet. Only `title` and
-`platform` are required (`platform` defaults to `other`, `status` to `backlog`); every other column is
-nullable, and a bare backlog entry with nothing else filled in is legitimate data, not an incomplete
+`platform` are required (`platform` defaults to `other`, `status` to `played`); every other column is
+nullable, and a bare entry with nothing else filled in is legitimate data, not an incomplete
 row. Pre-2015 PSP/PS2 entries in the source spreadsheet routinely carry a rating and nothing else —
 `firstPlayedYear` is genuinely sparse, and that sparseness is preserved rather than backfilled with a
 guess.
@@ -47,7 +47,7 @@ guess.
 | `developer`, `publisher` | text | |
 | `ownership` | enum, nullable | `physical \| digital` |
 | `price_cents` | signed bigint | Same convention as `finance_transactions.amount_cents`. No FK to Finance — see "Out of scope" |
-| `status` | enum, not null, default `backlog` | App-reachable: `backlog \| playing \| played \| wanted`. The Postgres type also still contains `paused_dropped`, a dead label kept only because Postgres cannot drop an enum value — see "Lifecycle statuses" below |
+| `status` | enum, not null, default `played` | App-reachable: `played \| wanted`. The Postgres type also still contains `backlog`, `playing` and `paused_dropped`, dead labels kept only because Postgres cannot drop an enum value — see "Lifecycle statuses" below |
 | `rating` | smallint, nullable | 1–5. Null means "no opinion yet," not zero |
 | `hours_tenths` | integer, nullable | Tenths of an hour. 235 = 23.5h. See "Hours" below. The authoritative total — see "Play-year attribution" below for how it's optionally split across years |
 | `first_played_year` | smallint, nullable | Sparse by design. Also where hours land by default when no `game_play_years` split exists — see "Play-year attribution" below |
@@ -127,14 +127,16 @@ always a single number, never a list, and the module doesn't invent structure th
 
 ### Platinum is the owner's own claim by hand
 
-`platinum` is a plain `boolean`, edited via a checkbox — not computed from
+`platinum` is a plain `boolean`, edited via a toggle button — not computed from
 `achievementsUnlocked === achievementsTotal`. The source spreadsheet only ever recorded trophies
 *earned*, never the total, so a platinum could not be derived for any imported game; and on Steam,
 100% achievements is not a platinum at all. (From late August to 2026-10-18 a PSN sync owned this flag
-for PSN-linked games; that sync is gone and the checkbox is the only writer again.)
+for PSN-linked games; that sync is gone and the toggle is the only writer again.)
 
-In the panel the checkbox saves on every click through `updateGameFieldAction('platinum', …)`, with
-an empty value meaning "off", so a platinum once set can always be turned back off. `createGameAction`
+In the panel the toggle (`aria-pressed`, reading "Earned" / "Not earned" beside the Platinum label —
+the checkbox it replaced was the smallest control in the panel for the one fact worth showing off)
+saves on every click through `updateGameFieldAction('platinum', …)`, with an empty value meaning
+"off", so a platinum once set can always be turned back off. `createGameAction`
 writes it unconditionally because an unchecked HTML checkbox submits no key in `FormData` at all.
 
 ---
@@ -178,8 +180,8 @@ Only the COUNTS need the filter, which is why it is applied at a few named call 
 read boundary the way `wanted` is — filtering collections out in `listGameStatRows` would take their
 hours and money with them.
 
-Applied in: `buildLibrarySummary` (`totalGames`, `backlogCount`, `playingCount`, `playedCount`),
-`buildFinancialSummary` (`backlogCount`), `buildYearlyBreakdown` (`startedCount`), the dashboard's
+Applied in: `buildLibrarySummary` (`totalGames`, `playedCount`), `buildYearlyBreakdown`
+(`startedCount`), the dashboard's
 platform and genre distributions, and the Library header's own game count. **Not** applied to the
 ownership distribution — that follows the purchase, and one boxed set was one physical or digital
 thing. `playedCount` in the yearly breakdown likewise counts the collection once rather than once per
@@ -187,8 +189,9 @@ title: hours are attributed to the row that carries them.
 
 ### Where the figures live
 
-A title inside a collection has no hours, price, trophies or play-year split of its own — the set has
-one of each, on the collection. The panel renders exactly those fields read-only for a member, with
+A title inside a collection has no hours, price, trophies, play-year split or DLC of its own — the set
+has one of each, on the collection (see "DLC" below for how a collection's DLC trophies add on top of
+the member roll-up). The panel renders exactly those fields read-only for a member, with
 the hint "From the collection". Taking a game back out of a collection does **not** hand it those figures —
 they were never its own, which is also what `ON DELETE SET NULL` does when the collection is deleted.
 
@@ -228,10 +231,10 @@ none is missed.
 ## Play-year attribution
 
 `first_played_year` was doing two unrelated jobs: "when did I start this" and "which year owns
-these hours." For almost every game those coincide. For a game played across a year boundary — a
-base game in 2024, its DLC in 2025 — they do not, and crediting every hour to the start year is
-wrong: the spreadsheet import recorded exactly this case as a composite string, `"53 + 6"`, that the
-schema had no column for.
+these hours." For almost every game those coincide. For a game played across a year boundary they
+do not, and crediting every hour to the start year is wrong. (The spreadsheet's `"53 + 6"` rows
+were this at first; they turned out to mean base game + DLC and became DLC rows on 2026-10-18 — see
+"DLC" below. The split stays for a BASE game genuinely played across two years.)
 
 ### The `game_play_years` table
 
@@ -282,15 +285,15 @@ to accept play years directly — for a gap that now requires an actual mid-requ
 hit at all. If `replacePlayYears` does throw, the game row has already been saved; the action
 catches it and reports a field error rather than crashing, which is defense-in-depth, not a rollback.
 
-### Achievements are not split, and never will be
+### Base achievements are not split
 
-`buildYearlyBreakdown` attributes hours per year but leaves achievements on `first_played_year`,
-unconditionally. No source anywhere records which year a trophy was
-earned in, so splitting them proportionally across a game's played years would fabricate data the
-owner never entered. This is a permanent property of the data available, not a gap this feature
-happens not to have closed yet.
+`buildYearlyBreakdown` attributes hours per year but leaves a game's own achievements on
+`first_played_year`, unconditionally. No source records which year a base-game trophy was earned in,
+so splitting them proportionally across a game's played years would fabricate data the owner never
+entered. A DLC's trophies are different: they are recorded ON the DLC row, which has a year, and
+land in that year — see "DLC" below.
 
-### Seeding the three known splits
+### Seeding the three known splits (superseded)
 
 `scripts/seed-play-year-splits.mjs` promoted the only three games whose year split existed anywhere
 — as prose in `notes` (e.g. "Imported as \"53 + 6\" across 2025 + 2026") — into real rows: Clair
@@ -301,48 +304,96 @@ the live total is refused, not force-written. A one-off script rather than a SQL
 the same reason `fix-game-platforms.mjs` gives: migrations run against both local and production,
 where `games.id` values differ, and a title-keyed write inside a migration is fragile.
 
+All three turned out to be base + DLC, not two years of the base game, and on 2026-10-18 the owner
+had them converted: `scripts/convert-split-to-dlc.mjs` (pure, same shape as `diff-game-log.mjs`)
+emits the SQL that inserts a `game_dlc` row named `DLC` with the moved year and hours, lowers the base
+`hours_tenths` by that amount, and deletes the split. The owner renames the placeholder and fills the
+DLC's trophies and price in the panel.
+
+---
+
+## DLC
+
+A DLC is a row on the game it extends (`game_dlc`): name, the year the owner PLAYED it, hours, price
+paid, trophies earned and trophies total.
+
+**Additive, never attributed.** The game's own `hours_tenths`, `price_cents` and achievement counts
+are the BASE GAME's figures and stay the numbers the owner edits. A DLC row carries its own, and every
+total the app shows outside the panel — the library table, every Stats card, the leaderboards, cost
+per hour — is base + every DLC row, computed at read time by `gameTotals` in
+`src/server/games/dlc.ts`. Nothing has to "add up" to anything; that is the whole difference from the
+year split above, which apportions the base total and must sum to it. The owner first chose an
+attribution model for DLC and then reversed it: base and DLC figures are two things they record
+separately, and a total is what they want to read.
+
+**Year-by-year.** A DLC's hours and trophies are credited to the DLC's own year. It does not count as
+a game *started* (`startedCount` is untouched), but its year counts as a year the game was *played*
+(`playedCount`). `unattributedTenths` never includes DLC — DLC is not attributed.
+
+**Collections.** A title inside a collection cannot carry DLC: its hours and price live on the
+collection row, so its DLC goes there too. The DAL refuses the insert
+(`DlcOnCollectionMemberError`) and refuses filing a game that already has DLC into a collection
+(`GameHasDlcError`); the panel hides the group for a member. Trophies are the one figure a collection
+gets from its MEMBERS (`rollUpTrophies`), so a collection's own DLC trophies add on top of that
+roll-up: `gameTotals` is applied after `trophyAdjustedRows`, never before. One rule throughout: DLC
+adds to whatever row it is on.
+
+**Nulls stay null.** `sumDlc` returns `null` for a figure no row carries, and `gameTotals` returns
+`null` only when both the base and the DLC side are null — a `0` would read as "tracked, and zero",
+a different fact from "never recorded", which `stats.ts` already keeps apart for the base figures.
+
+**In the panel** the DLC group sits after Progress: one compact line per expansion with every cell
+click-to-edit (`dlc-actions.ts`, one scalar per call, an empty commit clears a figure, name and year
+can never be blanked), a remove control behind a confirm, an "Add DLC" form that needs only a name
+and a year, and a totals line (`Total · 142h · $105.64 · 52/54 trophies`) underneath. The Hours,
+Price paid and Achievements rows above show the BASE figure with the total as a muted
+"… with DLC" suffix. A DLC name is unique per game, case-insensitively — two of the same name is a
+typo, not detail.
+
 ---
 
 ## Lifecycle statuses
 
-Three VISIBLE states, plus one invisible default, driving the library's filter chips and the
-dashboard's backlog/playing/played breakdown:
+Two states. One visible, one invisible:
 
 | Status | Meaning |
 | --- | --- |
-| `backlog` | Owned, not started |
-| `playing` | Currently in progress |
-| `played` | Simply been played — the **invisible default**: `StatusBadge` renders no badge at all for it, in either variant |
-| `wanted` | Wishlisted, not released or not bought yet — see "Upcoming games" below |
+| `played` | In the library — the **invisible default**: `StatusBadge` renders no badge at all for it, in either variant |
+| `wanted` | Wishlisted, not bought yet — see "Upcoming games" below |
 
 **Real usage is why `played` renders nothing.** Of 180 games, 171 sat in this one status (then called
-`completed`) and `playing`/the old `paused_dropped` had never been used at all — a status describing
-95% of the library carries no information, so as of migration `0013` it is the library's *default
-assumption* rather than a fourth badge to scan past on every card. `played` is a deliberate non-null
-SENTINEL, not a nullable column: modelling "no status" as `NULL` would turn every `WHERE status = …`,
-every count, and the `wanted` exclusion below into null-aware SQL, real bug surface for what stays a
-plain non-null comparison everywhere else.
+`completed`) — a status describing 95% of the library carries no information, so as of migration
+`0013` it is the library's *default assumption* rather than a badge to scan past on every card.
+`played` is a deliberate non-null SENTINEL, not a nullable column: modelling "no status" as `NULL`
+would turn every `WHERE status = …`, every count, and the `wanted` exclusion below into null-aware SQL,
+real bug surface for what stays a plain non-null comparison everywhere else.
 
-**`paused_dropped` still exists in the Postgres `game_status` type, but is unreachable from the app.**
-It had zero rows at the same audit that motivated the change above, and Postgres has no `DROP VALUE`
-for an enum — removing it from the type would mean creating a new type, swapping the column, and
-re-pointing the default and its indexes, a fiddly migration for a value nothing ever writes. It was
-removed from `GAME_STATUSES` (`src/server/games/taxonomy.ts`) instead, which is what every picker,
-filter and `Record<GameStatus, …>` map in the app actually iterates — the dead label in Postgres is
-inert. The original reasoning for keeping "paused" and "dropped" as one state, not two, still applies
-to whatever the owner wants to say about a `backlog` game they started and set aside: that is a sentence
-in `notes`, not a schema decision.
+**`backlog` and `playing` were removed on 2026-10-18**, by owner decision after seven weeks of real
+use: "there is no backlog — just played and wanted." They covered six games and one game. The Stats
+Backlog card and its "sitting in backlog" hint went with them; a new game defaults to `played`; the
+wishlist's "Mark as played" is the only transition (see "Your wishlist"). Migration `0019` moved every
+row that held either status to `played`, except Control Resonant, which the owner put back on the
+wishlist by hand.
+
+**`paused_dropped`, `backlog` and `playing` still exist in the Postgres `game_status` type, but are
+unreachable from the app.** Postgres has no `DROP VALUE` for an enum — removing a label would mean
+creating a new type, swapping the column, and re-pointing the default and its indexes, a fiddly
+migration for values nothing ever writes. They were removed from `GAME_STATUSES`
+(`src/server/games/taxonomy.ts`) instead, which is what every picker, filter and
+`Record<GameStatus, …>` map in the app actually iterates — the dead labels in Postgres are inert.
+Whatever the owner wants to say about a game they started and set aside is a sentence in `notes`,
+not a schema decision.
 
 **`wanted` is excluded from every computed number**, in exactly one place: `listGameStatRows`
-(`src/server/db/games/games.ts`) filters it out at the query boundary. The six stat functions were
-deliberately NOT each given their own filter — six rules is six chances to forget one, and a stat
-function added later would silently miss it. Filtering at the read boundary makes every present and
-future stat correct by construction. A wishlisted game is also hidden from the Library screen unless
-its own chip is active.
+(`src/server/db/games/games.ts`) filters it out at the query boundary. The stat functions were
+deliberately NOT each given their own filter — several rules is several chances to forget one, and a
+stat function added later would silently miss it. Filtering at the read boundary makes every present
+and future stat correct by construction. A wishlisted game is also hidden from the Library screen
+unless its own chip is active.
 
-**The gallery no longer pins or enlarges `playing` games.** It did once — `GameGrid` sorted them first
-and `GameCard` took a `size` prop — but neither exists in the code any more. The gallery renders one
-uniform card per row, in the last-edited order `listGames` already sorted by.
+**The gallery pins and enlarges nothing.** It once sorted `playing` games first and gave them a
+larger card; neither the treatment nor the status exists any more. The gallery renders one uniform
+card per row, in the last-edited order `listGames` already sorted by.
 
 ---
 
@@ -359,22 +410,23 @@ failure mode this module makes structurally impossible — every number the Game
 recomputed from the current `games` rows on every render, so there is no second copy of any total that
 could ever fall out of sync with the first.
 
-The stats layer exposes five pure functions, all taking `GameStatRow[]` (a narrower projection of
-`Game` — no `notes` or `coverUrl`, since nothing downstream needs them; `priceCents` **is** included,
-for the money figures below) as their first argument. Two take a second: `buildYearlyBreakdown` also
-takes the owner's `game_play_years` rows, and `findCallouts` also takes `buildYearlyBreakdown`'s own
+The stats layer exposes pure functions, all taking `GameStatRow[]` (a narrower projection of `Game`
+— no `notes` or `coverUrl`, since nothing downstream needs them; `priceCents` **is** included, for
+the money figures below) as their first argument, and every one of them also takes the owner's
+`game_dlc` rows, because every figure below is base + DLC (see "DLC"). `buildYearlyBreakdown`
+additionally takes the `game_play_years` rows, and `findCallouts` takes `buildYearlyBreakdown`'s own
 output — see below and "Play-year attribution" above.
 
-- **`buildLibrarySummary`** — total games, total hours, backlog/playing/played counts, average
+- **`buildLibrarySummary`** — total games, total hours, played count, average
   rating (mean of rated games only — unrated games don't pull the average toward zero), platinum
   count, average hours per game (mean over games that HAVE hours logged, not counting an unplayed
-  backlog entry as a zero), and average Metacritic (mean over games that have one). There is no
+  entry as a zero), and average Metacritic (mean over games that have one). There is no
   completion rate: with `completed`/`paused_dropped` gone, `completed / (completed + paused_dropped)`
   has no definition — the old figure was already misleading, pinning to 100% whenever nothing was
   marked dropped regardless of backlog size.
 - **`buildFinancialSummary`** — total spend, average price per game (mean over games with a price
-  recorded), cost per hour played (total spend ÷ total WHOLE hours, not tenths), backlog count, and
-  the money sitting unplayed in the backlog (`priceCents` summed across `backlog`-status games only).
+  recorded — on the base OR any DLC), and cost per hour played (total spend ÷ total WHOLE hours, not
+  tenths). The backlog count and "money sitting in the backlog" went with the `backlog` status.
   Every average here follows the same "exclude, don't zero-fill" rule as `averageRating` above, and
   every ratio guards its own zero denominator to return `null` rather than `NaN` or `Infinity`.
 - **`buildYearlyBreakdown`** — returns `{ rows, unattributedTenths }`. One row per year present in
@@ -559,10 +611,19 @@ precisely.
 
 ### Your wishlist — a wanted game stays until the owner moves it
 
-The tab opens with every `wanted` game: released ones first with an "Out now" mark, then by release
-date soonest first, then games with no date, each group alphabetical (`sortWishlist`, pure). Each row
-has a quick status menu — Playing / Played / Backlog; `wanted` is where it already is — and opens the
-game panel in place.
+The tab opens with every `wanted` game as cover cards in the same grid as the feed below: released
+ones first with an "Out now" pill on the art, then by release date soonest first, then games with no
+date, each group alphabetical (`sortWishlist`, pure). Under each cover: the title, `PS5 · Out now` /
+`in 11 days` / `Feb 16, 2027` / `No date`, and one action, **"Mark as played"**. Clicking the cover
+opens the game panel in place.
+
+**"Mark as played" is the moment a game enters the library, so it opens the add-game dialog.**
+`GameDialog` in `mode="complete"`: title, platform, cover and the IGDB metadata pre-filled from the
+row, the status control hidden (it is `played` — that is the point), and the owner types hours, price,
+first-played year and rating right then. Submit goes to `completeWishlistGameAction`, which parses
+exactly like a create (same schema, same split checks) and writes onto the EXISTING row — never a
+duplicate — refusing a row that is no longer `wanted`. Cancel changes nothing. Flipping one column
+would have put a figureless game in the library and sent the owner to the panel to fill it anyway.
 
 There used to be an auto-flip: a wanted game whose date passed was silently made `backlog` and
 vanished from this tab, because the IGDB feed below only ever lists unreleased titles. So a game
@@ -611,11 +672,17 @@ from inside the panel (a member, the parent collection) has only an id and shows
 fetch lands. Stale data stays on screen while a re-fetch is in flight; nothing flickers.
 
 **Layout.** A compact header — cover, the click-to-edit title with its IGDB search-as-you-type,
-`platform · status · rating`, and a muted `Metacritic N · ~Nh to beat` line when IGDB supplied
-either (ESRB is stored but never shown) — then Progress (status, rating, release date while wanted,
-hours, first played, the play-year split, achievement counts, platinum), Details (platform, ownership,
-price, genre, developer, publisher), Collection (the members panel on any row that holds or could hold
-games; the "Part of" picker on a member), Notes, and Remove. Every field keeps its per-field inline
+`platform · status`, and a muted `Metacritic N · ~Nh to beat` line when IGDB supplied either (ESRB is
+stored but never shown; the rating is NOT repeated here — the editable Rating row is the one place it
+shows) — then Progress (status, rating, release date while wanted, hours, first played, the play-year
+split, achievement counts, the platinum toggle), DLC (see "DLC"; absent for a collection member),
+Details (platform, ownership, price, genre, developer, publisher), Collection, Notes, and Remove.
+
+**The collection block is collapsed behind a "Show collection" button while it holds nothing.** Most
+games never become a set, and an empty explanatory box on every one of them was noise; once a row
+has members the block opens by default, because the list IS the content. A member gets the "Part of"
+picker instead, always visible. **Notes** has one label: the group heading. The field keeps the word
+as its accessible name only (`InlineEditField`'s `hideLabel`). Every field keeps its per-field inline
 save through `updateGameFieldAction`; a collection member's hours, price and ownership stay read-only
 ("From the collection") exactly as before. Creating a game is still the small modal — a new row needs
 only a handful of fields to start.
@@ -651,9 +718,9 @@ Each of these was considered and cut, not overlooked:
   treats as a deliberate, separately-scoped feature rather than a byproduct of two tables existing.
 - **Session-by-session play history.** Hours are one hand-edited number per game, not a log of
   individual play sessions with dates and durations. See "Hours are one number" above.
-- ~~**A wishlist-vs-backlog distinction.**~~ **Shipped** — see "Upcoming games and the wishlist"
-  above. `wanted` is now a real status, distinct from `backlog`, and excluded from every computed
-  number.
+- ~~**A wishlist-vs-library distinction.**~~ **Shipped** — see "Upcoming games and the wishlist"
+  above. `wanted` is a real status, distinct from `played` (the only other one), and excluded from
+  every computed number.
 - **Platform syncs and a per-trophy list.** Steam and PSN syncs (staged, reviewed, committed) and a
   `game_trophies` table were built in August 2026, lived in production for seven weeks, and were
   removed on 2026-10-18 by owner decision: re-pasting a PSN token every two months and reviewing staged
