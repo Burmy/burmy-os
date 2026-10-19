@@ -74,6 +74,44 @@ export class InvalidCollectionError extends Error {
 }
 
 /**
+ * DLC belongs on the row whose figures it adds to. A title INSIDE a collection
+ * has no hours, price or trophies of its own — the set carries them — so its
+ * DLC goes on the collection row too (`docs/GAMES.md`, "DLC"). Refused at the
+ * insert rather than silently filed on the collection: the owner clicked
+ * "Add DLC" on the member, and quietly moving it would be the wrong surprise.
+ */
+export class DlcOnCollectionMemberError extends Error {
+  constructor() {
+    super(
+      'This game is inside a collection, so its DLC belongs on the collection — open the collection and add it there.',
+    );
+    this.name = 'DlcOnCollectionMemberError';
+  }
+}
+
+/**
+ * The mirror image of `DlcOnCollectionMemberError`: a game that already holds
+ * DLC rows cannot be filed into a collection, because a member cannot carry
+ * them. The owner moves the DLC first, then files the game.
+ */
+export class GameHasDlcError extends Error {
+  constructor() {
+    super(
+      'This game has DLC of its own, and a title inside a collection cannot — move its DLC to the collection first.',
+    );
+    this.name = 'GameHasDlcError';
+  }
+}
+
+/** Two DLCs of the same name on one game — the `(game_id, lower(name))` index. */
+export class DuplicateDlcError extends Error {
+  constructor(readonly duplicateName: string) {
+    super(`"${duplicateName}" is already recorded on this game`);
+    this.name = 'DuplicateDlcError';
+  }
+}
+
+/**
  * Drizzle WRAPS driver errors — the SQLSTATE lives on the `cause` chain, not on
  * `error.code`. A naive `error.code === '23505'` compiles, reads correctly, and
  * silently never matches, turning every duplicate title into an unhandled 500.

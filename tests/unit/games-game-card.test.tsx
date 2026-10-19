@@ -31,6 +31,7 @@ function game(overrides: Partial<Game> = {}): Game {
     createdAt: new Date('2024-01-01'),
     updatedAt: new Date('2024-01-01'),
     playYears: [],
+    dlc: [],
     collectionId: null,
     ...overrides,
   };

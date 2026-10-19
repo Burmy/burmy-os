@@ -26,17 +26,21 @@ import {
 } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
-import { games as gamesTable } from '@/server/db/schema';
+import { gameDlc, games as gamesTable } from '@/server/db/schema';
 import { trophyAdjustedRows } from '@/server/games/collections';
 import type { GameStatRow } from '@/server/games/stats';
 import type { GameOwnership, GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import {
   DuplicateGameError,
+  GameHasDlcError,
   DuplicateWishlistGameError,
   GameNotFoundError,
   InvalidCollectionError,
   isUniqueViolation,
 } from './errors';
+import { groupDlcByGame, type GameDlcRow } from '@/server/games/dlc';
+
+import { listDlc, listDlcForGame } from './dlc';
 import { listPlayYears, listPlayYearsForGame } from './play-years';
 
 export interface Game {
@@ -69,9 +73,15 @@ export interface Game {
   readonly createdAt: Date;
   readonly updatedAt: Date;
   readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
+  /**
+   * The game's DLC rows, year then name. ADDITIVE to the base figures above —
+   * see `src/server/games/dlc.ts` for `gameTotals`. Always `[]` for a
+   * collection member (the DAL refuses the insert) and for a freshly created row.
+   */
+  readonly dlc: readonly GameDlcRow[];
 }
 
-/** Only `title` and `platform` are required — a backlog entry may know nothing else yet. */
+/** Only `title` and `platform` are required — a freshly added game may know nothing else yet. */
 export interface GameInput {
   readonly title: string;
   readonly platform: GamePlatform;
@@ -101,6 +111,7 @@ export interface GameInput {
 function rowToGame(
   row: typeof gamesTable.$inferSelect,
   playYears: readonly { readonly year: number; readonly hoursTenths: number }[],
+  dlc: readonly GameDlcRow[] = [],
 ): Game {
   return {
     id: row.id,
@@ -129,6 +140,7 @@ function rowToGame(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     playYears,
+    dlc,
   };
 }
 
@@ -171,7 +183,10 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
     else existing.push({ year: row.year, hoursTenths: row.hoursTenths });
   }
 
-  return rows.map((row) => rowToGame(row, byGame.get(row.id) ?? []));
+  // Same single-query shape for DLC — one grouped read, not one per game.
+  const dlcByGame = groupDlcByGame(await listDlc(ownerId));
+
+  return rows.map((row) => rowToGame(row, byGame.get(row.id) ?? [], dlcByGame.get(row.id) ?? []));
 }
 
 export async function getGame(ownerId: string, id: string): Promise<Game> {
@@ -183,8 +198,11 @@ export async function getGame(ownerId: string, id: string): Promise<Game> {
 
   const row = rows[0];
   if (!row) throw new GameNotFoundError();
-  const playYears = await listPlayYearsForGame(ownerId, row.id);
-  return rowToGame(row, stripGameId(playYears));
+  const [playYears, dlc] = await Promise.all([
+    listPlayYearsForGame(ownerId, row.id),
+    listDlcForGame(ownerId, row.id),
+  ]);
+  return rowToGame(row, stripGameId(playYears), dlc);
 }
 
 /**
@@ -231,11 +249,14 @@ export async function updateGame(ownerId: string, id: string, input: GameInput):
 
     const row = rows[0];
     if (!row) throw new GameNotFoundError();
-    // This call only touches `games` columns — the play-year split (if any)
-    // is unchanged by it, so reflect its actual current state rather than
-    // reporting an empty split on a game that has one.
-    const playYears = await listPlayYearsForGame(ownerId, row.id);
-    return rowToGame(row, stripGameId(playYears));
+    // This call only touches `games` columns — the play-year split and the
+    // DLC rows (if any) are unchanged by it, so reflect their actual current
+    // state rather than reporting them empty on a game that has them.
+    const [playYears, dlc] = await Promise.all([
+      listPlayYearsForGame(ownerId, row.id),
+      listDlcForGame(ownerId, row.id),
+    ]);
+    return rowToGame(row, stripGameId(playYears), dlc);
   } catch (error) {
     if (isUniqueViolation(error)) throw new DuplicateGameError(input.title);
     throw error;
@@ -552,6 +573,17 @@ async function assertCollectionTargetValid(
     .limit(1);
 
   if (ownMember) throw new InvalidCollectionError('already-a-collection');
+
+  // A member carries no hours, price or trophies of its own, and so cannot
+  // carry DLC either (`errors.ts`, `GameHasDlcError`). The owner moves the
+  // DLC to the collection first, then files the game.
+  const [ownDlc] = await getDb()
+    .select({ id: gameDlc.id })
+    .from(gameDlc)
+    .where(and(eq(gameDlc.ownerId, ownerId), eq(gameDlc.gameId, gameId)))
+    .limit(1);
+
+  if (ownDlc) throw new GameHasDlcError();
 }
 
 /**
