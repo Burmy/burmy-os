@@ -286,7 +286,17 @@ export function GamePanel({
             ) : (
               <div>
                 <div>
-                  <RatingRow rating={game.rating} onSave={(value) => saveField('rating', value)} />
+                  {/* A collection has no rating of its own — the games inside
+                      it do (owner, 2026-10-19). Known only once the members
+                      have loaded, so the row waits rather than flashing. */}
+                  {current === null ? (
+                    <SkeletonRow label="Rating" />
+                  ) : current.members.length > 0 ? null : (
+                    <RatingRow
+                      rating={game.rating}
+                      onSave={(value) => saveField('rating', value)}
+                    />
+                  )}
                   {/* Only while wanted: it is what sorts the game into "Your
                       wishlist" and gives it a countdown. Once the game is
                       played the date is history and the row goes away. */}

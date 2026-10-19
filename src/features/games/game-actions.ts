@@ -15,6 +15,7 @@ import {
   createGame,
   deleteGame,
   getGame,
+  listCollectionMembers,
   setCollectionForGames,
   setGameCollection,
   updateGame,
@@ -487,6 +488,12 @@ export async function updateGameFieldAction(
         patch.notes = trimmed === '' ? null : GAME_FIELD_SCHEMAS.notes.parse(trimmed);
         break;
       case 'rating':
+        // A collection has no rating of its own — the games inside it do
+        // (owner, 2026-10-19). The panel and the table hide the row; this is
+        // the guard for a stale panel that still shows it.
+        if ((await listCollectionMembers(owner.userId, gameId)).length > 0) {
+          return fail('A collection has no rating of its own — rate the games inside it.');
+        }
         patch.rating = trimmed === '' ? null : GAME_FIELD_SCHEMAS.rating.parse(trimmed);
         break;
       case 'firstPlayedYear':
@@ -519,9 +526,19 @@ export async function updateGameFieldAction(
         patch.hoursTenths = tenths;
         break;
       }
-      case 'platinum':
-        patch.platinum = GAME_FIELD_SCHEMAS.platinum.parse(rawValue);
+      case 'platinum': {
+        const earned = GAME_FIELD_SCHEMAS.platinum.parse(rawValue);
+        patch.platinum = earned;
+        // Earning the platinum means every trophy is earned, so the count
+        // follows (owner, 2026-10-19: "the trophies earned should
+        // automatically change to total"). Only when a total is known — with
+        // none there is nothing to fill up to — and never on the way back:
+        // taking the platinum off says nothing about how many were earned.
+        if (earned && existing.achievementsTotal !== null) {
+          patch.achievementsUnlocked = existing.achievementsTotal;
+        }
         break;
+      }
       case 'releaseDate':
         // A typed date is a real day, so its precision is `'day'`; clearing
         // the date clears the precision with it — the pair is read together.

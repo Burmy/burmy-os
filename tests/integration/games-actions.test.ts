@@ -271,3 +271,59 @@ describe('collection actions — a game that has DLC', () => {
     expect(filed.dlc.map((row) => row.name)).toEqual(['DLC']);
   });
 });
+
+describe('updateGameFieldAction — platinum', () => {
+  it('earning the platinum fills trophies earned up to the total (owner, 2026-10-19)', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Ghost of Tsushima',
+      platform: 'ps4',
+      achievementsUnlocked: 40,
+      achievementsTotal: 69,
+    });
+
+    expect((await actions.updateGameFieldAction(created.id, 'platinum', 'true')).ok).toBe(true);
+
+    const fetched = await games.getGame(ownerId, created.id);
+    expect(fetched.platinum).toBe(true);
+    expect(fetched.achievementsUnlocked).toBe(69);
+  });
+
+  it('leaves trophies earned alone when no total is known, and when the platinum is taken back', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Bloodborne',
+      platform: 'ps4',
+      achievementsUnlocked: 30,
+      achievementsTotal: null,
+    });
+
+    expect((await actions.updateGameFieldAction(created.id, 'platinum', 'true')).ok).toBe(true);
+    expect((await games.getGame(ownerId, created.id)).achievementsUnlocked).toBe(30);
+
+    expect((await actions.updateGameFieldAction(created.id, 'platinum', '')).ok).toBe(true);
+    const fetched = await games.getGame(ownerId, created.id);
+    expect(fetched.platinum).toBe(false);
+    expect(fetched.achievementsUnlocked).toBe(30);
+  });
+});
+
+describe('updateGameFieldAction — rating on a collection', () => {
+  it('refuses as a readable failure: a collection has no rating of its own (2026-10-19)', async () => {
+    const ownerId = await provisionOwner();
+    const set = await games.createGame(ownerId, {
+      title: 'Nathan Drake Collection',
+      platform: 'ps4',
+    });
+    const member = await games.createGame(ownerId, { title: "Drake's Fortune", platform: 'ps4' });
+    await games.setGameCollection(ownerId, member.id, set.id);
+
+    const result = await actions.updateGameFieldAction(set.id, 'rating', '4');
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/collection/i);
+    expect((await games.getGame(ownerId, set.id)).rating).toBeNull();
+    // The game inside it rates normally.
+    expect((await actions.updateGameFieldAction(member.id, 'rating', '4')).ok).toBe(true);
+  });
+});

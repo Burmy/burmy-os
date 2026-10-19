@@ -1051,3 +1051,23 @@ describe('collections — hours on the members', () => {
     });
   });
 });
+
+/** A collection has no rating of its own (owner, 2026-10-19). */
+describe('collections — no rating of their own', () => {
+  const rows = (): GameStatRow[] => [
+    game({ id: 'set', title: 'Nathan Drake Collection', rating: 2, collectionId: null }),
+    game({ id: 'm1', title: 'Drake 1', rating: 5, collectionId: 'set' }),
+    game({ id: 'm2', title: 'Drake 2', rating: 3, collectionId: 'set' }),
+  ];
+
+  it('averages over the games inside, ignoring a rating left on the wrapper', () => {
+    expect(buildLibrarySummary(rows(), []).averageRating).toBe(4);
+  });
+
+  it('keeps the wrapper off the rating leaderboard', () => {
+    expect(buildLeaderboard(rows(), [], 'rating', 5).map((e) => e.title)).toEqual([
+      'Drake 1',
+      'Drake 2',
+    ]);
+  });
+});

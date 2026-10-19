@@ -250,12 +250,11 @@ export function buildLibrarySummary(
   // trophies actually live.
   const games = countableGames(rows);
 
-  // Both a collection and its titles may carry a rating (the collection's is
-  // often the only one, imported from the spreadsheet; a title's is the
-  // owner's opinion of that specific game). Averaged over the full set on
-  // purpose: every rating here is a real opinion the owner recorded, and
-  // silently discarding one class of them would be the wrong kind of tidy.
-  const rated = rows.filter((row) => row.rating !== null);
+  // A collection has no rating of its own (owner, 2026-10-19): the games
+  // inside it are what gets rated, so the average runs over the countable
+  // games. A rating left on a wrapper row by an old import is ignored here,
+  // not averaged — the UI no longer offers one.
+  const rated = games.filter((row) => row.rating !== null);
 
   // Excluded from their averages entirely, not counted as a zero — the same
   // rule `averageRating` already follows: a game with no hours logged or no
@@ -547,6 +546,8 @@ export function buildLeaderboard(
 ): LeaderboardEntry[] {
   const rows = withDlcTotals(baseRows, dlc);
   const scored: { readonly row: GameStatRow; readonly value: number }[] = [];
+  // A collection has no rating of its own — see `buildLibrarySummary`.
+  const collections = collectionIdsIn(rows);
 
   for (const row of rows) {
     const hoursTenths = row.hoursTenths ?? 0;
@@ -555,7 +556,7 @@ export function buildLeaderboard(
       if (hoursTenths <= 0) continue;
       scored.push({ row, value: hoursTenths });
     } else if (metric === 'rating') {
-      if (row.rating === null) continue;
+      if (row.rating === null || collections.has(row.id)) continue;
       scored.push({ row, value: row.rating });
     } else if (metric === 'trophies') {
       if (row.achievementsUnlocked === null || row.achievementsUnlocked <= 0) continue;

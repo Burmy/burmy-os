@@ -511,6 +511,8 @@ describe('GamePanel — collections', () => {
 
     expect(screen.getByText('Uncharted 2: Among Thieves Remastered')).toBeInTheDocument();
     expect(screen.getAllByText('2 games').length).toBeGreaterThan(0);
+    // A collection has no rating of its own (2026-10-19) — no Rating row.
+    expect(screen.queryByText('Rating')).not.toBeInTheDocument();
     // Summed from the members, so not editable here.
     expect(screen.queryByRole('button', { name: 'Achievements earned' })).not.toBeInTheDocument();
     expect(screen.getAllByText('Added up from the games in this collection').length).toBe(2);

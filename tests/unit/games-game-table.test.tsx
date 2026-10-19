@@ -324,3 +324,14 @@ describe('GameTable collection roll-ups', () => {
     expect(screen.getAllByText('—').length).toBeGreaterThan(0);
   });
 });
+
+describe('GameTable collection rating', () => {
+  it('shows no stars on the collection row; the games inside keep theirs (2026-10-19)', () => {
+    const collection = game({ id: 'ndc', title: 'Nathan Drake Collection', rating: 2 });
+    const members = [game({ id: 'uc1', title: 'Drake 1', collectionId: 'ndc', rating: 5 })];
+    render(<GameTable activeId={null} groups={[{ game: collection, members }]} onOpen={vi.fn()} />);
+
+    expect(screen.queryByLabelText('2 out of 5')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('5 out of 5')).toBeInTheDocument();
+  });
+});

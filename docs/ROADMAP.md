@@ -1381,6 +1381,11 @@ every glance. Decided through a product interview, then built on `feat/games-sim
 - **Upcoming** opens with "Your wishlist" and no longer auto-flips a released wanted game to backlog:
   released games show "Out now" until the owner moves them. The feed hides games already in the
   library. A hand-added wanted game can be given a release date in the panel.
+- **Three small panel rules (2026-10-19):** earning the platinum fills Achievements earned up to the
+  total (`updateGameFieldAction`, only when a total is known, never on the way back); a collection has
+  no rating of its own (row hidden on the panel and the table, excluded from the average and the
+  rating leaderboard, existing wrapper ratings nulled in the reconciliation); the add-game dialog
+  opens on Details, not Progress.
 - **Hours are individual inside a collection** (2026-10-19, owner: "I feel like hours should be
   individual"): a member carries its own hours, year split and DLC; the collection shows the members'
   sum read-only, falling back to its own unsplit lump while no member has any — the rule trophies

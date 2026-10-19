@@ -139,6 +139,13 @@ saves on every click through `updateGameFieldAction('platinum', …)`, with an e
 "off", so a platinum once set can always be turned back off. `createGameAction`
 writes it unconditionally because an unchecked HTML checkbox submits no key in `FormData` at all.
 
+**Earning it fills the count.** Toggling Platinum on also sets `achievements_unlocked` to
+`achievements_total` — when a total is known; with none there is nothing to fill up to — because a
+platinum means every trophy is earned (owner, 2026-10-19: "the trophies earned should automatically
+change to total"). Toggling it off changes nothing else: taking the platinum back says nothing about
+how many were earned. The flag itself stays a plain stored claim, not a derivation, for the reasons
+above.
+
 ---
 
 ## Collections
@@ -192,6 +199,11 @@ title: hours are attributed to the row that carries them.
 
 **Price and ownership** are the set's: one purchase, one figure on the collection row. The panel renders
 those two read-only for a member, with the hint "From the collection".
+
+**Rating is the individual title's only.** A collection has no rating of its own (owner, 2026-10-19):
+the panel and the table show no rating row for a collection, `updateGameFieldAction` refuses one, and
+the average rating and the rating leaderboard run over the countable games. The ratings the sheet
+import had left on the wrapper rows were nulled in the 2026-10-19 reconciliation.
 
 **Hours and trophies are the individual title's.** A member carries its own hours (with its own year
 split and its own DLC, like any game) and its own trophies, and the collection reports the SUM of what

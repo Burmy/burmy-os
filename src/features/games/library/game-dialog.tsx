@@ -357,7 +357,7 @@ export function GameDialog({
              * would lose whatever the owner typed into a tab they've since
              * switched away from.
              */}
-            <Tabs defaultValue="progress">
+            <Tabs defaultValue="details">
               <TabsList>
                 <TabsTrigger value="details">Details</TabsTrigger>
                 <TabsTrigger value="progress">Progress</TabsTrigger>

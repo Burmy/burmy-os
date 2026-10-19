@@ -239,7 +239,8 @@ function GameRow({
           : `${totals.achievementsUnlocked}${totals.achievementsTotal === null ? '' : ` / ${totals.achievementsTotal}`}`}
       </TableCell>
       <TableCell>
-        <RatingStars rating={game.rating} />
+        {/* A collection has no rating of its own; the games inside it do. */}
+        {memberCount === 0 ? <RatingStars rating={game.rating} /> : null}
       </TableCell>
       <TableCell>
         {/* PlatinumBadge is icon-only and aria-hidden by design (the

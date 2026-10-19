@@ -128,6 +128,8 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **`wanted` is excluded from stats in exactly one place**: `listGameStatRows`.
 - **A `wanted` game is never auto-flipped.** It stays on the wishlist, marked "Out now" once released,
   until the owner changes its status. (This reversed an earlier decision.)
+- **Platinum fills the trophy count.** Toggling Platinum on sets Achievements earned to the total when
+  one is known; toggling it off changes nothing else. A collection has no rating of its own.
 - **Inside a collection, hours and trophies are the individual title's; price is the set's.** The
   collection shows the members' sum read-only and falls back to its own unsplit lump while no member
   carries the figure (`rollUpHours`/`rollUpTrophies`; `collectionAdjustedRows` at the stats boundary).
