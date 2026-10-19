@@ -17,6 +17,7 @@
  */
 
 import { collectionIdsIn, countableGames } from './collections';
+import { type GameDlcRow, gameTotals, groupDlcByGame } from './dlc';
 import { type PlayYearRow, attributeHours } from './play-years';
 import type { GameOwnership, GamePlatform, GameStatus } from './taxonomy';
 
@@ -131,10 +132,35 @@ export interface Callouts {
  * anywhere — the library, Steam, or PSN — records which year a trophy was
  * earned in, and splitting them proportionally would fabricate data.
  */
+/**
+ * Every row with its hours, price and achievement counts replaced by
+ * base + DLC (`gameTotals`). DLC is ADDITIVE — see `dlc.ts` — so this is the
+ * only place the stat builders need to know DLC exists: they read the totals
+ * exactly as they always read the base figures. A DLC row whose game is not
+ * in `rows` contributes nothing (`listGameStatRows` already excludes
+ * `wanted` games; their DLC, if any, must not leak into the figures).
+ *
+ * Applied AFTER `trophyAdjustedRows` (which runs at the database boundary),
+ * so a collection's DLC trophies add on top of the member roll-up — by
+ * owner decision, one rule throughout: DLC adds to whatever row it is on.
+ */
+function withDlcTotals(rows: readonly GameStatRow[], dlc: readonly GameDlcRow[]): GameStatRow[] {
+  if (dlc.length === 0) return [...rows];
+  const byGame = groupDlcByGame(dlc);
+  return rows.map((row) => {
+    const own = byGame.get(row.id);
+    return own === undefined ? row : { ...row, ...gameTotals(row, own) };
+  });
+}
+
 export function buildYearlyBreakdown(
   rows: readonly GameStatRow[],
   playYears: readonly PlayYearRow[],
+  dlc: readonly GameDlcRow[],
 ): YearlyBreakdown {
+  // Attribution works on the BASE hours: a year split apportions the game's
+  // own total and must sum to it. DLC hours never enter the split — each DLC
+  // is credited to its own year below, on top.
   const { attributions, unattributedTenths } = attributeHours(rows, playYears);
 
   const byYear = new Map<
@@ -181,6 +207,19 @@ export function buildYearlyBreakdown(
     target.achievements += row.achievementsUnlocked ?? 0;
   }
 
+  // A DLC's hours and trophies belong to the year the owner PLAYED it. It is
+  // not a game that was started (`startedCount` is untouched), but it is a
+  // year the game was genuinely played in, so the game counts toward that
+  // year's `playedCount`.
+  const gameIds = new Set(rows.map((row) => row.id));
+  for (const row of dlc) {
+    if (!gameIds.has(row.gameId)) continue;
+    const target = bucket(row.year);
+    target.hoursTenths += row.hoursTenths ?? 0;
+    target.achievements += row.achievementsUnlocked ?? 0;
+    target.playedGames.add(row.gameId);
+  }
+
   const ascending = [...byYear.entries()].sort((a, b) => a[0] - b[0]);
 
   const built = ascending
@@ -200,7 +239,11 @@ export function buildYearlyBreakdown(
   return { rows: built, unattributedTenths };
 }
 
-export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummary {
+export function buildLibrarySummary(
+  baseRows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
+): LibrarySummary {
+  const rows = withDlcTotals(baseRows, dlc);
   // COUNTS only — see `countableGames`. Every sum and average below stays on
   // the full `rows`, because a collection is where the hours, price and
   // trophies actually live.
@@ -261,7 +304,11 @@ export interface TrophyTotals {
   readonly gamesWithTrophies: number;
 }
 
-export function buildTrophyTotals(rows: readonly GameStatRow[]): TrophyTotals {
+export function buildTrophyTotals(
+  baseRows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
+): TrophyTotals {
+  const rows = withDlcTotals(baseRows, dlc);
   let earned = 0;
   let total = 0;
   let hasTotal = false;
@@ -288,7 +335,11 @@ export function buildTrophyTotals(rows: readonly GameStatRow[]): TrophyTotals {
  * `buildLibrarySummary`'s `averageRating` — a game with no price recorded is
  * missing data, not a free game.
  */
-export function buildFinancialSummary(rows: readonly GameStatRow[]): FinancialSummary {
+export function buildFinancialSummary(
+  baseRows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
+): FinancialSummary {
+  const rows = withDlcTotals(baseRows, dlc);
   const priced = rows.filter((row) => row.priceCents !== null);
   const totalSpendCents = priced.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
 
@@ -418,9 +469,11 @@ export function capDistributionSlices(
  * sync by hand.
  */
 export function findCallouts(
-  rows: readonly GameStatRow[],
+  baseRows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
   yearlyRows: readonly YearlyBreakdownRow[],
 ): Callouts {
+  const rows = withDlcTotals(baseRows, dlc);
   const played = rows.filter((row) => (row.hoursTenths ?? 0) > 0);
 
   const developerHours = new Map<string, number>();
@@ -486,10 +539,12 @@ export interface LeaderboardEntry {
  * would divide by zero.
  */
 export function buildLeaderboard(
-  rows: readonly GameStatRow[],
+  baseRows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
   metric: LeaderboardMetric,
   limit: number,
 ): LeaderboardEntry[] {
+  const rows = withDlcTotals(baseRows, dlc);
   const scored: { readonly row: GameStatRow; readonly value: number }[] = [];
 
   for (const row of rows) {

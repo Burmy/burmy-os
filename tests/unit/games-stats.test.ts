@@ -49,6 +49,7 @@ describe('buildYearlyBreakdown', () => {
         game({ id: 'c', firstPlayedYear: 2023, hoursTenths: 50, achievementsUnlocked: 1 }),
       ],
       [],
+      [],
     );
 
     expect(rows.map((r) => r.year)).toEqual([2023, 2022]);
@@ -69,13 +70,14 @@ describe('buildYearlyBreakdown', () => {
   });
 
   it('excludes a game with no first-played year', () => {
-    const { rows } = buildYearlyBreakdown([game({ firstPlayedYear: null })], []);
+    const { rows } = buildYearlyBreakdown([game({ firstPlayedYear: null })], [], []);
     expect(rows).toEqual([]);
   });
 
   it('treats null hours and null achievements as zero', () => {
     const { rows } = buildYearlyBreakdown(
       [game({ firstPlayedYear: 2020, hoursTenths: null, achievementsUnlocked: null })],
+      [],
       [],
     );
     expect(rows[0]).toMatchObject({ year: 2020, hoursTenths: 0, achievements: 0 });
@@ -89,6 +91,7 @@ describe('buildYearlyBreakdown', () => {
         { gameId: 'hk', year: 2024, hoursTenths: 370 },
         { gameId: 'hk', year: 2025, hoursTenths: 120 },
       ],
+      [],
     );
 
     expect(rows.map((r) => [r.year, r.hoursTenths])).toEqual([
@@ -104,6 +107,7 @@ describe('buildYearlyBreakdown', () => {
         { gameId: 'hk', year: 2024, hoursTenths: 370 },
         { gameId: 'hk', year: 2025, hoursTenths: 120 },
       ],
+      [],
     );
 
     const byYear = new Map(rows.map((r) => [r.year, r]));
@@ -118,6 +122,7 @@ describe('buildYearlyBreakdown', () => {
         { gameId: 'hk', year: 2024, hoursTenths: 370 },
         { gameId: 'hk', year: 2025, hoursTenths: 120 },
       ],
+      [],
     );
 
     const byYear = new Map(rows.map((r) => [r.year, r]));
@@ -129,6 +134,7 @@ describe('buildYearlyBreakdown', () => {
     const { unattributedTenths } = buildYearlyBreakdown(
       [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 510 })],
       [{ gameId: 'hk', year: 2024, hoursTenths: 490 }],
+      [],
     );
 
     expect(unattributedTenths).toBe(20);
@@ -141,6 +147,7 @@ describe('buildYearlyBreakdown', () => {
         game({ id: 'b', firstPlayedYear: 2023, hoursTenths: 250 }),
       ],
       [],
+      [],
     );
 
     const byYear = new Map(rows.map((r) => [r.year, r]));
@@ -151,11 +158,14 @@ describe('buildYearlyBreakdown', () => {
 
 describe('buildLibrarySummary', () => {
   it('counts totals across the whole library regardless of year', () => {
-    const summary = buildLibrarySummary([
-      game({ id: 'a', status: 'played', hoursTenths: 500, rating: 5 }),
-      game({ id: 'b', status: 'played', hoursTenths: null, rating: null }),
-      game({ id: 'c', status: 'played', hoursTenths: 100, rating: 3 }),
-    ]);
+    const summary = buildLibrarySummary(
+      [
+        game({ id: 'a', status: 'played', hoursTenths: 500, rating: 5 }),
+        game({ id: 'b', status: 'played', hoursTenths: null, rating: null }),
+        game({ id: 'c', status: 'played', hoursTenths: 100, rating: 3 }),
+      ],
+      [],
+    );
 
     expect(summary.totalGames).toBe(3);
     expect(summary.totalHoursTenths).toBe(600);
@@ -165,16 +175,15 @@ describe('buildLibrarySummary', () => {
   });
 
   it('averages rating over rated games only, ignoring unrated ones', () => {
-    const summary = buildLibrarySummary([
-      game({ id: 'a', rating: 5 }),
-      game({ id: 'b', rating: 3 }),
-      game({ id: 'c', rating: null }),
-    ]);
+    const summary = buildLibrarySummary(
+      [game({ id: 'a', rating: 5 }), game({ id: 'b', rating: 3 }), game({ id: 'c', rating: null })],
+      [],
+    );
     expect(summary.averageRating).toBe(4);
   });
 
   it('has no average rating at all when nothing is rated', () => {
-    expect(buildLibrarySummary([game({ rating: null })]).averageRating).toBeNull();
+    expect(buildLibrarySummary([game({ rating: null })], []).averageRating).toBeNull();
   });
 
   // `completionRatePercent` was deleted: with `completed`/`paused_dropped`
@@ -183,57 +192,69 @@ describe('buildLibrarySummary', () => {
   // it pinned to 100% whenever nothing was marked dropped, regardless of
   // backlog size. `LibrarySummary` no longer carries the field at all.
   it('does not carry a completion rate field any more', () => {
-    const summary = buildLibrarySummary([game({ status: 'played' }), game({ status: 'wanted' })]);
+    const summary = buildLibrarySummary(
+      [game({ status: 'played' }), game({ status: 'wanted' })],
+      [],
+    );
     expect(summary).not.toHaveProperty('completionRatePercent');
   });
 
   it('counts platinums by the owner-set flag, not by achievement completion', () => {
-    const summary = buildLibrarySummary([
-      game({ id: 'a', platinum: true }),
-      game({ id: 'b', platinum: true }),
-      // Full clear, but never flagged platinum — Steam has no platinum
-      // equivalent, so this must NOT be inferred from achievement counts.
-      game({ id: 'c', platinum: false, achievementsUnlocked: 30, achievementsTotal: 30 }),
-    ]);
+    const summary = buildLibrarySummary(
+      [
+        game({ id: 'a', platinum: true }),
+        game({ id: 'b', platinum: true }),
+        // Full clear, but never flagged platinum — Steam has no platinum
+        // equivalent, so this must NOT be inferred from achievement counts.
+        game({ id: 'c', platinum: false, achievementsUnlocked: 30, achievementsTotal: 30 }),
+      ],
+      [],
+    );
     expect(summary.platinumCount).toBe(2);
   });
 
   it('has zero platinums, not null, for an empty or platinum-free library', () => {
-    expect(buildLibrarySummary([]).platinumCount).toBe(0);
-    expect(buildLibrarySummary([game({ platinum: false })]).platinumCount).toBe(0);
+    expect(buildLibrarySummary([], []).platinumCount).toBe(0);
+    expect(buildLibrarySummary([game({ platinum: false })], []).platinumCount).toBe(0);
   });
 
   it('averages hours over games that HAVE logged hours, excluding unlogged ones rather than counting them as zero', () => {
-    const summary = buildLibrarySummary([
-      game({ id: 'a', hoursTenths: 1000 }),
-      game({ id: 'b', hoursTenths: 500 }),
-      game({ id: 'c', hoursTenths: null }),
-    ]);
+    const summary = buildLibrarySummary(
+      [
+        game({ id: 'a', hoursTenths: 1000 }),
+        game({ id: 'b', hoursTenths: 500 }),
+        game({ id: 'c', hoursTenths: null }),
+      ],
+      [],
+    );
     // (1000 + 500) / 2 — the unlogged game does not deflate the mean.
     expect(summary.averageHoursTenthsPerGame).toBe(750);
   });
 
   it('has no average hours per game when nothing has hours logged, rather than NaN', () => {
-    const summary = buildLibrarySummary([game({ hoursTenths: null })]);
+    const summary = buildLibrarySummary([game({ hoursTenths: null })], []);
     expect(summary.averageHoursTenthsPerGame).toBeNull();
     expect(Number.isNaN(summary.averageHoursTenthsPerGame)).toBe(false);
   });
 
   it('averages Metacritic over games that have one, excluding the rest', () => {
-    const summary = buildLibrarySummary([
-      game({ id: 'a', metacritic: 90 }),
-      game({ id: 'b', metacritic: 70 }),
-      game({ id: 'c', metacritic: null }),
-    ]);
+    const summary = buildLibrarySummary(
+      [
+        game({ id: 'a', metacritic: 90 }),
+        game({ id: 'b', metacritic: 70 }),
+        game({ id: 'c', metacritic: null }),
+      ],
+      [],
+    );
     expect(summary.averageMetacritic).toBe(80);
   });
 
   it('has no average Metacritic when nothing has one, rather than NaN', () => {
-    expect(buildLibrarySummary([game({ metacritic: null })]).averageMetacritic).toBeNull();
+    expect(buildLibrarySummary([game({ metacritic: null })], []).averageMetacritic).toBeNull();
   });
 
   it('has no averages at all for an empty library, and no divide-by-zero NaN anywhere', () => {
-    const summary = buildLibrarySummary([]);
+    const summary = buildLibrarySummary([], []);
     expect(summary.totalGames).toBe(0);
     expect(summary.averageRating).toBeNull();
     expect(summary.averageHoursTenthsPerGame).toBeNull();
@@ -246,41 +267,47 @@ describe('buildLibrarySummary', () => {
 
 describe('buildFinancialSummary', () => {
   it('sums price only across games that have one recorded', () => {
-    const financial = buildFinancialSummary([
-      game({ id: 'a', priceCents: 5999 }),
-      game({ id: 'b', priceCents: 2999 }),
-      game({ id: 'c', priceCents: null }),
-    ]);
+    const financial = buildFinancialSummary(
+      [
+        game({ id: 'a', priceCents: 5999 }),
+        game({ id: 'b', priceCents: 2999 }),
+        game({ id: 'c', priceCents: null }),
+      ],
+      [],
+    );
     expect(financial.totalSpendCents).toBe(8998);
   });
 
   it('averages price over games that have one, excluding games with no price recorded', () => {
-    const financial = buildFinancialSummary([
-      game({ id: 'a', priceCents: 6000 }),
-      game({ id: 'b', priceCents: 4000 }),
-      game({ id: 'c', priceCents: null }),
-    ]);
+    const financial = buildFinancialSummary(
+      [
+        game({ id: 'a', priceCents: 6000 }),
+        game({ id: 'b', priceCents: 4000 }),
+        game({ id: 'c', priceCents: null }),
+      ],
+      [],
+    );
     // (6000 + 4000) / 2 — the priceless game does not pull the average toward zero.
     expect(financial.averagePriceCents).toBe(5000);
   });
 
   it('has no average price for a library where nothing has a price recorded', () => {
-    expect(buildFinancialSummary([game({ priceCents: null })]).averagePriceCents).toBeNull();
+    expect(buildFinancialSummary([game({ priceCents: null })], []).averagePriceCents).toBeNull();
   });
 
   it('computes cost per hour as total spend divided by WHOLE hours, not tenths', () => {
     // $60 spent, 10 hours played (100 tenths) -> $6/hour, not $0.60.
-    const financial = buildFinancialSummary([game({ priceCents: 6000, hoursTenths: 100 })]);
+    const financial = buildFinancialSummary([game({ priceCents: 6000, hoursTenths: 100 })], []);
     expect(financial.costPerHourCents).toBe(600);
   });
 
   it('has no cost per hour when nothing has any hours logged, rather than a divide-by-zero NaN or Infinity', () => {
-    const financial = buildFinancialSummary([game({ priceCents: 6000, hoursTenths: null })]);
+    const financial = buildFinancialSummary([game({ priceCents: 6000, hoursTenths: null })], []);
     expect(financial.costPerHourCents).toBeNull();
   });
 
   it('has zero totals, not null or NaN, for an empty library', () => {
-    const financial = buildFinancialSummary([]);
+    const financial = buildFinancialSummary([], []);
     expect(financial.totalSpendCents).toBe(0);
     expect(financial).not.toHaveProperty('backlogCount');
     expect(financial).not.toHaveProperty('backlogValueCents');
@@ -448,6 +475,7 @@ describe('findCallouts', () => {
         game({ id: 'c', developer: 'Rockstar Games', hoursTenths: 1700 }),
       ],
       [],
+      [],
     );
     expect(callouts.topDeveloper?.name).toBe('Rockstar Games');
     expect(callouts.topDeveloper?.hoursTenths).toBe(1700);
@@ -465,9 +493,9 @@ describe('findCallouts', () => {
       game({ id: 'a', firstPlayedYear: 2022, hoursTenths: 4640 }),
       game({ id: 'b', firstPlayedYear: 2023, hoursTenths: 4380 }),
     ];
-    const { rows: yearlyRows } = buildYearlyBreakdown(rows, []);
+    const { rows: yearlyRows } = buildYearlyBreakdown(rows, [], []);
 
-    const callouts = findCallouts(rows, yearlyRows);
+    const callouts = findCallouts(rows, [], yearlyRows);
     expect(callouts.bestYear?.year).toBe(2022);
     expect(callouts.bestYear?.hoursTenths).toBe(4640);
   });
@@ -490,16 +518,16 @@ describe('findCallouts', () => {
       { gameId: 'hk', year: 2024, hoursTenths: 370 },
       { gameId: 'hk', year: 2025, hoursTenths: 120 },
     ];
-    const { rows: yearlyRows } = buildYearlyBreakdown(rows, playYears);
+    const { rows: yearlyRows } = buildYearlyBreakdown(rows, playYears, []);
 
-    const callouts = findCallouts(rows, yearlyRows);
+    const callouts = findCallouts(rows, [], yearlyRows);
     // 2024 now holds only 370h once the split is applied, so 2023's flat
     // 400h wins — the bug this test guards against would have said 2024/490h.
     expect(callouts.bestYear).toEqual({ year: 2023, hoursTenths: 400 });
   });
 
   it('returns nulls rather than throwing on an empty library', () => {
-    const callouts = findCallouts([], []);
+    const callouts = findCallouts([], [], []);
     expect(callouts.topDeveloper).toBeNull();
     expect(callouts.bestYear).toBeNull();
   });
@@ -518,6 +546,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'b', title: 'Long', hoursTenths: 1700 }),
         game({ id: 'c', title: 'Middling', hoursTenths: 600 }),
       ],
+      [],
       'hours',
       3,
     );
@@ -528,7 +557,7 @@ describe('buildLeaderboard', () => {
     const rows = [1, 2, 3, 4, 5].map((n) =>
       game({ id: `g${n}`, title: `G${n}`, hoursTenths: n * 100 }),
     );
-    expect(buildLeaderboard(rows, 'hours', 3)).toHaveLength(3);
+    expect(buildLeaderboard(rows, [], 'hours', 3)).toHaveLength(3);
   });
 
   it('excludes unplayed games from the hours board rather than ranking them zero', () => {
@@ -537,6 +566,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'a', title: 'Played', hoursTenths: 100 }),
         game({ id: 'b', title: 'Never', hoursTenths: 0 }),
       ],
+      [],
       'hours',
       3,
     );
@@ -549,6 +579,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'a', title: 'Rated', rating: 4 }),
         game({ id: 'b', title: 'Unrated', rating: null }),
       ],
+      [],
       'rating',
       3,
     );
@@ -562,6 +593,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'b', title: 'None', achievementsUnlocked: 0 }),
         game({ id: 'c', title: 'Unknown', achievementsUnlocked: null }),
       ],
+      [],
       'trophies',
       3,
     );
@@ -575,6 +607,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'a', title: 'Pricey', priceCents: 6000, hoursTenths: 600 }),
         game({ id: 'b', title: 'Bargain', priceCents: 2000, hoursTenths: 400 }),
       ],
+      [],
       'costPerHour',
       3,
     );
@@ -590,6 +623,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'a', title: 'Free', priceCents: 0, hoursTenths: 600 }),
         game({ id: 'b', title: 'Paid', priceCents: 2000, hoursTenths: 400 }),
       ],
+      [],
       'costPerHour',
       3,
     );
@@ -599,6 +633,7 @@ describe('buildLeaderboard', () => {
   it('excludes an unplayed game from the value board rather than dividing by zero', () => {
     const top = buildLeaderboard(
       [game({ id: 'a', title: 'Shelf', priceCents: 6000, hoursTenths: 0 })],
+      [],
       'costPerHour',
       3,
     );
@@ -613,6 +648,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'a', title: 'Zebra', rating: 5, hoursTenths: 9000 }),
         game({ id: 'b', title: 'Alpha', rating: 5, hoursTenths: 10 }),
       ],
+      [],
       'rating',
       3,
     );
@@ -625,6 +661,7 @@ describe('buildLeaderboard', () => {
         game({ id: 'a', title: 'Zebra', hoursTenths: 500 }),
         game({ id: 'b', title: 'Alpha', hoursTenths: 500 }),
       ],
+      [],
       'hours',
       3,
     );
@@ -642,6 +679,7 @@ describe('buildLeaderboard', () => {
           platform: 'ps4',
         }),
       ],
+      [],
       'hours',
       3,
     );
@@ -653,7 +691,7 @@ describe('buildLeaderboard', () => {
   });
 
   it('returns an empty board for an empty library', () => {
-    expect(buildLeaderboard([], 'hours', 3)).toEqual([]);
+    expect(buildLeaderboard([], [], 'hours', 3)).toEqual([]);
   });
 });
 
@@ -741,11 +779,11 @@ describe('collections', () => {
   it('reports four games for three titles plus a standalone, never five', () => {
     // The bug this exists to prevent: counting the wrapper alongside its own
     // contents reports one more game than the owner actually has.
-    expect(buildLibrarySummary(library()).totalGames).toBe(4);
+    expect(buildLibrarySummary(library(), []).totalGames).toBe(4);
   });
 
   it("counts a collection's hours and trophies exactly once, on the collection", () => {
-    const summary = buildLibrarySummary(library());
+    const summary = buildLibrarySummary(library(), []);
 
     // 44h from the collection + 136h from Elden Ring. The three titles carry
     // null hours, so they contribute nothing and cannot double-count.
@@ -754,11 +792,11 @@ describe('collections', () => {
   });
 
   it('counts a collection once toward total spend, not once per title inside it', () => {
-    expect(buildFinancialSummary(library()).totalSpendCents).toBe(2290 + 5999);
+    expect(buildFinancialSummary(library(), []).totalSpendCents).toBe(2290 + 5999);
   });
 
   it('credits a year with the titles started, and with the collection’s trophies and hours', () => {
-    const { rows } = buildYearlyBreakdown(library(), []);
+    const { rows } = buildYearlyBreakdown(library(), [], []);
     const twentyFour = rows.find((row) => row.year === 2024);
 
     // Three titles started in 2024 — the wrapper is not a fourth.
@@ -785,11 +823,11 @@ describe('collections', () => {
       game({ id: 'a', hoursTenths: 100, priceCents: 1000, firstPlayedYear: 2024 }),
       game({ id: 'b', hoursTenths: 200, priceCents: 2000, firstPlayedYear: 2024 }),
     ];
-    const summary = buildLibrarySummary(flat);
+    const summary = buildLibrarySummary(flat, []);
 
     expect(summary.totalGames).toBe(2);
     expect(summary.totalHoursTenths).toBe(300);
-    expect(buildFinancialSummary(flat).totalSpendCents).toBe(3000);
+    expect(buildFinancialSummary(flat, []).totalSpendCents).toBe(3000);
   });
 });
 
@@ -800,21 +838,23 @@ describe('buildTrophyTotals', () => {
       game({ id: 'b', achievementsUnlocked: 10, achievementsTotal: 30 }),
       game({ id: 'c', achievementsUnlocked: null, achievementsTotal: null }),
     ];
-    expect(buildTrophyTotals(rows)).toEqual({ earned: 52, total: 80, gamesWithTrophies: 2 });
+    expect(buildTrophyTotals(rows, [])).toEqual({ earned: 52, total: 80, gamesWithTrophies: 2 });
   });
 
   it('reports a null total when no row carries one, so the card never reads "of 0"', () => {
-    expect(buildTrophyTotals([game({ achievementsUnlocked: 5, achievementsTotal: null })])).toEqual(
-      {
-        earned: 5,
-        total: null,
-        gamesWithTrophies: 1,
-      },
-    );
+    expect(
+      buildTrophyTotals([game({ achievementsUnlocked: 5, achievementsTotal: null })], []),
+    ).toEqual({
+      earned: 5,
+      total: null,
+      gamesWithTrophies: 1,
+    });
   });
 
   it('treats a zero earned count as no trophies rather than a game with trophies', () => {
-    expect(buildTrophyTotals([game({ achievementsUnlocked: 0, achievementsTotal: 20 })])).toEqual({
+    expect(
+      buildTrophyTotals([game({ achievementsUnlocked: 0, achievementsTotal: 20 })], []),
+    ).toEqual({
       earned: 0,
       total: 20,
       gamesWithTrophies: 0,
@@ -822,6 +862,119 @@ describe('buildTrophyTotals', () => {
   });
 
   it('is empty on an empty library', () => {
-    expect(buildTrophyTotals([])).toEqual({ earned: 0, total: null, gamesWithTrophies: 0 });
+    expect(buildTrophyTotals([], [])).toEqual({ earned: 0, total: null, gamesWithTrophies: 0 });
+  });
+});
+
+/**
+ * DLC is ADDITIVE: a row's hours, price and trophies add on top of the game's
+ * own base figures (`src/server/games/dlc.ts`). Every builder here takes the
+ * DLC rows beside the game rows and works on the totals — except the
+ * attribution step of the yearly breakdown, which still apportions the BASE
+ * game's hours (that is what a year split sums to), with each DLC's hours and
+ * trophies credited to the DLC's own year on top.
+ */
+describe('DLC in every builder', () => {
+  const dlcRow = {
+    id: 'dlc-1',
+    gameId: 'a',
+    name: 'Shadow of the Erdtree',
+    year: 2025,
+    hoursTenths: 60,
+    priceCents: 3999,
+    achievementsUnlocked: 4,
+    achievementsTotal: 6,
+  };
+
+  it("yearly: a DLC's hours and trophies land in the DLC year, not first-played year", () => {
+    const { rows } = buildYearlyBreakdown(
+      [game({ id: 'a', firstPlayedYear: 2024, hoursTenths: 500, achievementsUnlocked: 10 })],
+      [],
+      [dlcRow],
+    );
+    const y2024 = rows.find((row) => row.year === 2024);
+    const y2025 = rows.find((row) => row.year === 2025);
+    expect(y2024).toMatchObject({
+      startedCount: 1,
+      playedCount: 1,
+      hoursTenths: 500,
+      achievements: 10,
+    });
+    expect(y2025).toMatchObject({
+      startedCount: 0,
+      playedCount: 1,
+      hoursTenths: 60,
+      achievements: 4,
+    });
+  });
+
+  it('yearly: the base split still has to add up to the BASE hours, not the total', () => {
+    const { unattributedTenths } = buildYearlyBreakdown(
+      [game({ id: 'a', firstPlayedYear: 2024, hoursTenths: 500 })],
+      [{ gameId: 'a', year: 2024, hoursTenths: 500 }],
+      [dlcRow],
+    );
+    expect(unattributedTenths).toBe(0);
+  });
+
+  it('library total hours include DLC', () => {
+    const summary = buildLibrarySummary([game({ id: 'a', hoursTenths: 500 })], [dlcRow]);
+    expect(summary.totalHoursTenths).toBe(560);
+  });
+
+  it('trophies earned include DLC', () => {
+    const trophies = buildTrophyTotals(
+      [game({ id: 'a', achievementsUnlocked: 10, achievementsTotal: 20 })],
+      [dlcRow],
+    );
+    expect(trophies.earned).toBe(14);
+    expect(trophies.total).toBe(26);
+  });
+
+  it('total spend and cost per hour include DLC price and hours', () => {
+    const financial = buildFinancialSummary(
+      [game({ id: 'a', hoursTenths: 500, priceCents: 6000 })],
+      [dlcRow],
+    );
+    expect(financial.totalSpendCents).toBe(9999);
+    // 9999 cents over 56 hours.
+    expect(financial.costPerHourCents).toBeCloseTo(9999 / 56, 5);
+  });
+
+  it('averagePriceCents counts a game priced only through its DLC', () => {
+    const financial = buildFinancialSummary(
+      [game({ id: 'a', priceCents: null }), game({ id: 'b', priceCents: 1000 })],
+      [dlcRow],
+    );
+    expect(financial.averagePriceCents).toBe((3999 + 1000) / 2);
+  });
+
+  it('leaderboard hours use totals', () => {
+    const entries = buildLeaderboard(
+      [
+        game({ id: 'a', title: 'A', hoursTenths: 500 }),
+        game({ id: 'b', title: 'B', hoursTenths: 540 }),
+      ],
+      [dlcRow],
+      'hours',
+      3,
+    );
+    expect(entries.map((entry) => entry.id)).toEqual(['a', 'b']);
+    expect(entries[0]?.value).toBe(560);
+  });
+
+  it("a collection's DLC trophies add on top of the member roll-up", () => {
+    // `listGameStatRows` has already rolled the members (5 + 5) into the
+    // collection row before the builders see it; the DLC adds on top.
+    const trophies = buildTrophyTotals(
+      [game({ id: 'a', achievementsUnlocked: 10, achievementsTotal: 10 })],
+      [{ ...dlcRow, achievementsUnlocked: 3, achievementsTotal: 3 }],
+    );
+    expect(trophies.earned).toBe(13);
+  });
+
+  it('a DLC whose game is not in the rows is ignored', () => {
+    const summary = buildLibrarySummary([game({ id: 'b' })], [dlcRow]);
+    expect(summary.totalHoursTenths).toBe(1360);
   });
 });

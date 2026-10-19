@@ -67,7 +67,7 @@ const rows: readonly GameStatRow[] = [
  */
 describe('GamesDashboard', () => {
   it('renders Year by year, Trends, and Breakdown as titled Sections', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     for (const title of ['Year by year', 'Trends', 'Breakdown']) {
       expect(screen.getByRole('heading', { name: title })).toBeInTheDocument();
     }
@@ -84,14 +84,14 @@ describe('GamesDashboard', () => {
    * and tables get boxed).
    */
   it('does not render Library, Money, Top 3, or Highlights as their own titled Section — those rows are bare', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     for (const title of ['Library', 'Money', 'Top 3', 'Highlights']) {
       expect(screen.queryByRole('heading', { name: title })).not.toBeInTheDocument();
     }
   });
 
   it('shows exactly one bare stat-card row of 6: Games, Hours played, Platinums, Trophies earned, Total spend, Cost per hour', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     for (const label of [
       'Games',
       'Hours played',
@@ -113,35 +113,35 @@ describe('GamesDashboard', () => {
   });
 
   it('folds average rating and average Metacritic into the Games card hint', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     // rating: (5 + 4) / 2 = 4.5; metacritic: (96 + 90) / 2 = 93.
     expect(screen.getByText(/4\.5★ avg rating/)).toBeInTheDocument();
     expect(screen.getByText(/93 avg Metacritic/)).toBeInTheDocument();
   });
 
   it('folds average playtime into the Hours played card hint', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     // Hours logged: 1360 and 200 tenths -> average 780 tenths -> 78h.
     expect(screen.getByText(/78h avg per game/)).toBeInTheDocument();
   });
 
   it('mentions no backlog money under Cost per hour', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     expect(screen.queryByText(/sitting in backlog/)).not.toBeInTheDocument();
   });
 
   it('does not render a "vs. prev" column in the Year by year table', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     expect(screen.queryByText('vs. prev')).not.toBeInTheDocument();
   });
 
   it('does not render a completion rate card — the field was deleted with the old status model', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     expect(screen.queryByText(/completion rate/i)).not.toBeInTheDocument();
   });
 
   it('labels every chart inside Trends and Breakdown without nesting a second bordered Section', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     const trends = screen
       .getByRole('heading', { name: 'Trends' })
       .closest('section') as HTMLElement;
@@ -162,7 +162,7 @@ describe('GamesDashboard', () => {
   });
 
   it('keeps Top 3 and Highlights intact, as bare rows with no titled Section of their own', () => {
-    render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     expect(screen.queryByRole('heading', { name: 'Top 3' })).not.toBeInTheDocument();
     expect(screen.getByText('Most played')).toBeInTheDocument();
     expect(screen.getByText('Highest rated')).toBeInTheDocument();

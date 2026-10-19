@@ -4,6 +4,7 @@ import { StatCardGrid } from '@/components/ui/stat-card-grid';
 import { countableGames } from '@/server/games/collections';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatPriceCents } from '@/server/games/money';
+import type { GameDlcRow } from '@/server/games/dlc';
 import type { PlayYearRow } from '@/server/games/play-years';
 import {
   type GameStatRow,
@@ -62,17 +63,20 @@ const SECTION_STACK = 'space-y-5';
 export function GamesDashboard({
   rows,
   playYears,
+  dlc,
   currentYear,
 }: {
   readonly rows: readonly GameStatRow[];
   readonly playYears: readonly PlayYearRow[];
+  /** Every DLC row of the owner's; the builders add each one onto its game. See `dlc.ts`. */
+  readonly dlc: readonly GameDlcRow[];
   readonly currentYear: number;
 }): React.ReactElement {
-  const summary = buildLibrarySummary(rows);
-  const trophies = buildTrophyTotals(rows);
-  const financial = buildFinancialSummary(rows);
-  const yearly = buildYearlyBreakdown(rows, playYears);
-  const callouts = findCallouts(rows, yearly.rows);
+  const summary = buildLibrarySummary(rows, dlc);
+  const trophies = buildTrophyTotals(rows, dlc);
+  const financial = buildFinancialSummary(rows, dlc);
+  const yearly = buildYearlyBreakdown(rows, playYears, dlc);
+  const callouts = findCallouts(rows, dlc, yearly.rows);
 
   // Platform and genre count GAMES, so they exclude collection wrappers —
   // otherwise "The Nathan Drake Collection" contributes a fourth PS4 entry
@@ -231,25 +235,25 @@ export function GamesDashboard({
           title="Most played"
           hint="By total hours"
           metric="hours"
-          entries={buildLeaderboard(rows, 'hours', 3)}
+          entries={buildLeaderboard(rows, dlc, 'hours', 3)}
         />
         <TopGames
           title="Highest rated"
           hint="Your own rating"
           metric="rating"
-          entries={buildLeaderboard(rows, 'rating', 3)}
+          entries={buildLeaderboard(rows, dlc, 'rating', 3)}
         />
         <TopGames
           title="Most trophies"
           hint="Achievements earned"
           metric="trophies"
-          entries={buildLeaderboard(rows, 'trophies', 3)}
+          entries={buildLeaderboard(rows, dlc, 'trophies', 3)}
         />
         <TopGames
           title="Best value"
           hint="Lowest cost per hour played"
           metric="costPerHour"
-          entries={buildLeaderboard(rows, 'costPerHour', 3)}
+          entries={buildLeaderboard(rows, dlc, 'costPerHour', 3)}
         />
       </div>
 
