@@ -342,17 +342,21 @@ adds to whatever row it is on.
 `null` only when both the base and the DLC side are null — a `0` would read as "tracked, and zero",
 a different fact from "never recorded", which `stats.ts` already keeps apart for the base figures.
 
-**In the panel** DLC is an action row like Collection: the label, a small "+ Add" button on the
-right, and — only when the game has DLC — a short list beneath: one line for the base game
-(`Base game · 52.5h · $79.98 · 54/54`) and one per DLC (`Overture · 2025 · 25h`). Clicking a line
-opens one small dialog (`panel/dlc-dialog.tsx`): a DLC's name, year played, hours, price and
-trophies, saved as a whole row (`createGameDlcAction` / `updateGameDlcAction`; a figure left blank
-is cleared; name and year can never be blank; Remove sits in the same dialog behind a confirm), or the
-BASE GAME's own figures through the ordinary per-field action. While a game has DLC, the Hours,
-Price paid and Achievements rows show base + DLC and are read-only — the base is edited on its own
-line, so there is one number in one place and never a "… with DLC" suffix. With no DLC the rows edit
-directly and no list appears. A DLC name is unique per game, case-insensitively — two of the same
-name is a typo, not detail.
+**In the panel** the parts are a small grid (`panel/dlc-grid.tsx`): parts down the left — "Base
+game", then each DLC by name — and the figures across the top (Year, Hours, Price, Trophies), so
+every number has a column heading above it and a part name beside it. Every cell is click-to-edit
+in place; nothing opens a modal. A DLC cell saves the WHOLE row (`updateGameDlcAction`, with that
+one cell changed; a figure left blank is cleared; name and year can never be blank); a base-game
+cell goes through the ordinary per-field action. An x on each DLC row removes it behind a confirm,
+and "+ Add DLC" is a plain text line that turns into an inline name + year row saved with a tick
+(`createGameDlcAction`). The grid exists only while the game has DLC (or one is being added): with
+none, the panel's own rows ARE the base game and "+ Add DLC" is all that shows. While a game has
+DLC, the Hours, Price paid and Achievements rows show base + DLC and are read-only — the base is
+edited in the grid, so there is one number in one place and never a "… with DLC" suffix. A DLC
+name is unique per game, case-insensitively — two of the same name is a typo, not detail. (Two
+earlier versions — inline cells on one line, then a small dialog — were rejected on sight: "too
+compact", "a modal, the user should remain on the panel", "random numbers, hard to tell what's
+what".)
 
 ---
 
@@ -687,10 +691,19 @@ click-to-edit title with its IGDB search-as-you-type, the platform (plus a "Want
 `Metacritic N · ~Nh to beat` line when IGDB supplied either (ESRB is stored but never shown; the
 rating is NOT repeated here — the editable Rating row is the one place it shows) — then three
 blocks of rows separated by a little space, no headings: rating, release date while wanted, hours,
-first played, the play-year split, achievement counts, the platinum toggle; platform, ownership,
-price, genre, developer, publisher; then the two ACTION ROWS, DLC and Collection, each a label with
-one small outline button on the right (`+ Add`, `Show`/`Hide`) and whatever it reveals beneath;
-then Notes — the one heading, because it is a block of text, not a row — and Remove. The owner's
+first played (with a **+** beside the year that starts a year split — see below), the year rows,
+achievement counts, the platinum toggle; platform, ownership, price, genre, developer, publisher;
+then the parts grid (see "DLC") and the Collection row, whose action is plain text on the right
+(`Show`/`Hide`) with the members beneath; then Notes — the one heading, because it is a block of
+text, not a row — and Remove. No outlined buttons anywhere in the panel: every action is quiet text
+with a plus or a word, by owner decision.
+
+**Years are rows, not an editor.** The split used to hide behind "Split across years" and its own
+Save button. Now the + beside First played adds a year row; each year is a row of two editable
+cells (year, hours) with an x, and the last has the +. There is no Save: the rows are local drafts
+that save themselves the moment they are complete, free of duplicate years and add up to the BASE
+game's hours (`play-years-rows.tsx`); until then one short red line says what is off ("Years add
+up to 148h; hours are 136h"). Removing the only row clears the split. The owner's
 own words after looking at the first version: "white space and double lines", "a lot of 'with DLC'
 everywhere", "keep everything consistent"; every row is one line and no value carries a hint now.
 

@@ -111,8 +111,11 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **Only `played` and `wanted`, and "played" is never shown.** `backlog` and `playing` were removed
   on 2026-10-18 ("there is no backlog"); no Status row, column or select anywhere. Do not propose a
   third state or a visible "Played".
-- **The panel has no section headings and no value hints.** Owner feedback on the first version:
-  "white space and double lines", "a lot of 'with DLC' everywhere". One line per row.
+- **The panel has no section headings, no value hints, no outlined buttons and no modals for
+  editing.** Owner feedback across three rounds: "white space and double lines", "a lot of 'with
+  DLC' everywhere", "I don't like the outlines", "the user should remain on the panel", "random
+  numbers, hard to tell what's what". One line per row; DLC as a labelled grid edited in place;
+  years as rows with a plus beside First played.
 - **DLC adds; the year split attributes.** Never derive the base figures from DLC rows or make DLC
   "add up" to anything.
 - **No syncs, no trophy list.** Hours, achievement counts and platinum are hand-entered. Do not
