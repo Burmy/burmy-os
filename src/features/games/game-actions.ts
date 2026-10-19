@@ -17,7 +17,6 @@ import {
   getGame,
   listCollectionMembers,
   reorderGames,
-  resetLibraryOrder,
   setCollectionForGames,
   setGameCollection,
   updateGame,
@@ -802,20 +801,6 @@ export async function reorderLibraryAction(orderedIds: readonly string[]): Promi
 
   try {
     await reorderGames(owner.userId, orderSchema.parse(orderedIds));
-  } catch (error) {
-    return toResult(error);
-  }
-
-  revalidatePath('/games', 'layout');
-  return ok();
-}
-
-/** Back to the sheet's order — behind a confirm in the library, since it discards every drag. */
-export async function resetLibraryOrderAction(): Promise<ActionResult> {
-  const owner = await requireOwner();
-
-  try {
-    await resetLibraryOrder(owner.userId);
   } catch (error) {
     return toResult(error);
   }

@@ -1,17 +1,15 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 const deleteGameAction = vi.fn(async () => ({ ok: true as const }));
 const createGameAction = vi.fn(async () => ({ ok: true as const }));
 const reorderLibraryAction = vi.fn(async () => ({ ok: true as const }));
-const resetLibraryOrderAction = vi.fn(async () => ({ ok: true as const }));
 
 vi.mock('@/features/games/game-actions', () => ({
   deleteGameAction,
   createGameAction,
   reorderLibraryAction,
-  resetLibraryOrderAction,
 }));
 
 vi.mock('@/features/games/metadata-actions', () => ({
@@ -428,29 +426,5 @@ describe('LibraryView — order, sort and the newer filters', () => {
     expect(sortableCards()).toHaveLength(0);
     // Not a filter, so no hint — the Sort select itself says why.
     expect(screen.queryByText('Clear the filters to reorder.')).not.toBeInTheDocument();
-  });
-
-  it('asks before resetting the order, then calls the action', async () => {
-    render(<LibraryView games={library} customOrder />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('button', { name: 'Reset order' }));
-    const dialog = await screen.findByRole('dialog');
-    expect(resetLibraryOrderAction).not.toHaveBeenCalled();
-
-    await user.click(within(dialog).getByRole('button', { name: 'Reset order' }));
-    await waitFor(() => expect(resetLibraryOrderAction).toHaveBeenCalledTimes(1));
-  });
-
-  it('offers Reset order only once something has been placed by hand, and only in My order', async () => {
-    const { rerender } = render(<LibraryView games={library} />);
-    const user = userEvent.setup();
-    expect(screen.queryByRole('button', { name: 'Reset order' })).not.toBeInTheDocument();
-
-    rerender(<LibraryView games={library} customOrder />);
-    expect(screen.getByRole('button', { name: 'Reset order' })).toBeInTheDocument();
-
-    await choose(user, 'Sort', 'Year');
-    expect(screen.queryByRole('button', { name: 'Reset order' })).not.toBeInTheDocument();
   });
 });

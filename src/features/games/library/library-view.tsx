@@ -4,7 +4,6 @@ import { Plus } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { FilterBar, FilterField } from '@/components/ui/filter-bar';
 import { FilterChip } from '@/components/ui/filter-chip';
 import { FilterSelect } from '@/components/ui/filter-select';
@@ -37,11 +36,7 @@ import {
 import { GAME_PLATFORMS, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GamePlatform, GameStatus } from '@/server/games/taxonomy';
 import { toast } from '@/components/ui/toast';
-import {
-  addGamesToCollectionAction,
-  reorderLibraryAction,
-  resetLibraryOrderAction,
-} from '@/features/games/game-actions';
+import { addGamesToCollectionAction, reorderLibraryAction } from '@/features/games/game-actions';
 import { useGamePanel } from '@/features/games/panel/game-panel-context';
 import { BulkCollectionBar } from './bulk-collection-bar';
 import { GameDialog } from './game-dialog';
@@ -65,14 +60,7 @@ const STATUS_CHIP_STATUSES = ['wanted'] as const satisfies readonly GameStatus[]
  * data already loaded, and round-tripping to the server to hide a card would
  * be latency for nothing.
  */
-export function LibraryView({
-  games,
-  customOrder = false,
-}: {
-  readonly games: readonly Game[];
-  /** Whether any row has been dragged into place (`hasCustomOrder`) — "Reset order" shows only then. */
-  readonly customOrder?: boolean;
-}): React.ReactElement {
+export function LibraryView({ games }: { readonly games: readonly Game[] }): React.ReactElement {
   // Opening a game is instant now — it shows the side panel beside the grid
   // rather than navigating to a page — so the clicked card needs no spinner,
   // only a ring saying which one is open. See `game-panel.tsx`.
@@ -93,7 +81,6 @@ export function LibraryView({
   const [rating, setRating] = useState<RatingFilter>('all');
   const [sort, setSort] = useState<LibrarySort>('my-order');
   const [creating, setCreating] = useState(false);
-  const [resetting, setResetting] = useState(false);
 
   /**
    * THE OWNER'S ORDER, OPTIMISTICALLY. A drop reorders the cards at once and
@@ -212,9 +199,6 @@ export function LibraryView({
   // drop between two cards of a filtered or re-sorted view has no clear
   // meaning for the games that are not on screen.
   const sortable = sort === 'my-order' && !filtered;
-  // The server's word on whether anything was ever placed, or a drop this
-  // render has just made — either way there is an order worth resetting.
-  const showReset = customOrder || orderOverride !== null;
 
   const nonWantedGames = useMemo(() => games.filter((game) => game.status !== 'wanted'), [games]);
 
@@ -467,26 +451,12 @@ export function LibraryView({
         </div>
       </FilterBar>
 
-      {/* One quiet line under the bar, only in My order and only when there
-          is something to say: why drag is off (say it, rather than letting a
-          card that silently refuses to move look broken), and the way back to
-          the sheet's order once the owner has dragged anything. Nothing while
-          drag is simply available — the drag itself is the affordance — and
-          nothing at all outside My order, where neither applies. */}
-      {sort === 'my-order' && (filtered || showReset) ? (
-        <div className="text-muted-foreground -mt-4 flex min-h-6 items-center justify-between gap-3 text-xs">
-          <span>{filtered ? 'Clear the filters to reorder.' : null}</span>
-          {showReset ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-muted-foreground h-6 px-2 text-xs"
-              onClick={() => setResetting(true)}
-            >
-              Reset order
-            </Button>
-          ) : null}
-        </div>
+      {/* Drag lives in My order on the whole library; say why it is off
+          rather than letting a card that silently refuses to move look
+          broken. Nothing is shown while drag is available — the drag itself
+          is the affordance. */}
+      {sort === 'my-order' && filtered ? (
+        <p className="text-muted-foreground -mt-4 text-xs">Clear the filters to reorder.</p>
       ) : null}
 
       {/* Only once something is selected. A permanently visible bar would
@@ -528,24 +498,6 @@ export function LibraryView({
       )}
 
       <GameDialog open={creating} onOpenChange={setCreating} />
-      <ConfirmDialog
-        open={resetting}
-        onOpenChange={setResetting}
-        title="Reset the library order?"
-        description="Every game goes back to shelf, year and title. The order you dragged is discarded."
-        confirmLabel="Reset order"
-        destructive
-        onConfirm={() => {
-          void resetLibraryOrderAction().then((result) => {
-            if (result.ok) {
-              setOrderOverride(null);
-              toast.success('Library order reset');
-            } else {
-              toast.error(result.error);
-            }
-          });
-        }}
-      />
     </div>
   );
 }

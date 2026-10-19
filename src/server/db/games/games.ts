@@ -314,17 +314,7 @@ export async function reorderGames(ownerId: string, orderedIds: readonly string[
   });
 }
 
-/** Whether any row has been placed by hand — what makes "Reset order" worth showing at all. */
-export async function hasCustomOrder(ownerId: string): Promise<boolean> {
-  const [row] = await getDb()
-    .select({ id: gamesTable.id })
-    .from(gamesTable)
-    .where(and(eq(gamesTable.ownerId, ownerId), ne(gamesTable.sortOrder, 0)))
-    .limit(1);
-  return row !== undefined;
-}
-
-/** Back to the sheet's order: `0` everywhere means "unplaced", and `listGames`'s tie-breakers take over. */
+/** Back to the sheet's order: `0` everywhere means "unplaced", and `listGames`'s tie-breakers take over. No UI calls this since 2026-10-19 (the owner dropped "Reset order"); tests use it to pin the sheet keys. */
 export async function resetLibraryOrder(ownerId: string): Promise<void> {
   await getDb()
     .update(gamesTable)

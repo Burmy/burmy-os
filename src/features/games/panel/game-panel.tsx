@@ -233,9 +233,14 @@ export function GamePanel({
             Every field here saves itself as you edit it.
           </DialogPrimitive.Description>
 
-          <header className="flex items-start gap-3 border-b p-4 pr-12">
+          {/* THE COVER LEADS. A big portrait of the box art, then the title
+              and its facts under it — the panel reads like the card it came
+              from, enlarged, rather than a row with a thumbnail (owner,
+              2026-10-19: "a bigger image of the game and then stuff under
+              it"). 192px wide keeps the rows within reach on a laptop. */}
+          <header className="border-b p-4 pr-12">
             <CoverTile game={game} />
-            <div className="min-w-0 flex-1">
+            <div className="mt-3 min-w-0">
               {game === null ? (
                 <Skeleton className="h-6 w-48" />
               ) : (
@@ -525,19 +530,19 @@ export function GamePanel({
   );
 }
 
-/** 64×85 cover with the same letter-tile fallback the library card uses. */
+/** 192×256 cover (3:4, like the card) with the same letter-tile fallback the library card uses. */
 function CoverTile({ game }: { readonly game: Game | null }): React.ReactElement {
   return (
-    <div className="bg-muted relative h-[85px] w-16 shrink-0 overflow-hidden rounded-md">
+    <div className="bg-muted relative h-64 w-48 shrink-0 overflow-hidden rounded-md">
       {game === null ? null : game.coverUrl === null || game.coverUrl === '' ? (
-        <div className="flex h-full flex-col items-center justify-center gap-1" aria-hidden>
-          <span className="text-muted-foreground/40 text-2xl font-semibold">
+        <div className="flex h-full flex-col items-center justify-center gap-1.5" aria-hidden>
+          <span className="text-muted-foreground/40 text-5xl font-semibold">
             {game.title.trim().charAt(0).toUpperCase()}
           </span>
-          <Gamepad2 className="text-muted-foreground/25 size-3.5" />
+          <Gamepad2 className="text-muted-foreground/25 size-5" />
         </div>
       ) : (
-        <Image src={game.coverUrl} alt="" fill sizes="64px" className="object-cover" />
+        <Image src={game.coverUrl} alt="" fill sizes="192px" className="object-cover" />
       )}
     </div>
   );

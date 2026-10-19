@@ -200,6 +200,10 @@ title: hours are attributed to the row that carries them.
 **Price and ownership** are the set's: one purchase, one figure on the collection row. The panel renders
 those two read-only for a member, with the hint "From the collection".
 
+**The panel's header is the cover, enlarged** (192×256, the card's 3:4, since 2026-10-19 — "a bigger
+image of the game and then stuff under it"), with the title and its facts beneath it rather than
+beside a thumbnail.
+
 **Rating is the individual title's only.** A collection has no rating of its own (owner, 2026-10-19):
 the panel and the table show no rating row for a collection, `updateGameFieldAction` refuses one, and
 the average rating and the rating leaderboard run over the countable games. The ratings the sheet
@@ -404,9 +408,11 @@ means "unplaced". `listGames` orders by `sort_order` first and only then by the 
 wanted → first-played year → title), so a library nobody has dragged reads exactly as the sheet did,
 and the first drop writes an explicit `1..n` onto every top-level row (`reorderGames`, one statement
 inside a transaction that refuses a list not matching the owner's rows one for one). A new game is
-inserted at `min(sort_order) − 1` — the top, by the owner's choice. "Reset order" (a quiet line under
-the filter bar, shown only once something has been placed) writes `0` everywhere, behind a confirm.
-No migration: the column had existed, unused, since the Finance-era schema. Members carry a position
+inserted at `min(sort_order) − 1` — the top, by the owner's choice. There is no "Reset order" in the
+UI: one shipped for a day (a quiet line under the filter bar, behind a confirm) and the owner asked
+for it to go; `resetLibraryOrder` in the DAL remains, writing `0` everywhere, and the integration
+tests use it to pin the sheet keys. No migration: the column had existed, unused, since the
+Finance-era schema. Members carry a position
 too but it is never read; `groupByCollection` files them under their set in input order.
 
 **The gallery's drag is its own engine** (`library/grid-drag.ts` + the pure `grid-drag-math.ts`,
