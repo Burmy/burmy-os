@@ -1,14 +1,24 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ActionResult } from '@/features/games/action-result';
+import type { GameSuggestion } from '@/server/games/metadata';
 
-const updateGameFieldAction = vi.fn(
-  async (_id: string, _field: string, _value: string): Promise<ActionResult> => ({ ok: true }),
+const completeWishlistGameAction = vi.fn(
+  async (_id: string, _formData: FormData): Promise<ActionResult> => ({ ok: true }),
 );
+const createGameAction = vi.fn(async (_formData: FormData): Promise<ActionResult> => ({
+  ok: true,
+}));
 vi.mock('@/features/games/game-actions', () => ({
-  updateGameFieldAction: (...args: [string, string, string]) => updateGameFieldAction(...args),
+  completeWishlistGameAction: (...args: [string, FormData]) => completeWishlistGameAction(...args),
+  createGameAction: (...args: [FormData]) => createGameAction(...args),
+}));
+
+const searchGameMetadataAction = vi.fn(async (_title: string): Promise<GameSuggestion[]> => []);
+vi.mock('@/features/games/metadata-actions', () => ({
+  searchGameMetadataAction: (...args: [string]) => searchGameMetadataAction(...args),
 }));
 
 const openGame = vi.fn();
@@ -62,9 +72,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('WishlistSection — order and release state', () => {
-  it('lists released games first with an "Out now" mark, then dated, then undated', () => {
-    render(
+describe('WishlistSection — cards, order and release state', () => {
+  it('renders one cover card per game: released first with an "Out now" pill, then dated, then undated', () => {
+    const { container } = render(
       <WishlistSection
         now={NOW}
         games={[
@@ -85,13 +95,19 @@ describe('WishlistSection — order and release state', () => {
       />,
     );
 
-    const titles = screen
-      .getAllByRole('button', { name: /^(No Date Yet|Coming Soon|Already Out)$/ })
-      .map((b) => b.textContent);
-    expect(titles[0]).toContain('Already Out');
-    expect(titles[1]).toContain('Coming Soon');
-    expect(titles[2]).toContain('No Date Yet');
-    expect(screen.getAllByText('Out now')).toHaveLength(1);
+    const cards = [...container.querySelectorAll<HTMLElement>('[data-slot="wishlist-card"]')];
+    expect(cards).toHaveLength(3);
+    const covers = screen.getAllByRole('button', {
+      name: /^(No Date Yet|Coming Soon|Already Out)$/,
+    });
+    expect(covers.map((cover) => cover.getAttribute('aria-label'))).toEqual([
+      'Already Out',
+      'Coming Soon',
+      'No Date Yet',
+    ]);
+    // The on-art pill, once; the release line under the cover says it again.
+    expect(within(cards[0]!).getByText('Out now')).toBeInTheDocument();
+    expect(within(cards[0]!).getByText('Steam / PC · Out now')).toBeInTheDocument();
     expect(screen.getByText(/in 26 days/)).toBeInTheDocument();
     expect(screen.getByText(/No date/)).toBeInTheDocument();
   });
@@ -107,7 +123,7 @@ describe('WishlistSection — order and release state', () => {
 });
 
 describe('WishlistSection — actions', () => {
-  it('opens the game panel with the full row when the title is clicked', async () => {
+  it('opens the game panel with the full row when the cover is clicked', async () => {
     const user = userEvent.setup();
     const game = wanted();
     render(<WishlistSection now={NOW} games={[game]} />);
@@ -117,42 +133,70 @@ describe('WishlistSection — actions', () => {
     expect(openGame).toHaveBeenCalledWith(game);
   });
 
-  it('marks a game as played from the quick menu through the status field action', async () => {
+  it('"Mark as played" opens the add dialog pre-filled, without a status control', async () => {
+    const user = userEvent.setup();
+    render(
+      <WishlistSection now={NOW} games={[wanted({ platform: 'ps5', genre: 'Metroidvania' })]} />,
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
+    );
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Add to library' })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Title')).toHaveValue('Hollow Knight: Silksong');
+    expect(within(dialog).queryByText('Status')).not.toBeInTheDocument();
+    // Pre-filled from the row, so no search fires for a title the owner never typed.
+    expect(searchGameMetadataAction).not.toHaveBeenCalled();
+  });
+
+  it('submits the pre-filled dialog to completeWishlistGameAction with status played', async () => {
     const user = userEvent.setup();
     render(<WishlistSection now={NOW} games={[wanted({ id: 'w1' })]} />);
 
-    await user.click(screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Played' }));
-
-    await waitFor(() =>
-      expect(updateGameFieldAction).toHaveBeenCalledWith('w1', 'status', 'played'),
+    await user.click(
+      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
     );
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Hours played'), '16');
+    await user.click(within(dialog).getByRole('button', { name: 'Add to library' }));
+
+    await waitFor(() => expect(completeWishlistGameAction).toHaveBeenCalledTimes(1));
+    const [id, formData] = completeWishlistGameAction.mock.calls[0]!;
+    expect(id).toBe('w1');
+    expect(formData.get('title')).toBe('Hollow Knight: Silksong');
+    expect(formData.get('hours')).toBe('16');
+    expect(formData.get('status')).toBe('played');
+    expect(createGameAction).not.toHaveBeenCalled();
   });
 
-  it('offers exactly Played — never Wanted, which is where it already is', async () => {
+  it('shows the action’s error inside the dialog and keeps it open', async () => {
+    completeWishlistGameAction.mockResolvedValueOnce({ ok: false, error: 'boom' });
     const user = userEvent.setup();
     render(<WishlistSection now={NOW} games={[wanted()]} />);
 
-    await user.click(screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as' }));
+    await user.click(
+      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
+    );
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Add to library' }));
 
-    const items = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
-    expect(items).toEqual(['Played']);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('boom');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('shows an error toast and re-enables the menu when the action rejects', async () => {
-    updateGameFieldAction.mockRejectedValueOnce(new Error('boom'));
-    const { toast } = await import('@/components/ui/toast');
+  it('closing the dialog changes nothing', async () => {
     const user = userEvent.setup();
     render(<WishlistSection now={NOW} games={[wanted()]} />);
 
-    await user.click(screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Played' }));
-
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(
-        screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as' }),
-      ).not.toBeDisabled(),
+    await user.click(
+      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
     );
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(completeWishlistGameAction).not.toHaveBeenCalled();
   });
 });

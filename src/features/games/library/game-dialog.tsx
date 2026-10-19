@@ -33,7 +33,8 @@ import {
   STATUS_LABELS,
 } from '@/server/games/taxonomy';
 import type { GameSuggestion } from '@/server/games/metadata';
-import { createGameAction } from '../game-actions';
+import type { Game } from '@/server/db/games/games';
+import { completeWishlistGameAction, createGameAction } from '../game-actions';
 import { searchGameMetadataAction } from '../metadata-actions';
 
 /**
@@ -52,12 +53,22 @@ const SEARCH_MIN_LENGTH = 3;
 type SearchStatus = 'idle' | 'loading' | 'results' | 'empty';
 
 /**
- * Add a new game — create-only. Editing an EXISTING game lives in the side
- * panel (`src/features/games/panel/game-panel.tsx`, opened from a Library
- * card/row click) with the same Details/Progress/Notes content this dialog
- * still uses for the initial add — this dialog stays a lightweight modal
- * specifically because a brand-new game has no id yet and usually only needs
- * a handful of fields to start.
+ * Add a game to the library. Two ways in, one form:
+ *
+ *   - `mode: 'create'` (the default) — "Add game" from the Library. A brand-new
+ *     row with no id yet; the owner usually fills only a handful of fields.
+ *   - `mode: 'complete'` — "Mark as played" on a wishlist card. The row
+ *     already exists as `wanted`, so title, platform, cover and the IGDB
+ *     metadata are pre-filled from it, the status control is hidden (it is
+ *     `played`, that is the whole point), and submit goes to
+ *     `completeWishlistGameAction` so the SAME row moves into the library —
+ *     never a duplicate. The dialog is keyed on the game by its caller, so
+ *     every `useState` initialiser below reads the row once, on mount.
+ *
+ * Editing an EXISTING library game lives in the side panel
+ * (`src/features/games/panel/game-panel.tsx`) — per-field, no modal. This
+ * dialog is for the moment a game ENTERS the library, where a handful of
+ * fields entered together is the better shape.
  *
  * Metadata lookup is search-as-you-type: debounced 300ms after the last
  * keystroke, minimum 3 characters, with each new keystroke superseding
@@ -76,24 +87,43 @@ type SearchStatus = 'idle' | 'loading' | 'results' | 'empty';
  * hand-editable control at all (read-only third-party facts) and always take
  * the latest pick's value.
  */
+type PickerPlatform = (typeof PLATFORM_PICKER_OPTIONS)[number];
+
+/** `pc` is stored but no longer offered in the picker — see `PLATFORM_PICKER_OPTIONS`. */
+function pickerPlatform(platform: Game['platform']): PickerPlatform {
+  return (PLATFORM_PICKER_OPTIONS as readonly string[]).includes(platform)
+    ? (platform as PickerPlatform)
+    : 'ps5';
+}
+
 export function GameDialog({
   open,
   onOpenChange,
+  mode = 'create',
+  game,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly mode?: 'create' | 'complete';
+  /** The wishlist row being completed. Required when `mode` is `'complete'`; ignored otherwise. */
+  readonly game?: Game;
 }): React.ReactElement {
-  const [platform, setPlatform] = useState<(typeof PLATFORM_PICKER_OPTIONS)[number]>('ps5');
+  const completing = mode === 'complete' ? (game ?? null) : null;
+  const [platform, setPlatform] = useState<PickerPlatform>(
+    completing === null ? 'ps5' : pickerPlatform(completing.platform),
+  );
   const [status, setStatus] = useState<(typeof GAME_STATUSES)[number]>('played');
-  const [ownership, setOwnership] = useState('');
-  const [coverUrl, setCoverUrl] = useState('');
-  const [genre, setGenre] = useState('');
-  const [developer, setDeveloper] = useState('');
-  const [publisher, setPublisher] = useState('');
-  const [metacritic, setMetacritic] = useState<number | null>(null);
-  const [averagePlaytimeHours, setAveragePlaytimeHours] = useState<number | null>(null);
-  const [esrbRating, setEsrbRating] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
+  const [ownership, setOwnership] = useState(completing?.ownership ?? '');
+  const [coverUrl, setCoverUrl] = useState(completing?.coverUrl ?? '');
+  const [genre, setGenre] = useState(completing?.genre ?? '');
+  const [developer, setDeveloper] = useState(completing?.developer ?? '');
+  const [publisher, setPublisher] = useState(completing?.publisher ?? '');
+  const [metacritic, setMetacritic] = useState<number | null>(completing?.metacritic ?? null);
+  const [averagePlaytimeHours, setAveragePlaytimeHours] = useState<number | null>(
+    completing?.averagePlaytimeHours ?? null,
+  );
+  const [esrbRating, setEsrbRating] = useState<string | null>(completing?.esrbRating ?? null);
+  const [title, setTitle] = useState(completing?.title ?? '');
   const [hoursFieldValue, setHoursFieldValue] = useState('');
   const [playYears, setPlayYears] = useState<readonly PlayYearDraft[]>([]);
   const [showSplit, setShowSplit] = useState(false);
@@ -163,7 +193,9 @@ export function GameDialog({
     // PREVIOUS attempt's error while the new one is still pending.
     setError(null);
     formData.set('platform', platform);
-    formData.set('status', status);
+    // Completing a wishlist entry IS marking it played — nothing the form
+    // carried (there is no status control in that mode) can say otherwise.
+    formData.set('status', completing === null ? status : 'played');
     formData.set('ownership', ownership);
     formData.set('coverUrl', coverUrl);
     formData.set('metacritic', metacritic === null ? '' : String(metacritic));
@@ -175,9 +207,12 @@ export function GameDialog({
     formData.set('playYears', JSON.stringify(playYears.filter(isRealPlayYearDraft)));
 
     startTransition(async () => {
-      const result = await createGameAction(formData);
+      const result =
+        completing === null
+          ? await createGameAction(formData)
+          : await completeWishlistGameAction(completing.id, formData);
       if (result.ok) {
-        toast.success('Game added');
+        toast.success(completing === null ? 'Game added' : `${title} added to your library`);
         onOpenChange(false);
         return;
       }
@@ -211,7 +246,7 @@ export function GameDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Add game</DialogTitle>
+          <DialogTitle>{completing === null ? 'Add game' : 'Add to library'}</DialogTitle>
         </DialogHeader>
 
         <form action={submit} className="flex min-h-0 flex-1 flex-col">
@@ -373,13 +408,18 @@ export function GameDialog({
                 className="pt-4 data-[state=inactive]:hidden"
               >
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <FieldSelect
-                    id="status"
-                    label="Status"
-                    value={status}
-                    onChange={(value) => setStatus(value as typeof status)}
-                    options={GAME_STATUSES.map((value) => ({ value, label: STATUS_LABELS[value] }))}
-                  />
+                  {completing === null ? (
+                    <FieldSelect
+                      id="status"
+                      label="Status"
+                      value={status}
+                      onChange={(value) => setStatus(value as typeof status)}
+                      options={GAME_STATUSES.map((value) => ({
+                        value,
+                        label: STATUS_LABELS[value],
+                      }))}
+                    />
+                  ) : null}
                   <Field
                     id="hours"
                     label="Hours played"
@@ -443,7 +483,7 @@ export function GameDialog({
 
           <DialogFooter className="mt-4 justify-end border-t pt-4">
             <Button type="submit" disabled={pending}>
-              {pending ? 'Saving…' : 'Add game'}
+              {pending ? 'Saving…' : completing === null ? 'Add game' : 'Add to library'}
             </Button>
           </DialogFooter>
         </form>
