@@ -344,7 +344,8 @@ a different fact from "never recorded", which `stats.ts` already keeps apart for
 
 **In the panel** the parts are a small grid (`panel/dlc-grid.tsx`): parts down the left — "Base
 game", then each DLC by name — and the figures across the top (Year, Hours, Price, Trophies), so
-every number has a column heading above it and a part name beside it. Every cell is click-to-edit
+every number has a column heading above it and a part name beside it. The base game's Year IS
+First played: the same column, shown in both places, saved through the same field. Every cell is click-to-edit
 in place; nothing opens a modal. A DLC cell saves the WHOLE row (`updateGameDlcAction`, with that
 one cell changed; a figure left blank is cleared; name and year can never be blank); a base-game
 cell goes through the ordinary per-field action. An x on each DLC row removes it behind a confirm,
@@ -693,8 +694,8 @@ rating is NOT repeated here — the editable Rating row is the one place it show
 blocks of rows separated by a little space, no headings: rating, release date while wanted, hours,
 first played (with a **+** beside the year that starts a year split — see below), the year rows,
 achievement counts, the platinum toggle; platform, ownership, price, genre, developer, publisher;
-then the parts grid (see "DLC") and the Collection row, whose action is plain text on the right
-(`Show`/`Hide`) with the members beneath; then Notes — the one heading, because it is a block of
+then the parts grid (see "DLC") and the collection — its members as a list, then a plain
+"+ Add games to collection" line, the same shape as the grid's "+ Add DLC"; then Notes — the one heading, because it is a block of
 text, not a row — and Remove. No outlined buttons anywhere in the panel: every action is quiet text
 with a plus or a word, by owner decision.
 
@@ -707,10 +708,11 @@ up to 148h; hours are 136h"). Removing the only row clears the split. The owner'
 own words after looking at the first version: "white space and double lines", "a lot of 'with DLC'
 everywhere", "keep everything consistent"; every row is one line and no value carries a hint now.
 
-**The collection members are collapsed behind "Show" while the row holds nothing.** Most games
-never become a set, and an empty explanatory box on every one of them was noise; once a row has
-members the list opens by default, because the list IS the content. A member gets the "Part of"
-picker instead, always visible. The Notes field keeps the word as its accessible name only
+**The collection has no heading, no count, no toggle and no empty-state box.** With nothing filed,
+"+ Add games to collection" is all there is; with members, they are listed above it, each with its
+own remove. A member gets the "Part of" picker instead. (The earlier Show/Hide row was dropped the
+day it shipped: "keep the collection and DLC consistent, just have an add games button like the
+add DLC button".) The Notes field keeps the word as its accessible name only
 (`InlineEditField`'s `hideLabel`). Every field keeps its per-field inline
 save through `updateGameFieldAction`; a collection member's hours, price and ownership stay read-only
 ("From the collection") exactly as before. Creating a game is still the small modal — a new row needs
