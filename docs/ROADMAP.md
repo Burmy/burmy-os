@@ -1395,10 +1395,13 @@ every glance. Decided through a product interview, then built on `feat/games-sim
   a DLC to its own year; the panel has a DLC group with a totals line; the library table shows totals.
   See `docs/GAMES.md`, "DLC". The three imported `"+N"` splits convert into DLC rows
   (`scripts/convert-split-to-dlc.mjs`).
-- **Wishlist as cover cards**, and "Mark as played" opens the add-game dialog pre-filled in complete
+- **Wishlist as cover cards**, and "Add to library" opens the add-game dialog pre-filled in complete
   mode (`completeWishlistGameAction`), so figures are entered as the game enters the library.
-- **Panel polish:** rating shown once, Notes labelled once, a real platinum toggle, the collection
-  block collapsed behind a button while empty.
+- **Panel reorganised after the owner saw it running:** no section headings (Notes aside), one line
+  per row, totals in the rows while DLC exists with the base edited on its own line through a small
+  dialog, DLC and Collection as matching action rows, a real platinum toggle, rating shown once. The
+  word "played" is gone from the UI (no Status row/column/select; "Add to wishlist instead" checkbox
+  on the add dialog; "Add to library" on cards and in the panel).
 - **Migrations re-split:** `0019` is the ADDITIVE one (table, status default, status UPDATE) and
   `0020` the idempotent drops — see `docs/DEPLOYMENT.md`. Design and plan:
   `docs/superpowers/specs/2026-10-18-games-dlc-and-two-statuses-design.md`,

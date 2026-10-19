@@ -342,13 +342,17 @@ adds to whatever row it is on.
 `null` only when both the base and the DLC side are null — a `0` would read as "tracked, and zero",
 a different fact from "never recorded", which `stats.ts` already keeps apart for the base figures.
 
-**In the panel** the DLC group sits after Progress: one compact line per expansion with every cell
-click-to-edit (`dlc-actions.ts`, one scalar per call, an empty commit clears a figure, name and year
-can never be blanked), a remove control behind a confirm, an "Add DLC" form that needs only a name
-and a year, and a totals line (`Total · 142h · $105.64 · 52/54 trophies`) underneath. The Hours,
-Price paid and Achievements rows above show the BASE figure with the total as a muted
-"… with DLC" suffix. A DLC name is unique per game, case-insensitively — two of the same name is a
-typo, not detail.
+**In the panel** DLC is an action row like Collection: the label, a small "+ Add" button on the
+right, and — only when the game has DLC — a short list beneath: one line for the base game
+(`Base game · 52.5h · $79.98 · 54/54`) and one per DLC (`Overture · 2025 · 25h`). Clicking a line
+opens one small dialog (`panel/dlc-dialog.tsx`): a DLC's name, year played, hours, price and
+trophies, saved as a whole row (`createGameDlcAction` / `updateGameDlcAction`; a figure left blank
+is cleared; name and year can never be blank; Remove sits in the same dialog behind a confirm), or the
+BASE GAME's own figures through the ordinary per-field action. While a game has DLC, the Hours,
+Price paid and Achievements rows show base + DLC and are read-only — the base is edited on its own
+line, so there is one number in one place and never a "… with DLC" suffix. With no DLC the rows edit
+directly and no list appears. A DLC name is unique per game, case-insensitively — two of the same
+name is a typo, not detail.
 
 ---
 
@@ -370,10 +374,16 @@ real bug surface for what stays a plain non-null comparison everywhere else.
 
 **`backlog` and `playing` were removed on 2026-10-18**, by owner decision after seven weeks of real
 use: "there is no backlog — just played and wanted." They covered six games and one game. The Stats
-Backlog card and its "sitting in backlog" hint went with them; a new game defaults to `played`; the
-wishlist's "Mark as played" is the only transition (see "Your wishlist"). Migration `0019` moved every
-row that held either status to `played`, except Control Resonant, which the owner put back on the
-wishlist by hand.
+Backlog card and its "sitting in backlog" hint went with them; a new game defaults to `played`.
+Migration `0019` moved every row that held either status to `played`, except Control Resonant,
+which the owner put back on the wishlist by hand.
+
+**The word "played" never appears in the UI.** There is no Status row in the panel, no Status column
+in the table, no status in a played card's accessible name, and no Status select in the add dialog —
+the one choice a new game offers is a checkbox, "Add to wishlist instead". The only transition is
+wanted → played, and it is called "Add to library" everywhere (the wishlist card, the panel header),
+opening the add dialog pre-filled (see "Your wishlist"). A wishlisted game shows a "Wanted" pill in
+the panel header and on its library chip; a played game shows nothing, because it is the default.
 
 **`paused_dropped`, `backlog` and `playing` still exist in the Postgres `game_status` type, but are
 unreachable from the app.** Postgres has no `DROP VALUE` for an enum — removing a label would mean
@@ -614,10 +624,10 @@ precisely.
 The tab opens with every `wanted` game as cover cards in the same grid as the feed below: released
 ones first with an "Out now" pill on the art, then by release date soonest first, then games with no
 date, each group alphabetical (`sortWishlist`, pure). Under each cover: the title, `PS5 · Out now` /
-`in 11 days` / `Feb 16, 2027` / `No date`, and one action, **"Mark as played"**. Clicking the cover
-opens the game panel in place.
+`in 11 days` / `Feb 16, 2027` / `No date`, and one action, **"Add to library"**. Clicking the cover
+opens the game panel in place, whose header offers the same button.
 
-**"Mark as played" is the moment a game enters the library, so it opens the add-game dialog.**
+**"Add to library" is the moment a game enters the library, so it opens the add-game dialog.**
 `GameDialog` in `mode="complete"`: title, platform, cover and the IGDB metadata pre-filled from the
 row, the status control hidden (it is `played` — that is the point), and the owner types hours, price,
 first-played year and rating right then. Submit goes to `completeWishlistGameAction`, which parses
@@ -671,18 +681,24 @@ state, not a prop, and the action's own `revalidatePath` only refreshes the page
 from inside the panel (a member, the parent collection) has only an id and shows a skeleton until that
 fetch lands. Stale data stays on screen while a re-fetch is in flight; nothing flickers.
 
-**Layout.** A compact header — cover, the click-to-edit title with its IGDB search-as-you-type,
-`platform · status`, and a muted `Metacritic N · ~Nh to beat` line when IGDB supplied either (ESRB is
-stored but never shown; the rating is NOT repeated here — the editable Rating row is the one place it
-shows) — then Progress (status, rating, release date while wanted, hours, first played, the play-year
-split, achievement counts, the platinum toggle), DLC (see "DLC"; absent for a collection member),
-Details (platform, ownership, price, genre, developer, publisher), Collection, Notes, and Remove.
+**Layout — one column of single-line rows, no section headings.** A compact header — cover, the
+click-to-edit title with its IGDB search-as-you-type, the platform (plus a "Wanted" pill and an
+"Add to library" button for a wishlisted game — `played` is never printed anywhere), and a muted
+`Metacritic N · ~Nh to beat` line when IGDB supplied either (ESRB is stored but never shown; the
+rating is NOT repeated here — the editable Rating row is the one place it shows) — then three
+blocks of rows separated by a little space, no headings: rating, release date while wanted, hours,
+first played, the play-year split, achievement counts, the platinum toggle; platform, ownership,
+price, genre, developer, publisher; then the two ACTION ROWS, DLC and Collection, each a label with
+one small outline button on the right (`+ Add`, `Show`/`Hide`) and whatever it reveals beneath;
+then Notes — the one heading, because it is a block of text, not a row — and Remove. The owner's
+own words after looking at the first version: "white space and double lines", "a lot of 'with DLC'
+everywhere", "keep everything consistent"; every row is one line and no value carries a hint now.
 
-**The collection block is collapsed behind a "Show collection" button while it holds nothing.** Most
-games never become a set, and an empty explanatory box on every one of them was noise; once a row
-has members the block opens by default, because the list IS the content. A member gets the "Part of"
-picker instead, always visible. **Notes** has one label: the group heading. The field keeps the word
-as its accessible name only (`InlineEditField`'s `hideLabel`). Every field keeps its per-field inline
+**The collection members are collapsed behind "Show" while the row holds nothing.** Most games
+never become a set, and an empty explanatory box on every one of them was noise; once a row has
+members the list opens by default, because the list IS the content. A member gets the "Part of"
+picker instead, always visible. The Notes field keeps the word as its accessible name only
+(`InlineEditField`'s `hideLabel`). Every field keeps its per-field inline
 save through `updateGameFieldAction`; a collection member's hours, price and ownership stay read-only
 ("From the collection") exactly as before. Creating a game is still the small modal — a new row needs
 only a handful of fields to start.

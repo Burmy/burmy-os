@@ -27,16 +27,17 @@ Credentials: `IGDB_CLIENT_ID`/`SECRET` (optional; cover art and the Upcoming fee
 ## What the module is now
 
 **Library** — a cover wall (gallery) and a dense table, filters and search, ordered last-edited
-first. Clicking a cover or row opens **the game panel** beside the grid — non-modal, every field
-inline-editable, re-fetching itself after each save. There is no per-game page. Creating a game is
-still the small modal.
+first. Clicking a cover or row opens **the game panel** beside the grid — non-modal, one column of
+single-line rows with no section headings (Notes aside), every field inline-editable, re-fetching
+itself after each save. There is no per-game page. Creating a game is still the small modal; a
+wishlisted game's "Add to library" opens the same modal pre-filled.
 
 **Collections** — a boxed set is one `games` row that other rows point at (`collection_id`); counts
 exclude the wrapper, sums include everything. Linked in the app from either end, or several at once
 from the table.
 
 **Upcoming** — "Your wishlist" as cover cards (every wanted game, released first with "Out now" on
-the art, a "Mark as played" button that opens the add dialog pre-filled) above IGDB's next-12-months
+the art, an "Add to library" button that opens the add dialog pre-filled) above IGDB's next-12-months
 feed, which hides anything already in the library. A wanted game stays wanted until the owner moves
 it; a hand-added one can be given a release date in the panel.
 
@@ -44,8 +45,9 @@ it; a hand-added one can be given a release date in the panel.
 the hand-entered counts), year by year, trends, breakdowns, Top 3, highlights.
 
 **DLC** — rows on a game (name, year played, hours, price, trophies), ADDITIVE to the base figures;
-every total outside the panel is base + DLC. Two statuses only: `played` and `wanted`. See
-`docs/GAMES.md`, "DLC" and "Lifecycle statuses".
+every total the app shows is base + DLC, including the panel's rows (read-only while DLC exists; the
+base is edited on its own line through a small dialog). Two statuses only: `played` and `wanted`,
+and the word "played" is never printed. See `docs/GAMES.md`, "DLC" and "Lifecycle statuses".
 
 **Removed 2026-10-18, by owner decision:** the Steam and PSN syncs, the per-trophy list, the
 Duplicates screen, the Settings → Games section. Git history before `3324656` has the implementations.
@@ -106,8 +108,11 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 ## Design decisions the owner made — do not silently revisit
 
 - **`played` renders no badge.** It's a non-null sentinel, not a nullable column.
-- **Only `played` and `wanted`.** `backlog` and `playing` were removed on 2026-10-18 ("there is no
-  backlog"). Do not propose a third state.
+- **Only `played` and `wanted`, and "played" is never shown.** `backlog` and `playing` were removed
+  on 2026-10-18 ("there is no backlog"); no Status row, column or select anywhere. Do not propose a
+  third state or a visible "Played".
+- **The panel has no section headings and no value hints.** Owner feedback on the first version:
+  "white space and double lines", "a lot of 'with DLC' everywhere". One line per row.
 - **DLC adds; the year split attributes.** Never derive the base figures from DLC rows or make DLC
   "add up" to anything.
 - **No syncs, no trophy list.** Hours, achievement counts and platinum are hand-entered. Do not
