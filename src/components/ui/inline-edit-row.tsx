@@ -105,6 +105,7 @@ export function InlineEditField({
   disabledHint,
   hint,
   hideLabel = false,
+  initiallyEditing = false,
   onSave,
 }: {
   /** Always the accessible name of the control, even when `hideLabel` keeps it off screen. */
@@ -128,9 +129,11 @@ export function InlineEditField({
    * is kept `sr-only` so the control still has a name.
    */
   readonly hideLabel?: boolean;
+  /** Mount already editing — a row the owner just added, waiting for its value. */
+  readonly initiallyEditing?: boolean;
   readonly onSave: (value: string) => Promise<InlineEditResult>;
 }): React.ReactElement {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(initiallyEditing);
   const [pending, setPending] = useState(false);
 
   async function handleCommit(raw: string): Promise<void> {

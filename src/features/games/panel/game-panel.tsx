@@ -1,16 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import {
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
-  Gamepad2,
-  Plus,
-  Trash2,
-  Trophy,
-  X,
-} from 'lucide-react';
+import { ChevronRight, Gamepad2, Plus, Trash2, Trophy, X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useEffect, useState, useTransition } from 'react';
 
@@ -35,7 +26,7 @@ import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { rollUpTrophies } from '@/server/games/collections';
-import { type GameDlcRow, gameTotals } from '@/server/games/dlc';
+import { gameTotals } from '@/server/games/dlc';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatReleaseCountdown } from '@/server/games/release-date';
 import {
@@ -44,10 +35,10 @@ import {
   PLATFORM_LABELS,
   PLATFORM_PICKER_OPTIONS,
 } from '@/server/games/taxonomy';
-import { DlcDialog, type DlcDialogTarget } from './dlc-dialog';
+import { DlcGrid } from './dlc-grid';
 import { type GamePanelSeed, isFullGame } from './game-panel-context';
 import { type GamePanelData, getGamePanelAction } from './panel-actions';
-import { PlayYearsRow } from './play-years-row';
+import { PlayYearsRows } from './play-years-rows';
 import { RatingRow } from './rating-row';
 import { TitleField } from './title-field';
 
@@ -113,8 +104,6 @@ export function GamePanel({
   // "Add to library" on a wanted game: the same pre-filled dialog the wishlist
   // card opens. The dialog is a modal above this non-modal panel (z-50 > z-40).
   const [completing, setCompleting] = useState(false);
-  // The small DLC dialog: add a DLC, edit one, or edit the base figures.
-  const [dlcTarget, setDlcTarget] = useState<DlcDialogTarget | null>(null);
 
   const seedId = seed?.id ?? null;
   const [seenSeedId, setSeenSeedId] = useState(seedId);
@@ -122,7 +111,6 @@ export function GamePanel({
     setSeenSeedId(seedId);
     setCollectionOpen(null);
     setCompleting(false);
-    setDlcTarget(null);
   }
 
   useEffect(() => {
@@ -247,15 +235,14 @@ export function GamePanel({
                 <MetaLine game={game} memberCount={current?.members.length ?? 0} />
               )}
               {game !== null && game.status === 'wanted' ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-2"
+                <button
+                  type="button"
                   onClick={() => setCompleting(true)}
+                  className="text-muted-foreground hover:text-foreground mt-1.5 inline-flex items-center gap-1 text-sm transition-colors"
                 >
                   <Plus className="size-3.5" aria-hidden />
                   Add to library
-                </Button>
+                </button>
               ) : null}
               {parent === null ? null : (
                 <button
@@ -323,20 +310,24 @@ export function GamePanel({
                     {...(isCollectionMember ? { disabledHint: 'From the collection' } : {})}
                     onSave={(value) => saveField('hours', value)}
                   />
-                  <InlineEditField
-                    label="First played"
-                    value={game.firstPlayedYear === null ? '' : String(game.firstPlayedYear)}
-                    placeholder="Not set"
-                    onSave={(value) => saveField('firstPlayedYear', value)}
-                  />
-                  {/* A play-year split apportions a game's OWN total across
-                      years. A title inside a collection has no total of its
-                      own — the set's hours are one figure on the collection. */}
-                  {isCollectionMember ? null : (
-                    <PlayYearsRow
-                      key={`${game.id}:${game.playYears.map((row) => `${row.year}=${row.hoursTenths}`).join(',')}`}
+                  {/* A play-year split apportions the BASE game's own hours
+                      across years. A title inside a collection has no hours
+                      of its own — the set's hours are one figure on the
+                      collection — so a member gets First played alone. */}
+                  {isCollectionMember ? (
+                    <InlineEditField
+                      label="First played"
+                      value={game.firstPlayedYear === null ? '' : String(game.firstPlayedYear)}
+                      placeholder="Not set"
+                      onSave={(value) => saveField('firstPlayedYear', value)}
+                    />
+                  ) : (
+                    <PlayYearsRows
+                      key={game.id}
                       hoursTenths={game.hoursTenths}
+                      firstPlayedYear={game.firstPlayedYear}
                       playYears={game.playYears}
+                      onSaveFirstPlayed={(value) => saveField('firstPlayedYear', value)}
                       onSave={savePlayYears}
                     />
                   )}
@@ -425,28 +416,12 @@ export function GamePanel({
                   />
                 </div>
 
-                {/* DLC and Collection are ACTION ROWS, in the same shape as
-                    every other row: a label, and one small outline button on
-                    the right. A title inside a collection carries no DLC —
-                    its figures, and so its DLC, live on the collection row. */}
+                {/* The parts grid (base game + DLC) and the collection. A
+                    title inside a collection carries no DLC — its figures,
+                    and so its DLC, live on the collection row. */}
                 <div>
                   {isCollectionMember ? null : (
-                    <ActionRow
-                      label="DLC"
-                      action={
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          aria-label="Add DLC"
-                          onClick={() => setDlcTarget({ kind: 'add' })}
-                        >
-                          <Plus className="size-3.5" aria-hidden />
-                          Add
-                        </Button>
-                      }
-                    >
-                      {hasDlc ? <DlcLines game={game} onPick={setDlcTarget} /> : null}
-                    </ActionRow>
+                    <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
                   )}
 
                   {/* A row that HOLDS games lists them (and can add more); a
@@ -467,19 +442,14 @@ export function GamePanel({
                     <ActionRow
                       label="Collection"
                       action={
-                        <Button
-                          size="sm"
-                          variant="outline"
+                        <button
+                          type="button"
                           aria-label={collectionShown ? 'Hide collection' : 'Show collection'}
                           onClick={() => setCollectionOpen(!collectionShown)}
+                          className="text-muted-foreground hover:text-foreground text-sm transition-colors"
                         >
-                          {collectionShown ? (
-                            <ChevronUp className="size-3.5" aria-hidden />
-                          ) : (
-                            <ChevronDown className="size-3.5" aria-hidden />
-                          )}
                           {collectionShown ? 'Hide' : 'Show'}
-                        </Button>
+                        </button>
                       }
                     >
                       {collectionShown ? (
@@ -521,17 +491,6 @@ export function GamePanel({
               onOpenChange={(open) => {
                 if (!open) setCompleting(false);
               }}
-            />
-          ) : null}
-
-          {game !== null && dlcTarget !== null ? (
-            <DlcDialog
-              gameId={game.id}
-              target={dlcTarget}
-              onOpenChange={(open) => {
-                if (!open) setDlcTarget(null);
-              }}
-              onChanged={refresh}
             />
           ) : null}
 
@@ -722,7 +681,7 @@ function PlatinumToggle({
         'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
         on
           ? 'border-slate-400/50 bg-gradient-to-br from-slate-100 via-slate-300 to-slate-400 text-slate-800 shadow-sm'
-          : 'text-muted-foreground hover:text-foreground border-input',
+          : 'text-muted-foreground hover:text-foreground -ml-2.5 border-transparent',
       )}
     >
       <Trophy className="size-3.5" strokeWidth={2.25} aria-hidden />
@@ -736,9 +695,9 @@ function formatPrice(cents: number): string {
 }
 
 /**
- * A row whose value is a small outline button on the right (and, below it,
- * whatever the button reveals). DLC and Collection both use it, so the two
- * controls can never drift apart in style again.
+ * A row whose value is a quiet text action on the right (and, below it,
+ * whatever the action reveals). Plain text with no border, like every other
+ * action in the panel — the owner asked for no outlined buttons.
  */
 function ActionRow({
   label,
@@ -760,76 +719,6 @@ function ActionRow({
       )}
     </div>
   );
-}
-
-/**
- * The DLC list: one tidy line for the base game and one per DLC, each a
- * button that opens `DlcDialog` on that row. Nothing is edited inline here —
- * five editable cells on one 520px line were unreadable.
- */
-function DlcLines({
-  game,
-  onPick,
-}: {
-  readonly game: Game;
-  readonly onPick: (target: DlcDialogTarget) => void;
-}): React.ReactElement {
-  return (
-    <ul className="divide-y rounded-md border">
-      <li>
-        <DlcLine
-          name="Base game"
-          detail={figureLine(game, null)}
-          onClick={() => onPick({ kind: 'base', game })}
-        />
-      </li>
-      {game.dlc.map((row) => (
-        <li key={row.id}>
-          <DlcLine
-            name={row.name}
-            detail={figureLine(row, row.year)}
-            onClick={() => onPick({ kind: 'edit', dlc: row })}
-          />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function DlcLine({
-  name,
-  detail,
-  onClick,
-}: {
-  readonly name: string;
-  readonly detail: string;
-  readonly onClick: () => void;
-}): React.ReactElement {
-  return (
-    <button
-      type="button"
-      aria-label={name}
-      onClick={onClick}
-      className="hover:bg-muted/50 flex w-full items-baseline justify-between gap-3 px-3 py-1.5 text-left transition-colors"
-    >
-      <span className="truncate">{name}</span>
-      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{detail}</span>
-    </button>
-  );
-}
-
-/** `2025 · 6h · $39.99 · 10/12` — year first for a DLC, figures nobody recorded left out. */
-function figureLine(row: GameDlcRow | Game, year: number | null): string {
-  const parts: string[] = [];
-  if (year !== null) parts.push(String(year));
-  if (row.hoursTenths !== null) parts.push(formatHours(hours(row.hoursTenths)));
-  if (row.priceCents !== null) parts.push(formatPrice(row.priceCents));
-  if (row.achievementsUnlocked !== null) {
-    parts.push(
-      `${row.achievementsUnlocked}${row.achievementsTotal === null ? '' : `/${row.achievementsTotal}`}`,
-    );
-  }
-  return parts.join(' · ');
 }
 
 function Group({

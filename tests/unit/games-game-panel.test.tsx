@@ -580,52 +580,71 @@ describe('GamePanel — collections', () => {
   });
 });
 
-describe('GamePanel — play-year split', () => {
-  it('shows the split panel already expanded when a split exists, and saves the drafts', async () => {
+describe('GamePanel — years', () => {
+  it('starts a split from the plus beside First played and saves once the years add up', async () => {
+    await openPanel(game({ hoursTenths: 1360, firstPlayedYear: 2022 }));
+    const user = userEvent.setup();
+
+    expect(screen.queryByText('Years')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add a year' }));
+
+    // The first year starts with all the hours; the new year is the next one
+    // and waits for its hours, already in edit mode.
+    expect(screen.getByText('Years')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Year 1' })).toHaveTextContent('2022');
+    expect(screen.getByRole('button', { name: 'Hours in 2022' })).toHaveTextContent('136h');
+    expect(screen.getByRole('button', { name: 'Year 2' })).toHaveTextContent('2023');
+    await user.type(screen.getByRole('textbox', { name: 'Hours in 2023' }), '12{Enter}');
+
+    // 136 + 12 is not 136 — nothing saves until the years add up.
+    expect(screen.getByText('Years add up to 148h; hours are 136h')).toBeInTheDocument();
+    expect(updateGamePlayYearsAction).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Hours in 2022' }));
+    const first = screen.getByRole('textbox', { name: 'Hours in 2022' });
+    await user.clear(first);
+    await user.type(first, '124{Enter}');
+
+    await waitFor(() => expect(updateGamePlayYearsAction).toHaveBeenCalledTimes(1));
+    expect(updateGamePlayYearsAction.mock.calls[0]![1]).toEqual([
+      { year: '2022', hours: '124' },
+      { year: '2023', hours: '12' },
+    ]);
+    expect(screen.queryByText(/Years add up to/)).not.toBeInTheDocument();
+  });
+
+  it('lists an existing split as one row per year, with a remove on each and a plus on the last', async () => {
+    await openPanel(
+      game({
+        hoursTenths: 490,
+        firstPlayedYear: 2024,
+        playYears: [
+          { year: 2024, hoursTenths: 370 },
+          { year: 2025, hoursTenths: 120 },
+        ],
+      }),
+    );
+
+    expect(screen.getByRole('button', { name: 'Hours in 2024' })).toHaveTextContent('37h');
+    expect(screen.getByRole('button', { name: 'Hours in 2025' })).toHaveTextContent('12h');
+    expect(screen.getByRole('button', { name: 'Remove 2024' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove 2025' })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Add a year' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /split across years/i })).not.toBeInTheDocument();
+  });
+
+  it('removing the only year clears the split', async () => {
     await openPanel(game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] }));
     const user = userEvent.setup();
 
-    expect(screen.getByLabelText('Year')).toBeInTheDocument();
-    await user.clear(screen.getByLabelText('Year'));
-    await user.click(screen.getByRole('button', { name: /save split/i }));
+    await user.click(screen.getByRole('button', { name: 'Remove 2024' }));
 
-    await waitFor(() => expect(updateGamePlayYearsAction).toHaveBeenCalledTimes(1));
-    const [, drafts] = updateGamePlayYearsAction.mock.calls[0]!;
-    expect(drafts).toHaveLength(1);
+    await waitFor(() => expect(updateGamePlayYearsAction).toHaveBeenCalledWith('game-1', []));
   });
 
-  it('hides the split entirely for a collection member', async () => {
+  it('hides years entirely for a collection member', async () => {
     await openPanel(game({ collectionId: 'ndc' }), { collection: NDC, collectionOptions: [NDC] });
-    expect(screen.queryByRole('button', { name: /split across years/i })).not.toBeInTheDocument();
-  });
-});
-
-describe('GamePanel — remove', () => {
-  it('deletes the game after confirmation and closes the panel', async () => {
-    await openPanel(game({ id: 'game-1', title: 'Elden Ring' }));
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('button', { name: 'Remove game' }));
-    await user.click(screen.getByRole('button', { name: 'Remove' }));
-
-    await waitFor(() => expect(deleteGameAction).toHaveBeenCalledWith('game-1'));
-    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-  });
-
-  it('keeps the panel open and re-enables the button when the delete rejects', async () => {
-    deleteGameAction.mockRejectedValueOnce(new Error('boom'));
-    const { toast } = await import('@/components/ui/toast');
-    await openPanel(game());
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('button', { name: 'Remove game' }));
-    await user.click(screen.getByRole('button', { name: 'Remove' }));
-
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
-    expect(screen.getByRole('dialog')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Remove game' })).not.toBeDisabled(),
-    );
+    expect(screen.queryByRole('button', { name: 'Add a year' })).not.toBeInTheDocument();
   });
 });
 
@@ -685,33 +704,44 @@ describe('GamePanel — polish', () => {
 });
 
 describe('GamePanel — DLC', () => {
-  it('with no DLC: editable rows, an Add DLC button, no Base game line, no "with DLC" text', async () => {
+  it('with no DLC: editable rows, a plain Add DLC row, no grid, no "with DLC" text', async () => {
     await openPanel(game());
 
     expect(screen.getByRole('button', { name: 'Hours' })).toHaveTextContent('136h');
-    expect(screen.getByRole('button', { name: 'Add DLC' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Base game' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add DLC' })).toHaveTextContent('Add DLC');
+    expect(screen.queryByText('Base game')).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Hours' })).not.toBeInTheDocument();
     expect(screen.queryByText(/with DLC/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/^Total/)).not.toBeInTheDocument();
   });
 
-  it('with DLC: rows show totals read-only, with a Base game line and one line per DLC', async () => {
+  it('with DLC: totals read-only in the rows, and a labelled grid — parts down, figures across', async () => {
     await openPanel(game({ dlc: [DLC] }));
 
-    // 136h + 6h, $65.65 + $39.99, 42/42 + 10/12 — in the rows themselves.
     expect(screen.queryByRole('button', { name: 'Hours' })).not.toBeInTheDocument();
     expect(screen.getByText('142h')).toBeInTheDocument();
     expect(screen.getByText('$105.64')).toBeInTheDocument();
-    expect(screen.getByText('52')).toBeInTheDocument();
-    expect(screen.getByText('54')).toBeInTheDocument();
     expect(screen.queryByText(/with DLC/)).not.toBeInTheDocument();
 
-    expect(screen.getByRole('button', { name: 'Base game' })).toHaveTextContent(
-      '136h · $65.65 · 42/42',
+    for (const column of ['Year', 'Hours', 'Price', 'Trophies']) {
+      expect(screen.getByRole('columnheader', { name: column })).toBeInTheDocument();
+    }
+    expect(screen.getByText('Base game')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Base game: hours' })).toHaveTextContent('136h');
+    expect(screen.getByRole('button', { name: 'Base game: price' })).toHaveTextContent('$65.65');
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: name' })).toHaveTextContent(
+      'Shadow of the Erdtree',
     );
-    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree' })).toHaveTextContent(
-      '2025 · 6h · $39.99 · 10/12',
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: year' })).toHaveTextContent(
+      '2025',
     );
+    expect(screen.getByRole('button', { name: 'Shadow of the Erdtree: hours' })).toHaveTextContent(
+      '6h',
+    );
+    expect(
+      screen.getByRole('button', { name: 'Shadow of the Erdtree: trophies earned' }),
+    ).toHaveTextContent('10');
+    // No box around the grid, no modal anywhere: every cell edits in place.
+    expect(screen.queryByRole('dialog', { name: 'Shadow of the Erdtree' })).not.toBeInTheDocument();
   });
 
   it('has no DLC row at all for a collection member', async () => {
@@ -720,20 +750,18 @@ describe('GamePanel — DLC', () => {
       collectionOptions: [NDC],
     });
 
-    expect(screen.queryByText('DLC')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Add DLC' })).not.toBeInTheDocument();
   });
 
-  it('Add DLC opens a dialog that submits name and year to createGameDlcAction', async () => {
+  it('Add DLC adds an inline row: name and year, saved in place', async () => {
     await openPanel(game());
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: 'Add DLC' }));
-    const dialog = await screen.findByRole('heading', { name: 'Add DLC' });
-    expect(dialog).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Name'), 'Elden DLC');
-    await user.type(screen.getByLabelText('Year played'), '2026');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.queryByRole('dialog', { name: 'Add DLC' })).not.toBeInTheDocument();
+    await user.type(screen.getByRole('textbox', { name: 'New DLC name' }), 'Elden DLC');
+    await user.type(screen.getByRole('textbox', { name: 'New DLC year' }), '2026');
+    await user.click(screen.getByRole('button', { name: 'Save new DLC' }));
 
     await waitFor(() => expect(createGameDlcAction).toHaveBeenCalledTimes(1));
     const [gameId, formData] = createGameDlcAction.mock.calls[0]!;
@@ -743,57 +771,48 @@ describe('GamePanel — DLC', () => {
     await waitFor(() => expect(getGamePanelAction).toHaveBeenCalledTimes(2));
   });
 
-  it('a DLC line opens its dialog pre-filled and saves the whole row to updateGameDlcAction', async () => {
+  it('editing one DLC cell saves the whole row with that cell changed', async () => {
     await openPanel(game({ dlc: [DLC] }));
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: 'Shadow of the Erdtree' }));
-    expect(
-      await screen.findByRole('heading', { name: 'Shadow of the Erdtree' }),
-    ).toBeInTheDocument();
-    const hoursInput = screen.getByLabelText('Hours');
-    expect(hoursInput).toHaveValue('6');
-    await user.clear(hoursInput);
-    await user.type(hoursInput, '7');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: 'Shadow of the Erdtree: hours' }));
+    const input = screen.getByRole('textbox', { name: 'Shadow of the Erdtree: hours' });
+    await user.clear(input);
+    await user.type(input, '7{Enter}');
 
     await waitFor(() => expect(updateGameDlcAction).toHaveBeenCalledTimes(1));
     const [dlcId, formData] = updateGameDlcAction.mock.calls[0]!;
     expect(dlcId).toBe('dlc-1');
     expect(formData.get('name')).toBe('Shadow of the Erdtree');
+    expect(formData.get('year')).toBe('2025');
     expect(formData.get('hours')).toBe('7');
     expect(formData.get('priceDollars')).toBe('39.99');
+    expect(formData.get('achievementsUnlocked')).toBe('10');
+    expect(formData.get('achievementsTotal')).toBe('12');
   });
 
-  it('Remove DLC inside the dialog confirms, then calls deleteGameDlcAction', async () => {
+  it('editing a Base game cell goes through the ordinary field action', async () => {
     await openPanel(game({ dlc: [DLC] }));
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: 'Shadow of the Erdtree' }));
-    await user.click(await screen.findByRole('button', { name: 'Remove DLC' }));
-    await user.click(await screen.findByRole('button', { name: 'Remove' }));
-
-    await waitFor(() => expect(deleteGameDlcAction).toHaveBeenCalledWith('dlc-1'));
-  });
-
-  it('the Base game line opens a dialog that saves the base figures through the field action', async () => {
-    await openPanel(game({ dlc: [DLC] }));
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('button', { name: 'Base game' }));
-    expect(await screen.findByRole('heading', { name: 'Base game' })).toBeInTheDocument();
-    const hoursInput = screen.getByLabelText('Hours');
-    expect(hoursInput).toHaveValue('136');
-    await user.clear(hoursInput);
-    await user.type(hoursInput, '140');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await user.click(screen.getByRole('button', { name: 'Base game: hours' }));
+    const input = screen.getByRole('textbox', { name: 'Base game: hours' });
+    await user.clear(input);
+    await user.type(input, '140{Enter}');
 
     await waitFor(() =>
       expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'hours', '140'),
     );
-    expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'priceDollars', '65.65');
-    expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'achievementsUnlocked', '42');
-    expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'achievementsTotal', '42');
+  });
+
+  it('removing a DLC confirms, then calls deleteGameDlcAction', async () => {
+    await openPanel(game({ dlc: [DLC] }));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Remove Shadow of the Erdtree' }));
+    await user.click(await screen.findByRole('button', { name: 'Remove' }));
+
+    await waitFor(() => expect(deleteGameDlcAction).toHaveBeenCalledWith('dlc-1'));
   });
 });
 

@@ -102,10 +102,14 @@ export function CollectionMembersPanel({
           <span className="text-muted-foreground text-xs">
             {members.length} game{members.length === 1 ? '' : 's'}
           </span>
-          <Button size="sm" variant="outline" onClick={() => setPicking(true)}>
+          <button
+            type="button"
+            onClick={() => setPicking(true)}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-sm transition-colors"
+          >
             <Plus className="size-3.5" aria-hidden />
             Add games
-          </Button>
+          </button>
         </div>
       </div>
 
