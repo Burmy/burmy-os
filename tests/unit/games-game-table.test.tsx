@@ -278,3 +278,10 @@ describe('GameTable totals', () => {
     expect(row).toHaveTextContent('52 / 54');
   });
 });
+
+describe('GameTable columns', () => {
+  it('has no Status column — played is invisible and wanted has its own chip', () => {
+    render(<GameTable activeId={null} groups={[solo()]} onOpen={vi.fn()} />);
+    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
+  });
+});

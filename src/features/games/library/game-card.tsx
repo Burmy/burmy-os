@@ -7,7 +7,6 @@ import { FoilCard } from '@/components/games/foil-card';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { formatReleaseCountdown } from '@/server/games/release-date';
-import { STATUS_LABELS } from '@/server/games/taxonomy';
 
 /**
  * One game in the gallery — THE COVER, AND NOTHING ELSE.
@@ -104,7 +103,9 @@ export function GameCard({
       // Carries status and platinum even though neither renders as visible
       // text — with the card reduced to bare art this is the entire accessible
       // description of a grid item.
-      aria-label={`${game.title} — ${STATUS_LABELS[game.status]}${game.platinum ? ' — Platinum' : ''}${collectionLabel === null ? '' : ` — collection of ${collectionLabel}`}`}
+      // `played` is the invisible default and is never spoken either — only
+      // a wishlisted card names its status.
+      aria-label={`${game.title}${wishlisted ? ' — Wanted' : ''}${game.platinum ? ' — Platinum' : ''}${collectionLabel === null ? '' : ` — collection of ${collectionLabel}`}`}
       title={game.title}
       onClick={() => onOpen(game)}
       aria-pressed={selected}

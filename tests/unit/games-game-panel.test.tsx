@@ -28,7 +28,16 @@ const addGamesToCollectionAction = vi.fn(
   async (_id: string, _ids: readonly string[]): Promise<ActionResult> => ({ ok: true }),
 );
 
+const completeWishlistGameAction = vi.fn(
+  async (_id: string, _formData: FormData): Promise<ActionResult> => ({ ok: true }),
+);
+const createGameAction = vi.fn(async (_formData: FormData): Promise<ActionResult> => ({
+  ok: true,
+}));
+
 vi.mock('@/features/games/game-actions', () => ({
+  completeWishlistGameAction: (...args: [string, FormData]) => completeWishlistGameAction(...args),
+  createGameAction: (...args: [FormData]) => createGameAction(...args),
   updateGameFieldAction: (...args: [string, string, string]) => updateGameFieldAction(...args),
   applyMetadataSuggestionAction: (...args: [string, unknown]) =>
     applyMetadataSuggestionAction(...args),
@@ -290,7 +299,8 @@ describe('GamePanel — read display', () => {
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Title: Elden Ring' })).toBeInTheDocument();
     expect(screen.getAllByText('PS5').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Played').length).toBeGreaterThan(0);
+    // `played` is the invisible default — the word never appears in the UI.
+    expect(screen.queryByText('Played')).not.toBeInTheDocument();
     expect(screen.getByText('136h')).toBeInTheDocument();
     expect(screen.getByText('Physical')).toBeInTheDocument();
     expect(screen.getByText('Action RPG')).toBeInTheDocument();
@@ -370,16 +380,23 @@ describe('GamePanel — inline editing', () => {
     );
   });
 
-  it('changes Status via a Select that commits immediately', async () => {
+  it('has no Status row at all', async () => {
     await openPanel(game({ status: 'played' }));
+
+    expect(screen.queryByRole('button', { name: 'Status' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Status')).not.toBeInTheDocument();
+  });
+
+  it('a wanted game shows a Wanted pill and an Add to library button that opens the pre-filled dialog', async () => {
+    await openPanel(game({ title: 'Silksong', status: 'wanted' }));
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: 'Status' }));
-    await user.click(screen.getByRole('option', { name: 'Wanted' }));
+    expect(screen.getByText('Wanted')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add to library' }));
 
-    await waitFor(() =>
-      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'status', 'wanted'),
-    );
+    const heading = await screen.findByRole('heading', { name: 'Add to library' });
+    expect(heading).toBeInTheDocument();
+    expect(screen.getByLabelText('Title')).toHaveValue('Silksong');
   });
 
   it('saves the platinum toggle immediately, on and off', async () => {

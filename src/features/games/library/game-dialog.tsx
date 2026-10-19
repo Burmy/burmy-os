@@ -25,13 +25,7 @@ import {
   PlayYearsPanel,
 } from '@/features/games/play-years-panel';
 import { fromHoursInput, hours, toHoursInput } from '@/server/games/hours';
-import {
-  GAME_OWNERSHIPS,
-  GAME_STATUSES,
-  PLATFORM_LABELS,
-  PLATFORM_PICKER_OPTIONS,
-  STATUS_LABELS,
-} from '@/server/games/taxonomy';
+import { GAME_OWNERSHIPS, PLATFORM_LABELS, PLATFORM_PICKER_OPTIONS } from '@/server/games/taxonomy';
 import type { GameSuggestion } from '@/server/games/metadata';
 import type { Game } from '@/server/db/games/games';
 import { completeWishlistGameAction, createGameAction } from '../game-actions';
@@ -115,7 +109,6 @@ export function GameDialog({
   const [platform, setPlatform] = useState<PickerPlatform>(
     completing === null ? 'ps5' : pickerPlatform(completing.platform),
   );
-  const [status, setStatus] = useState<(typeof GAME_STATUSES)[number]>('played');
   const [ownership, setOwnership] = useState(completing?.ownership ?? '');
   const [coverUrl, setCoverUrl] = useState(completing?.coverUrl ?? '');
   const [genre, setGenre] = useState(completing?.genre ?? '');
@@ -208,9 +201,15 @@ export function GameDialog({
     // PREVIOUS attempt's error while the new one is still pending.
     setError(null);
     formData.set('platform', platform);
-    // Completing a wishlist entry IS marking it played — nothing the form
-    // carried (there is no status control in that mode) can say otherwise.
-    formData.set('status', completing === null ? status : 'played');
+    // `played` is the invisible default and the word never appears in the
+    // UI: the only status choice a NEW game offers is one checkbox, "Add to
+    // wishlist instead". Completing a wishlist entry IS marking it played —
+    // nothing the form carried can say otherwise.
+    formData.set(
+      'status',
+      completing === null && formData.get('wishlist') === 'true' ? 'wanted' : 'played',
+    );
+    formData.delete('wishlist');
     formData.set('ownership', ownership);
     formData.set('coverUrl', coverUrl);
     formData.set('metacritic', metacritic === null ? '' : String(metacritic));
@@ -432,17 +431,16 @@ export function GameDialog({
                 className="pt-4 data-[state=inactive]:hidden"
               >
                 <div className="grid gap-4 sm:grid-cols-2">
+                  {/* The one status decision a new game has. Same Radix
+                      Checkbox-posts-a-hidden-input mechanics as the platinum
+                      box below; absent when completing a wishlist entry. */}
                   {completing === null ? (
-                    <FieldSelect
-                      id="status"
-                      label="Status"
-                      value={status}
-                      onChange={(value) => setStatus(value as typeof status)}
-                      options={GAME_STATUSES.map((value) => ({
-                        value,
-                        label: STATUS_LABELS[value],
-                      }))}
-                    />
+                    <div className="flex items-center gap-2 sm:col-span-2">
+                      <Checkbox id="wishlist" name="wishlist" value="true" />
+                      <Label htmlFor="wishlist" className="cursor-pointer font-normal">
+                        Add to wishlist instead
+                      </Label>
+                    </div>
                   ) : null}
                   <Field
                     id="hours"

@@ -133,20 +133,23 @@ describe('WishlistSection — actions', () => {
     expect(openGame).toHaveBeenCalledWith(game);
   });
 
-  it('"Mark as played" opens the add dialog pre-filled, without a status control', async () => {
+  it('"Add to library" opens the add dialog pre-filled, without a status control', async () => {
     const user = userEvent.setup();
     render(
       <WishlistSection now={NOW} games={[wanted({ platform: 'ps5', genre: 'Metroidvania' })]} />,
     );
 
     await user.click(
-      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
+      screen.getByRole('button', { name: 'Add Hollow Knight: Silksong to library' }),
     );
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('heading', { name: 'Add to library' })).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Title')).toHaveValue('Hollow Knight: Silksong');
     expect(within(dialog).queryByText('Status')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /to library$/ })[0]).toHaveTextContent(
+      'Add to library',
+    );
     // Pre-filled from the row, so no search fires for a title the owner never typed.
     expect(searchGameMetadataAction).not.toHaveBeenCalled();
   });
@@ -156,7 +159,7 @@ describe('WishlistSection — actions', () => {
     render(<WishlistSection now={NOW} games={[wanted({ id: 'w1' })]} />);
 
     await user.click(
-      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
+      screen.getByRole('button', { name: 'Add Hollow Knight: Silksong to library' }),
     );
     const dialog = await screen.findByRole('dialog');
     await user.type(within(dialog).getByLabelText('Hours played'), '16');
@@ -177,7 +180,7 @@ describe('WishlistSection — actions', () => {
     render(<WishlistSection now={NOW} games={[wanted()]} />);
 
     await user.click(
-      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
+      screen.getByRole('button', { name: 'Add Hollow Knight: Silksong to library' }),
     );
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Add to library' }));
@@ -191,7 +194,7 @@ describe('WishlistSection — actions', () => {
     render(<WishlistSection now={NOW} games={[wanted()]} />);
 
     await user.click(
-      screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as played' }),
+      screen.getByRole('button', { name: 'Add Hollow Knight: Silksong to library' }),
     );
     await screen.findByRole('dialog');
     await user.keyboard('{Escape}');

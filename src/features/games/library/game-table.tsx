@@ -4,7 +4,6 @@ import { Fragment } from 'react';
 
 import { PlatinumBadge } from '@/components/games/platinum-badge';
 import { RatingStars } from '@/components/games/rating-stars';
-import { StatusBadge } from '@/components/games/status-badge';
 import {
   Table,
   TableBody,
@@ -89,7 +88,6 @@ export function GameTable({
           {selectable ? <TableHead className="w-8" /> : null}
           <TableHead>Title</TableHead>
           <TableHead>Platform</TableHead>
-          <TableHead>Status</TableHead>
           <TableHead className="text-right">Hours</TableHead>
           <TableHead className="text-right">Year</TableHead>
           <TableHead className="text-right">Achievements</TableHead>
@@ -206,9 +204,6 @@ function GameRow({
         )}
       </TableCell>
       <TableCell className="text-muted-foreground">{PLATFORM_LABELS[game.platform]}</TableCell>
-      <TableCell>
-        <StatusBadge status={game.status} />
-      </TableCell>
       {/* A title inside a collection reads "—" across Hours, Achievements and
           Platinum, and that is correct rather than missing data: the set has
           ONE play time and ONE trophy list, and they are on the row directly

@@ -29,7 +29,7 @@ import { PLATFORM_LABELS } from '@/server/games/taxonomy';
  * released entry sorts to the front with an "Out now" pill on its art and
  * leaves only when its status changes.
  *
- * "MARK AS PLAYED" IS THE MOMENT A GAME ENTERS THE LIBRARY, so it opens the
+ * "ADD TO LIBRARY" IS THE MOMENT A GAME ENTERS THE LIBRARY, so it opens the
  * add-game dialog pre-filled (`GameDialog`, `mode="complete"`) rather than
  * flipping one column: hours, price, year and rating get entered right then,
  * on the row that already exists — never a duplicate. The dialog is keyed on
@@ -103,7 +103,8 @@ export function WishlistSection({
  * ratio, same frost foil for a wishlisted game). Unlike the library card it
  * carries text underneath — the title, the release line and the one action —
  * because a wishlist card is something you act on, not something you
- * recognise. The "Out now" pill sits on the art, top-left, exactly where the
+ * recognise. (`played` is never printed anywhere — the action is "Add to
+ * library", not "mark as played".) The "Out now" pill sits on the art, top-left, exactly where the
  * library card puts its countdown.
  */
 function WishlistCard({
@@ -172,10 +173,10 @@ function WishlistCard({
       <Button
         size="sm"
         variant="outline"
-        aria-label={`Mark ${game.title} as played`}
+        aria-label={`Add ${game.title} to library`}
         onClick={() => onComplete(game)}
       >
-        Mark as played
+        Add to library
       </Button>
     </div>
   );

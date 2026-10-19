@@ -65,18 +65,21 @@ function game(overrides: Partial<Game>): Game {
  * The gallery renders NO visible text — a card is bare box art now (see
  * `game-card.tsx`). So "is this game on screen?" can no longer be answered
  * with `getByText(title)`; the title lives only in each card's `aria-label`,
- * formatted as `"<title> — <Status>"`.
+ * formatted as `"<title>[ — Wanted][ — Platinum]"`.
  *
  * This reads the gallery the way a screen reader would, which is also the only
  * way left to read it. Table view still renders real text and its tests still
  * use `getByText` directly.
  */
 function galleryTitles(): string[] {
+  // A card is the only button in the gallery with a native `title` (the
+  // tooltip that recovers an unrecognised cover); its `aria-label` is the
+  // title, followed by " — Wanted" / " — Platinum" / " — collection of N"
+  // only when those apply — a played game is named by its title alone.
   return screen
     .getAllByRole('button')
-    .map((button) => button.getAttribute('aria-label') ?? '')
-    .filter((label) => label.includes(' — '))
-    .map((label) => label.split(' — ')[0]!);
+    .filter((button) => button.hasAttribute('title'))
+    .map((button) => (button.getAttribute('aria-label') ?? '').split(' — ')[0]!);
 }
 
 describe('LibraryView', () => {

@@ -65,15 +65,17 @@ afterEach(() => {
 });
 
 describe('GameDialog — create mode', () => {
-  it('is titled Add game, defaults status to Played, and submits to createGameAction', async () => {
+  it('is titled Add game, shows no status control, and submits a played game to createGameAction', async () => {
     const user = userEvent.setup();
     render(<GameDialog open onOpenChange={vi.fn()} />);
 
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByRole('heading', { name: 'Add game' })).toBeInTheDocument();
-    expect(within(dialog).getByText('Status')).toBeInTheDocument();
-    // Radix Select renders the value in the trigger AND its hidden native select.
-    expect(within(dialog).getAllByText('Played').length).toBeGreaterThan(0);
+    expect(within(dialog).queryByText('Status')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Played')).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('checkbox', { name: 'Add to wishlist instead' }),
+    ).not.toBeChecked();
 
     await user.type(within(dialog).getByLabelText('Title'), 'Hades');
     await user.click(within(dialog).getByRole('button', { name: 'Add game' }));
@@ -81,6 +83,19 @@ describe('GameDialog — create mode', () => {
     await waitFor(() => expect(createGameAction).toHaveBeenCalledTimes(1));
     expect(createGameAction.mock.calls[0]![0].get('status')).toBe('played');
     expect(completeWishlistGameAction).not.toHaveBeenCalled();
+  });
+
+  it('submits a wanted game when "Add to wishlist instead" is ticked', async () => {
+    const user = userEvent.setup();
+    render(<GameDialog open onOpenChange={vi.fn()} />);
+
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Title'), 'Silksong');
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Add to wishlist instead' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Add game' }));
+
+    await waitFor(() => expect(createGameAction).toHaveBeenCalledTimes(1));
+    expect(createGameAction.mock.calls[0]![0].get('status')).toBe('wanted');
   });
 });
 
@@ -94,6 +109,9 @@ describe('GameDialog — complete mode', () => {
     expect(within(dialog).getAllByText('PS5').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('Metacritic 88')).toBeInTheDocument();
     expect(within(dialog).queryByText('Status')).not.toBeInTheDocument();
+    expect(
+      within(dialog).queryByRole('checkbox', { name: 'Add to wishlist instead' }),
+    ).not.toBeInTheDocument();
     expect(within(dialog).getByRole('button', { name: 'Add to library' })).toBeInTheDocument();
   });
 

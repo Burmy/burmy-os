@@ -1,7 +1,7 @@
 'use client';
 
 import Image from 'next/image';
-import { ChevronRight, Gamepad2, Trash2, Trophy, X } from 'lucide-react';
+import { ChevronRight, Gamepad2, Plus, Trash2, Trophy, X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { useEffect, useState, useTransition } from 'react';
 
@@ -14,6 +14,7 @@ import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
 import { CollectionField } from '@/features/games/collections/collection-field';
 import { CollectionMembersPanel } from '@/features/games/collections/collection-members-panel';
+import { GameDialog } from '@/features/games/library/game-dialog';
 import {
   deleteGameAction,
   type GameFieldKey,
@@ -30,11 +31,9 @@ import { formatHours, hours } from '@/server/games/hours';
 import { formatReleaseCountdown } from '@/server/games/release-date';
 import {
   GAME_OWNERSHIPS,
-  type GameStatus,
   OWNERSHIP_LABELS,
   PLATFORM_LABELS,
   PLATFORM_PICKER_OPTIONS,
-  STATUS_LABELS,
 } from '@/server/games/taxonomy';
 import { DlcGroup } from './dlc-group';
 import { type GamePanelSeed, isFullGame } from './game-panel-context';
@@ -42,8 +41,6 @@ import { type GamePanelData, getGamePanelAction } from './panel-actions';
 import { PlayYearsRow } from './play-years-row';
 import { RatingRow } from './rating-row';
 import { TitleField } from './title-field';
-
-const STATUS_OPTIONS = ['wanted', 'played'] as const satisfies readonly GameStatus[];
 
 /**
  * The game panel — everything about one game, in a 520px column beside the
@@ -104,12 +101,16 @@ export function GamePanel({
   // `null` = "not decided by the owner yet": open when the game holds members,
   // collapsed when it holds none. Reset whenever a different game opens.
   const [collectionOpen, setCollectionOpen] = useState<boolean | null>(null);
+  // "Add to library" on a wanted game: the same pre-filled dialog the wishlist
+  // card opens. The dialog is a modal above this non-modal panel (z-50 > z-40).
+  const [completing, setCompleting] = useState(false);
 
   const seedId = seed?.id ?? null;
   const [seenSeedId, setSeenSeedId] = useState(seedId);
   if (seenSeedId !== seedId) {
     setSeenSeedId(seedId);
     setCollectionOpen(null);
+    setCompleting(false);
   }
 
   useEffect(() => {
@@ -234,6 +235,17 @@ export function GamePanel({
               {game === null ? null : (
                 <MetaLine game={game} memberCount={current?.members.length ?? 0} />
               )}
+              {game !== null && game.status === 'wanted' ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={() => setCompleting(true)}
+                >
+                  <Plus className="size-3.5" aria-hidden />
+                  Add to library
+                </Button>
+              ) : null}
               {parent === null ? null : (
                 <button
                   type="button"
@@ -266,16 +278,6 @@ export function GamePanel({
             ) : (
               <div className="space-y-6">
                 <Group title="Progress">
-                  <InlineEditSelect
-                    label="Status"
-                    value={game.status}
-                    displayValue={STATUS_LABELS[game.status]}
-                    options={STATUS_OPTIONS.map((value) => ({
-                      value,
-                      label: STATUS_LABELS[value],
-                    }))}
-                    onSave={(value) => saveField('status', value)}
-                  />
                   <RatingRow rating={game.rating} onSave={(value) => saveField('rating', value)} />
                   {/* Only while wanted: it is what sorts the game into "Your
                       wishlist" and gives it a countdown. Once the game is
@@ -472,6 +474,18 @@ export function GamePanel({
             )}
           </div>
 
+          {game !== null && completing ? (
+            <GameDialog
+              key={game.id}
+              mode="complete"
+              game={game}
+              open
+              onOpenChange={(open) => {
+                if (!open) setCompleting(false);
+              }}
+            />
+          ) : null}
+
           <footer className="flex justify-end border-t p-4">
             <Button
               type="button"
@@ -522,7 +536,9 @@ function CoverTile({ game }: { readonly game: Game | null }): React.ReactElement
 }
 
 /**
- * `platform · status · 3 games`, then a quieter line of IGDB facts
+ * `platform · Wanted · 3 games` — the status shows ONLY as a "Wanted" pill;
+ * `played` is the invisible default and the word never appears — then a
+ * quieter line of IGDB facts
  * when the game has any — a critic score and a time-to-beat answer "is this
  * worth starting" at a glance. ESRB is stored too but never shown; it has
  * not earned a line.
@@ -542,8 +558,14 @@ function MetaLine({
     <>
       <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm">
         <span>{PLATFORM_LABELS[game.platform]}</span>
-        <span aria-hidden>·</span>
-        <span>{STATUS_LABELS[game.status]}</span>
+        {game.status === 'wanted' ? (
+          <>
+            <span aria-hidden>·</span>
+            <span className="bg-violet-500/15 rounded-md px-1.5 py-0.5 text-xs font-medium text-violet-600 dark:text-violet-400">
+              Wanted
+            </span>
+          </>
+        ) : null}
         {memberCount === 0 ? null : (
           <>
             <span aria-hidden>·</span>

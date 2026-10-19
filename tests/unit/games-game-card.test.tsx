@@ -140,6 +140,12 @@ describe('GameCard — cover-only content', () => {
     expect(initial.closest('[aria-hidden]')).not.toBeNull();
   });
 
+  it('names a played game by its title alone — played is the invisible default', () => {
+    render(<GameCard game={game({ title: 'Bloodborne', status: 'played' })} onOpen={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: 'Bloodborne' })).toBeInTheDocument();
+  });
+
   it('carries the title and status in the accessible name, the only place they exist', () => {
     render(<GameCard game={game({ title: 'Bloodborne', status: 'wanted' })} onOpen={vi.fn()} />);
 
