@@ -29,10 +29,25 @@ import { setNonce } from 'get-nonce';
  *
  * Called during render rather than in an effect because Radix can create its style
  * tag as soon as an overlay opens, which may be before effects from a parent have
- * settled. `setNonce` is an idempotent module-level assignment, so calling it on
- * every render is harmless.
+ * settled.
+ *
+ * THE FIRST NONCE WINS, FOR THE LIFE OF THE DOCUMENT. A Server Action's
+ * `revalidatePath` re-renders this layout with a FRESH per-request nonce, but
+ * the CSP header the browser enforces is the one the document was served with
+ * — that never changes until a full navigation. Adopting the refreshed nonce
+ * made every `<style>` Radix injected afterwards mismatch the header: the
+ * Remove-game confirm reported `style-src-elem` violations after any field
+ * save (and never before one), and its scroll lock silently did not apply.
+ * Found in a real browser (2026-10-18), pinned by
+ * `tests/unit/shell-style-nonce.test.tsx`. Module state resets with the
+ * document, so a full page load always starts from its own nonce.
  */
+let documentNonce: string | null = null;
+
 export function StyleNonce({ nonce }: { readonly nonce: string }): null {
-  if (nonce) setNonce(nonce);
+  if (nonce && documentNonce === null) {
+    documentNonce = nonce;
+    setNonce(nonce);
+  }
   return null;
 }

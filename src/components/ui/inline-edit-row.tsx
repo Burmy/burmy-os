@@ -176,7 +176,15 @@ export function InlineEditField({
             onClick={() => setEditing(true)}
             disabled={pending}
             className={cn(
-              'hover:text-foreground -mx-1 -my-1 max-w-full truncate rounded-md px-1 py-1 text-left transition-colors',
+              'hover:text-foreground -mx-1 -my-1 rounded-md px-1 py-1 text-left transition-colors',
+              // With a label column the value truncates to its track; a label-less
+              // value is a cell or a block and must show whole (a nowrap cell
+              // inside a flex row shrank to "2…" when it truncated).
+              hideLabel
+                ? multiline
+                  ? 'whitespace-pre-wrap'
+                  : 'whitespace-nowrap'
+                : 'max-w-full truncate',
               value ? '' : 'text-muted-foreground italic',
             )}
           >

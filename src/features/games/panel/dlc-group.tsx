@@ -104,67 +104,80 @@ export function DlcGroup({
       {dlc.length === 0 ? null : (
         <ul className="divide-y">
           {dlc.map((row) => (
-            <li key={row.id} className="flex flex-wrap items-center gap-x-3 py-0.5">
-              <div className="min-w-0 flex-1 basis-40 font-medium">
-                <InlineEditField
-                  hideLabel
-                  label={`${row.name}: name`}
-                  value={row.name}
-                  onSave={(value) => saveCell(row.id, 'name', value)}
-                />
+            // The name takes the full first line; the figures sit on a second
+            // line as fixed-width cells that never shrink — a `flex-1` name
+            // beside them starved every figure down to "2…" at 520px.
+            <li key={row.id} className="py-1.5">
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1 font-medium">
+                  <InlineEditField
+                    hideLabel
+                    label={`${row.name}: name`}
+                    value={row.name}
+                    onSave={(value) => saveCell(row.id, 'name', value)}
+                  />
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove ${row.name}`}
+                  className="text-muted-foreground size-7 shrink-0"
+                  onClick={() => setRemoving(row)}
+                >
+                  <Trash2 className="size-3.5" aria-hidden />
+                </Button>
               </div>
-              <InlineEditField
-                hideLabel
-                label={`${row.name}: year`}
-                value={String(row.year)}
-                onSave={(value) => saveCell(row.id, 'year', value)}
-              />
-              <InlineEditField
-                hideLabel
-                label={`${row.name}: hours`}
-                value={row.hoursTenths === null ? '' : String(row.hoursTenths / 10)}
-                displayValue={
-                  row.hoursTenths === null ? undefined : formatHours(hours(row.hoursTenths))
-                }
-                placeholder="— h"
-                onSave={(value) => saveCell(row.id, 'hours', value)}
-              />
-              <InlineEditField
-                hideLabel
-                label={`${row.name}: price`}
-                value={row.priceCents === null ? '' : (row.priceCents / 100).toFixed(2)}
-                displayValue={row.priceCents === null ? undefined : formatPrice(row.priceCents)}
-                placeholder="$ —"
-                onSave={(value) => saveCell(row.id, 'priceDollars', value)}
-              />
-              <span className="inline-flex items-center gap-0.5">
-                <InlineEditField
-                  hideLabel
-                  label={`${row.name}: trophies earned`}
-                  value={row.achievementsUnlocked === null ? '' : String(row.achievementsUnlocked)}
-                  placeholder="—"
-                  onSave={(value) => saveCell(row.id, 'achievementsUnlocked', value)}
-                />
-                <span className="text-muted-foreground" aria-hidden>
-                  /
-                </span>
-                <InlineEditField
-                  hideLabel
-                  label={`${row.name}: trophies total`}
-                  value={row.achievementsTotal === null ? '' : String(row.achievementsTotal)}
-                  placeholder="—"
-                  onSave={(value) => saveCell(row.id, 'achievementsTotal', value)}
-                />
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove ${row.name}`}
-                className="text-muted-foreground size-7"
-                onClick={() => setRemoving(row)}
-              >
-                <Trash2 className="size-3.5" aria-hidden />
-              </Button>
+              <div className="text-muted-foreground -mt-1 flex flex-wrap items-center gap-x-4 text-sm">
+                <Cell label="Year">
+                  <InlineEditField
+                    hideLabel
+                    label={`${row.name}: year`}
+                    value={String(row.year)}
+                    onSave={(value) => saveCell(row.id, 'year', value)}
+                  />
+                </Cell>
+                <Cell label="Hours">
+                  <InlineEditField
+                    hideLabel
+                    label={`${row.name}: hours`}
+                    value={row.hoursTenths === null ? '' : String(row.hoursTenths / 10)}
+                    displayValue={
+                      row.hoursTenths === null ? undefined : formatHours(hours(row.hoursTenths))
+                    }
+                    placeholder="—"
+                    onSave={(value) => saveCell(row.id, 'hours', value)}
+                  />
+                </Cell>
+                <Cell label="Price">
+                  <InlineEditField
+                    hideLabel
+                    label={`${row.name}: price`}
+                    value={row.priceCents === null ? '' : (row.priceCents / 100).toFixed(2)}
+                    displayValue={row.priceCents === null ? undefined : formatPrice(row.priceCents)}
+                    placeholder="—"
+                    onSave={(value) => saveCell(row.id, 'priceDollars', value)}
+                  />
+                </Cell>
+                <Cell label="Trophies">
+                  <InlineEditField
+                    hideLabel
+                    label={`${row.name}: trophies earned`}
+                    value={
+                      row.achievementsUnlocked === null ? '' : String(row.achievementsUnlocked)
+                    }
+                    placeholder="—"
+                    onSave={(value) => saveCell(row.id, 'achievementsUnlocked', value)}
+                  />
+                  <span aria-hidden>/</span>
+                  <InlineEditField
+                    hideLabel
+                    label={`${row.name}: trophies total`}
+                    value={row.achievementsTotal === null ? '' : String(row.achievementsTotal)}
+                    placeholder="—"
+                    onSave={(value) => saveCell(row.id, 'achievementsTotal', value)}
+                  />
+                </Cell>
+              </div>
             </li>
           ))}
         </ul>
@@ -213,6 +226,22 @@ export function DlcGroup({
         onConfirm={() => void remove()}
       />
     </section>
+  );
+}
+
+/** A figure on a DLC row: a tiny caption and the editable value beside it, never shrunk. */
+function Cell({
+  label,
+  children,
+}: {
+  readonly label: string;
+  readonly children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1">
+      <span className="text-xs">{label}</span>
+      <span className="text-foreground inline-flex items-center gap-0.5">{children}</span>
+    </span>
   );
 }
 
