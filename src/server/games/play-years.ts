@@ -17,11 +17,16 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-/** One owner-entered "I played N hours of this game in year Y" row. */
+/**
+ * One owner-entered "I played N hours of this game in year Y" row — and,
+ * since 2026-10-19, "and earned T of its trophies that year". `null` means
+ * the row says nothing about trophies.
+ */
 export interface PlayYearRow {
   readonly gameId: string;
   readonly year: number;
   readonly hoursTenths: number;
+  readonly achievementsUnlocked: number | null;
 }
 
 /** The narrow projection of a game this module needs. */
@@ -29,12 +34,21 @@ export interface AttributableGame {
   readonly id: string;
   readonly firstPlayedYear: number | null;
   readonly hoursTenths: number | null;
+  readonly achievementsUnlocked: number | null;
 }
 
 export interface YearAttribution {
   readonly year: number;
   readonly gameId: string;
   readonly hoursTenths: number;
+  /**
+   * The game's trophies credited to this year. With no split, or a split
+   * whose rows all leave trophies blank, every trophy goes to
+   * `firstPlayedYear` (the row for that year, or the first row when none
+   * matches) — the behaviour every game had before the column existed. With
+   * any row carrying a figure, each row's own figure, a blank counting 0.
+   */
+  readonly achievementsUnlocked: number;
 }
 
 export interface AttributionResult {
@@ -82,24 +96,79 @@ export function attributeHours(
     // counting them would make yearly totals exceed the library total.
     const rows = rowsByGame.get(game.id);
 
+    const earned = game.achievementsUnlocked ?? 0;
+
     if (rows === undefined || rows.length === 0) {
       // A retro entry with neither a year nor a split is not year zero — it has
       // no place in a year-by-year comparison and is excluded, matching the
       // long-standing behaviour of `buildYearlyBreakdown`.
       if (game.firstPlayedYear === null) continue;
-      attributions.push({ year: game.firstPlayedYear, gameId: game.id, hoursTenths: total });
+      attributions.push({
+        year: game.firstPlayedYear,
+        gameId: game.id,
+        hoursTenths: total,
+        achievementsUnlocked: earned,
+      });
       continue;
     }
 
+    // Trophies follow the rows only once a row says something about them;
+    // otherwise they all go where they always went — the first-played year,
+    // or the first row when no row is that year.
+    const rowsSayTrophies = rows.some((row) => row.achievementsUnlocked !== null);
+    const homeIndex = Math.max(
+      0,
+      rows.findIndex((row) => row.year === game.firstPlayedYear),
+    );
+
     let splitTenths = 0;
-    for (const row of rows) {
-      attributions.push({ year: row.year, gameId: game.id, hoursTenths: row.hoursTenths });
+    rows.forEach((row, index) => {
+      attributions.push({
+        year: row.year,
+        gameId: game.id,
+        hoursTenths: row.hoursTenths,
+        achievementsUnlocked: rowsSayTrophies
+          ? (row.achievementsUnlocked ?? 0)
+          : index === homeIndex
+            ? earned
+            : 0,
+      });
       splitTenths += row.hoursTenths;
-    }
+    });
     unattributedTenths += total - splitTenths;
   }
 
   return { attributions, unattributedTenths };
+}
+
+export interface TrophySplitValidation {
+  readonly ok: boolean;
+  /** Whether any row carries a trophies figure at all — with none, there is nothing to check. */
+  readonly specified: boolean;
+  readonly splitUnlocked: number;
+  readonly earned: number;
+}
+
+/**
+ * The trophies-per-year rule, mirror of `validateSplit`: once any row carries
+ * a figure, the figures (a blank counting 0) must add up to the game's own
+ * earned count. Rows that all leave it blank are fine — they say nothing
+ * about trophies, and `attributeHours` leaves every trophy on the
+ * first-played year.
+ */
+export function validateTrophySplit(
+  earned: number | null,
+  rows: readonly { readonly achievementsUnlocked: number | null }[],
+): TrophySplitValidation {
+  const specified = rows.some((row) => row.achievementsUnlocked !== null);
+  const splitUnlocked = rows.reduce((sum, row) => sum + (row.achievementsUnlocked ?? 0), 0);
+  const total = earned ?? 0;
+  return {
+    ok: !specified || splitUnlocked === total,
+    specified,
+    splitUnlocked,
+    earned: total,
+  };
 }
 
 export interface SplitValidation {

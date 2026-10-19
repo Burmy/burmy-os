@@ -65,7 +65,17 @@ export default async function PrivateLayout({
             otherwise lets a wide descendant (the monthly grid table, which can
             run to a dozen+ columns) push this whole flex chain wider than the
             viewport instead of scrolling inside its own `overflow-x-auto`. */}
-        <main className="mx-auto w-full min-w-0 max-w-[1600px] flex-1 px-4 py-10 sm:px-8">{children}</main>
+        {/* Capped and centred at 1600px for the Finance grids and the Anime
+            pages — and FULL WIDTH for any page that marks itself
+            `data-full-width` (the Games tabs: a cover gallery wants every
+            pixel, and the side panel's 536px of right padding only lines up
+            with the panel when the content runs to the window's edge; on a
+            centred cap the padding left a dead gap beside the panel on a
+            wide monitor — owner, 2026-10-19). `has-[]` lets a child decide
+            without a prop threading through every route. */}
+        <main className="mx-auto w-full min-w-0 max-w-[1600px] flex-1 px-4 py-10 has-data-full-width:max-w-none sm:px-8">
+          {children}
+        </main>
       </div>
     </div>
   );

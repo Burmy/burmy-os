@@ -88,8 +88,8 @@ describe('buildYearlyBreakdown', () => {
     const { rows } = buildYearlyBreakdown(
       [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490, achievementsUnlocked: 3 })],
       [
-        { gameId: 'hk', year: 2024, hoursTenths: 370 },
-        { gameId: 'hk', year: 2025, hoursTenths: 120 },
+        { gameId: 'hk', year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+        { gameId: 'hk', year: 2025, hoursTenths: 120, achievementsUnlocked: null },
       ],
       [],
     );
@@ -104,8 +104,8 @@ describe('buildYearlyBreakdown', () => {
     const { rows } = buildYearlyBreakdown(
       [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490 })],
       [
-        { gameId: 'hk', year: 2024, hoursTenths: 370 },
-        { gameId: 'hk', year: 2025, hoursTenths: 120 },
+        { gameId: 'hk', year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+        { gameId: 'hk', year: 2025, hoursTenths: 120, achievementsUnlocked: null },
       ],
       [],
     );
@@ -119,8 +119,8 @@ describe('buildYearlyBreakdown', () => {
     const { rows } = buildYearlyBreakdown(
       [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 490, achievementsUnlocked: 9 })],
       [
-        { gameId: 'hk', year: 2024, hoursTenths: 370 },
-        { gameId: 'hk', year: 2025, hoursTenths: 120 },
+        { gameId: 'hk', year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+        { gameId: 'hk', year: 2025, hoursTenths: 120, achievementsUnlocked: null },
       ],
       [],
     );
@@ -133,7 +133,7 @@ describe('buildYearlyBreakdown', () => {
   it('surfaces hours a split fails to account for', () => {
     const { unattributedTenths } = buildYearlyBreakdown(
       [game({ id: 'hk', firstPlayedYear: 2024, hoursTenths: 510 })],
-      [{ gameId: 'hk', year: 2024, hoursTenths: 490 }],
+      [{ gameId: 'hk', year: 2024, hoursTenths: 490, achievementsUnlocked: null }],
       [],
     );
 
@@ -515,8 +515,8 @@ describe('findCallouts', () => {
       game({ id: 'other', firstPlayedYear: 2023, hoursTenths: 400 }),
     ];
     const playYears = [
-      { gameId: 'hk', year: 2024, hoursTenths: 370 },
-      { gameId: 'hk', year: 2025, hoursTenths: 120 },
+      { gameId: 'hk', year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { gameId: 'hk', year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ];
     const { rows: yearlyRows } = buildYearlyBreakdown(rows, playYears, []);
 
@@ -911,7 +911,7 @@ describe('DLC in every builder', () => {
   it('yearly: the base split still has to add up to the BASE hours, not the total', () => {
     const { unattributedTenths } = buildYearlyBreakdown(
       [game({ id: 'a', firstPlayedYear: 2024, hoursTenths: 500 })],
-      [{ gameId: 'a', year: 2024, hoursTenths: 500 }],
+      [{ gameId: 'a', year: 2024, hoursTenths: 500, achievementsUnlocked: null }],
       [dlcRow],
     );
     expect(unattributedTenths).toBe(0);
@@ -1068,6 +1068,46 @@ describe('collections — no rating of their own', () => {
     expect(buildLeaderboard(rows(), [], 'rating', 5).map((e) => e.title)).toEqual([
       'Drake 1',
       'Drake 2',
+    ]);
+  });
+});
+
+/** Trophies per year ride the split rows (2026-10-19); a split that says nothing leaves them on the first-played year. */
+describe('buildYearlyBreakdown — trophies per year', () => {
+  const hollowKnight = game({
+    id: 'hk',
+    firstPlayedYear: 2024,
+    hoursTenths: 490,
+    achievementsUnlocked: 46,
+  });
+
+  it('credits each year the trophies its row claims', () => {
+    const { rows } = buildYearlyBreakdown(
+      [hollowKnight],
+      [
+        { gameId: 'hk', year: 2024, hoursTenths: 370, achievementsUnlocked: 33 },
+        { gameId: 'hk', year: 2025, hoursTenths: 120, achievementsUnlocked: 13 },
+      ],
+      [],
+    );
+    expect(rows.map((r) => [r.year, r.hoursTenths, r.achievements])).toEqual([
+      [2025, 120, 13],
+      [2024, 370, 33],
+    ]);
+  });
+
+  it('keeps every trophy on the first-played year when the rows only say hours', () => {
+    const { rows } = buildYearlyBreakdown(
+      [hollowKnight],
+      [
+        { gameId: 'hk', year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+        { gameId: 'hk', year: 2025, hoursTenths: 120, achievementsUnlocked: null },
+      ],
+      [],
+    );
+    expect(rows.map((r) => [r.year, r.achievements])).toEqual([
+      [2025, 0],
+      [2024, 46],
     ]);
   });
 });

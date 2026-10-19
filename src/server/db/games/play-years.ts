@@ -19,6 +19,7 @@ export async function listPlayYears(ownerId: string): Promise<PlayYearRow[]> {
       gameId: gamePlayYears.gameId,
       year: gamePlayYears.year,
       hoursTenths: gamePlayYears.hoursTenths,
+      achievementsUnlocked: gamePlayYears.achievementsUnlocked,
     })
     .from(gamePlayYears)
     .where(eq(gamePlayYears.ownerId, ownerId))
@@ -37,6 +38,7 @@ export async function listPlayYearsForGame(
       gameId: gamePlayYears.gameId,
       year: gamePlayYears.year,
       hoursTenths: gamePlayYears.hoursTenths,
+      achievementsUnlocked: gamePlayYears.achievementsUnlocked,
     })
     .from(gamePlayYears)
     .where(and(eq(gamePlayYears.ownerId, ownerId), eq(gamePlayYears.gameId, gameId)))
@@ -55,7 +57,11 @@ export async function listPlayYearsForGame(
 export async function replacePlayYears(
   ownerId: string,
   gameId: string,
-  rows: readonly { readonly year: number; readonly hoursTenths: number }[],
+  rows: readonly {
+    readonly year: number;
+    readonly hoursTenths: number;
+    readonly achievementsUnlocked?: number | null;
+  }[],
 ): Promise<void> {
   const db = getDb();
 
@@ -80,6 +86,7 @@ export async function replacePlayYears(
         gameId,
         year: row.year,
         hoursTenths: row.hoursTenths,
+        achievementsUnlocked: row.achievementsUnlocked ?? null,
       })),
     );
   });

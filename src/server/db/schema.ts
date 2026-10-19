@@ -1020,6 +1020,16 @@ export const gamePlayYears = pgTable(
       .references(() => games.id, { onDelete: 'cascade' }),
     year: smallint('year').notNull(),
     hoursTenths: integer('hours_tenths').notNull(),
+    /**
+     * Trophies earned in that year — an attribution of the game's own
+     * `achievements_unlocked`, exactly as `hours_tenths` attributes the
+     * game's hours (owner, 2026-10-19: the sheet's "33 + 13" meant 33 in
+     * 2024 and 13 in 2025, and Stats must say so). Nullable: a split that
+     * only says hours leaves every trophy on `first_played_year`, as before.
+     * Once ANY row of a game carries a figure, the rows must sum to the
+     * game's earned count (`validateTrophySplit`), a blank cell counting 0.
+     */
+    achievementsUnlocked: smallint('achievements_unlocked'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

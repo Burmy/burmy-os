@@ -1,0 +1,1 @@
+ALTER TABLE "game_play_years" ADD COLUMN "achievements_unlocked" smallint;

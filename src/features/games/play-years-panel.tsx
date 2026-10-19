@@ -12,6 +12,8 @@ import { validateSplit } from '@/server/games/play-years';
 export interface PlayYearDraft {
   readonly year: string;
   readonly hours: string;
+  /** Trophies earned that year, as typed; blank means the row says nothing about trophies. */
+  readonly trophies: string;
 }
 
 /**
@@ -31,7 +33,7 @@ export interface PlayYearDraft {
  * instead of vanishing client-side.
  */
 export function isRealPlayYearDraft(row: PlayYearDraft): boolean {
-  return row.year.trim() !== '' || row.hours.trim() !== '';
+  return row.year.trim() !== '' || row.hours.trim() !== '' || row.trophies.trim() !== '';
 }
 
 /**
@@ -54,7 +56,9 @@ export function PlayYearsPanel({
   // Only rows `isRealPlayYearDraft` also counts feed the sum — this must be
   // the exact same rule the dialog uses to decide what gets submitted, or
   // the on-screen "Xh of Yh" can say OK while a different set of rows ships.
-  const parsed = value.filter(isRealPlayYearDraft).map((row) => ({ hoursTenths: fromHoursInput(row.hours) ?? 0 }));
+  const parsed = value
+    .filter(isRealPlayYearDraft)
+    .map((row) => ({ hoursTenths: fromHoursInput(row.hours) ?? 0 }));
   const validation = validateSplit(totalTenths, parsed);
 
   function update(index: number, patch: Partial<PlayYearDraft>): void {
@@ -91,6 +95,18 @@ export function PlayYearsPanel({
               inputMode="decimal"
             />
           </div>
+          <div className="w-24 space-y-1">
+            <Label htmlFor={`play-trophies-${index}`} className="text-xs">
+              Trophies
+            </Label>
+            <Input
+              id={`play-trophies-${index}`}
+              value={row.trophies}
+              onChange={(event) => update(index, { trophies: event.target.value })}
+              placeholder="—"
+              inputMode="numeric"
+            />
+          </div>
           <Button
             type="button"
             variant="ghost"
@@ -104,7 +120,12 @@ export function PlayYearsPanel({
       ))}
 
       <div className="flex items-center gap-3">
-        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...value, { year: '', hours: '' }])}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...value, { year: '', hours: '', trophies: '' }])}
+        >
           <Plus className="mr-1 size-4" />
           Add a year
         </Button>

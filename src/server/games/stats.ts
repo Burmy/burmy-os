@@ -189,6 +189,10 @@ export function buildYearlyBreakdown(
   for (const attribution of attributions) {
     const target = bucket(attribution.year);
     target.hoursTenths += attribution.hoursTenths;
+    // Trophies ride the same attribution: a split row that says "13 that
+    // year" credits 13 there; a game or split that says nothing leaves them
+    // all on the first-played year (`attributeHours`).
+    target.achievements += attribution.achievementsUnlocked;
     target.playedGames.add(attribution.gameId);
   }
 
@@ -205,7 +209,6 @@ export function buildYearlyBreakdown(
     if (row.firstPlayedYear === null) continue;
     const target = bucket(row.firstPlayedYear);
     if (!collections.has(row.id)) target.startedCount += 1;
-    target.achievements += row.achievementsUnlocked ?? 0;
   }
 
   // A DLC's hours and trophies belong to the year the owner PLAYED it. It is

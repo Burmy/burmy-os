@@ -347,6 +347,7 @@ export function GamePanel({
                     <PlayYearsRows
                       key={game.id}
                       hoursTenths={game.hoursTenths}
+                      achievementsUnlocked={game.achievementsUnlocked}
                       firstPlayedYear={game.firstPlayedYear}
                       playYears={game.playYears}
                       onSaveFirstPlayed={(value) => saveField('firstPlayedYear', value)}

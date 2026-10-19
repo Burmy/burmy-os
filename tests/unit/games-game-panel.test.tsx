@@ -650,8 +650,8 @@ describe('GamePanel — years', () => {
 
     await waitFor(() => expect(updateGamePlayYearsAction).toHaveBeenCalledTimes(1));
     expect(updateGamePlayYearsAction.mock.calls[0]![1]).toEqual([
-      { year: '2022', hours: '124' },
-      { year: '2023', hours: '12' },
+      { year: '2022', hours: '124', trophies: '' },
+      { year: '2023', hours: '12', trophies: '' },
     ]);
     expect(screen.queryByText(/Years add up to/)).not.toBeInTheDocument();
   });
@@ -662,8 +662,8 @@ describe('GamePanel — years', () => {
         hoursTenths: 490,
         firstPlayedYear: 2024,
         playYears: [
-          { year: 2024, hoursTenths: 370 },
-          { year: 2025, hoursTenths: 120 },
+          { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+          { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
         ],
       }),
     );
@@ -677,7 +677,12 @@ describe('GamePanel — years', () => {
   });
 
   it('removing the only year clears the split', async () => {
-    await openPanel(game({ hoursTenths: 490, playYears: [{ year: 2024, hoursTenths: 490 }] }));
+    await openPanel(
+      game({
+        hoursTenths: 490,
+        playYears: [{ year: 2024, hoursTenths: 490, achievementsUnlocked: null }],
+      }),
+    );
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: 'Remove 2024' }));

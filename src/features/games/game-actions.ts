@@ -24,7 +24,7 @@ import {
 } from '@/server/db/games/games';
 import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
-import { findDuplicateYear, validateSplit } from '@/server/games/play-years';
+import { findDuplicateYear, validateSplit, validateTrophySplit } from '@/server/games/play-years';
 import { isRealPlayYearDraft, type PlayYearDraft } from '@/features/games/play-years-panel';
 import { GAME_OWNERSHIPS, GAME_PLATFORMS, GAME_STATUSES } from '@/server/games/taxonomy';
 import { type ActionResult, fail, ok } from './action-result';
@@ -90,9 +90,18 @@ const playYearsSchema = z
       // Zod's default ("Too small: expected string to have >=1 characters")
       // would reach the owner verbatim.
       hours: z.string().trim().min(1, 'Hours must be a number like 23 or 23.5'),
+      // Trophies earned THAT year. Blank is a real state — "this row says
+      // nothing about trophies" — and must stay `null`, never a fabricated 0.
+      trophies: z
+        .string()
+        .trim()
+        .transform((value) => (value === '' ? null : Number(value)))
+        .pipe(z.number().int().min(0).max(10000).nullable()),
     }),
   )
   .max(30);
+
+type PlayYearInput = { year: number; hoursTenths: number; achievementsUnlocked: number | null };
 
 function toResult(error: unknown): ActionResult {
   if (error instanceof DuplicateGameError) {
@@ -148,7 +157,7 @@ function text(formData: FormData, key: string): string | undefined {
  */
 interface ParsedGame {
   readonly input: GameInput;
-  readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
+  readonly playYears: readonly PlayYearInput[];
 }
 
 function parse(formData: FormData, mode: 'create' | 'update'): ParsedGame {
@@ -245,7 +254,7 @@ function parse(formData: FormData, mode: 'create' | 'update'): ParsedGame {
   else if (clearing) input.priceCents = null;
 
   const rawPlayYears = text(formData, 'playYears');
-  let playYears: { year: number; hoursTenths: number }[] = [];
+  let playYears: PlayYearInput[] = [];
   if (rawPlayYears !== undefined) {
     const drafts = playYearsSchema.parse(JSON.parse(rawPlayYears));
     playYears = drafts.map((draft, index) => {
@@ -258,7 +267,7 @@ function parse(formData: FormData, mode: 'create' | 'update'): ParsedGame {
             message: `"${draft.hours}" is not a valid number of hours`,
           },
         ]);
-      return { year: draft.year, hoursTenths: tenths };
+      return { year: draft.year, hoursTenths: tenths, achievementsUnlocked: draft.trophies };
     });
   }
 
@@ -283,6 +292,9 @@ export async function createGameAction(formData: FormData): Promise<ActionResult
   const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
   if (!validation.ok) {
     return fail('The year-by-year split must add up to the total hours.');
+  }
+  if (!validateTrophySplit(parsed.input.achievementsUnlocked ?? null, parsed.playYears).ok) {
+    return fail('The trophies per year must add up to the trophies earned.');
   }
 
   let saved: Game;
@@ -363,6 +375,9 @@ export async function completeWishlistGameAction(
   const validation = validateSplit(parsed.input.hoursTenths ?? 0, parsed.playYears);
   if (!validation.ok) {
     return fail('The year-by-year split must add up to the total hours.');
+  }
+  if (!validateTrophySplit(parsed.input.achievementsUnlocked ?? null, parsed.playYears).ok) {
+    return fail('The trophies per year must add up to the trophies earned.');
   }
 
   try {
@@ -659,7 +674,7 @@ export async function updateGamePlayYearsAction(
     return toResult(error);
   }
 
-  let playYears: { year: number; hoursTenths: number }[];
+  let playYears: PlayYearInput[];
   try {
     const parsedDrafts = playYearsSchema.parse(drafts.filter(isRealPlayYearDraft));
     playYears = parsedDrafts.map((draft, index) => {
@@ -673,7 +688,7 @@ export async function updateGamePlayYearsAction(
           },
         ]);
       }
-      return { year: draft.year, hoursTenths: tenths };
+      return { year: draft.year, hoursTenths: tenths, achievementsUnlocked: draft.trophies };
     });
   } catch (error) {
     return toResult(error);
@@ -687,6 +702,9 @@ export async function updateGamePlayYearsAction(
   const validation = validateSplit(existing.hoursTenths ?? 0, playYears);
   if (!validation.ok) {
     return fail('The year-by-year split must add up to the total hours.');
+  }
+  if (!validateTrophySplit(existing.achievementsUnlocked, playYears).ok) {
+    return fail('The trophies per year must add up to the trophies earned.');
   }
 
   try {

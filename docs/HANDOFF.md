@@ -128,6 +128,10 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **`wanted` is excluded from stats in exactly one place**: `listGameStatRows`.
 - **A `wanted` game is never auto-flipped.** It stays on the wishlist, marked "Out now" once released,
   until the owner changes its status. (This reversed an earlier decision.)
+- **A year row can carry trophies.** `game_play_years.achievements_unlocked` (migration 0021,
+  additive). Rows that leave it blank change nothing; once any row has a figure, the rows must sum to
+  the game's earned count. Stats credits trophies per year from the split, hours alongside.
+- **Games pages are full width; the gallery auto-fills columns at ≥220px covers.**
 - **The library order is the owner's own, by drag.** `sort_order` `0` means unplaced (sheet keys
   apply); a drop pins every top-level row; new games land at the top; "Reset order" returns to the
   sheet. Drag only in My order with no filter. Sort is a read-only view. The gallery drag is the

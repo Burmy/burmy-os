@@ -62,14 +62,18 @@ export function GameGrid({
 
   return (
     <>
-      {/* Caps at 5 columns, down from 7, and holds at 4 until `2xl` (1536px).
-          Real usage found the denser grid "too compact" — cover art too small
-          to recognize a game without reading its title, which defeats the point
-          of a cover-first card (see `game-card.tsx`). The 5th column only
-          appears once there's genuinely room for it; on a typical ~1400px
-          window that means 4 noticeably larger covers rather than 5 cramped
-          ones. `gap-6` matches the app's shared 24px spacing step. */}
-      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+      {/* AS MANY COLUMNS AS FIT, COVERS NEVER UNDER 220px. The column count
+          used to be fixed per breakpoint (2/3/4/5), which did two wrong
+          things once the Games pages went full width (2026-10-19): a wide
+          monitor got five enormous covers, and opening the 520px side panel
+          shrank all five to thumbnails ("on panel open the grid is very
+          small"). `auto-fill` keeps a cover at the size it has on a ~1400px
+          window and varies the COUNT instead — nine across a 2560 monitor,
+          one fewer when the panel opens. Two columns on a phone, where a
+          220px minimum would mean one. The drag engine measures the grid at
+          lift, so the column count can be whatever it is. `gap-6` is the
+          app's shared 24px step. */}
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
         {groups.map((group, index) => (
           // The wrapper is what the drag moves: its transform is written
           // directly, with the transition below for the cards stepping aside

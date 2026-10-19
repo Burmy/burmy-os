@@ -30,6 +30,14 @@ import { groupDlcByGame, type GameDlcRow } from '@/server/games/dlc';
 import { listDlc, listDlcForGame } from './dlc';
 import { listPlayYears, listPlayYearsForGame } from './play-years';
 
+/** One year of a game's split, as `Game.playYears` carries it — see `src/server/games/play-years.ts`. */
+export interface PlayYearEntry {
+  readonly year: number;
+  readonly hoursTenths: number;
+  /** Trophies earned that year, or `null` when the row says nothing about trophies. */
+  readonly achievementsUnlocked: number | null;
+}
+
 export interface Game {
   readonly id: string;
   readonly title: string;
@@ -59,7 +67,7 @@ export interface Game {
   readonly collectionId: string | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
-  readonly playYears: readonly { readonly year: number; readonly hoursTenths: number }[];
+  readonly playYears: readonly PlayYearEntry[];
   /**
    * The game's DLC rows, year then name. ADDITIVE to the base figures above —
    * see `src/server/games/dlc.ts` for `gameTotals`. Always `[]` for a
@@ -97,7 +105,7 @@ export interface GameInput {
 
 function rowToGame(
   row: typeof gamesTable.$inferSelect,
-  playYears: readonly { readonly year: number; readonly hoursTenths: number }[],
+  playYears: readonly PlayYearEntry[],
   dlc: readonly GameDlcRow[] = [],
 ): Game {
   return {
@@ -171,12 +179,23 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
   // per game — see `listPlayYears`'s own doc comment ("the stats page's
   // single query"), which this reuses for the same reason.
   const splits = await listPlayYears(ownerId);
-  const byGame = new Map<string, { year: number; hoursTenths: number }[]>();
+  const byGame = new Map<string, PlayYearEntry[]>();
   for (const row of splits) {
     const existing = byGame.get(row.gameId);
     if (existing === undefined)
-      byGame.set(row.gameId, [{ year: row.year, hoursTenths: row.hoursTenths }]);
-    else existing.push({ year: row.year, hoursTenths: row.hoursTenths });
+      byGame.set(row.gameId, [
+        {
+          year: row.year,
+          hoursTenths: row.hoursTenths,
+          achievementsUnlocked: row.achievementsUnlocked,
+        },
+      ]);
+    else
+      existing.push({
+        year: row.year,
+        hoursTenths: row.hoursTenths,
+        achievementsUnlocked: row.achievementsUnlocked,
+      });
   }
 
   // Same single-query shape for DLC — one grouped read, not one per game.
@@ -209,10 +228,12 @@ export async function getGame(ownerId: string, id: string): Promise<Game> {
  * the redundant `gameId` rather than let it leak through as an unlisted
  * extra property on every single-game fetch.
  */
-function stripGameId(
-  rows: readonly { readonly year: number; readonly hoursTenths: number }[],
-): { readonly year: number; readonly hoursTenths: number }[] {
-  return rows.map((row) => ({ year: row.year, hoursTenths: row.hoursTenths }));
+function stripGameId(rows: readonly PlayYearEntry[]): PlayYearEntry[] {
+  return rows.map((row) => ({
+    year: row.year,
+    hoursTenths: row.hoursTenths,
+    achievementsUnlocked: row.achievementsUnlocked,
+  }));
 }
 
 export async function createGame(ownerId: string, input: GameInput): Promise<Game> {

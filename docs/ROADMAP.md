@@ -1381,6 +1381,15 @@ every glance. Decided through a product interview, then built on `feat/games-sim
 - **Upcoming** opens with "Your wishlist" and no longer auto-flips a released wanted game to backlog:
   released games show "Out now" until the owner moves them. The feed hides games already in the
   library. A hand-added wanted game can be given a release date in the panel.
+- **Trophies per year on the split (2026-10-19, migration `0021`, additive — apply to production
+  BEFORE the deploy).** `game_play_years.achievements_unlocked`: each year row may say how many
+  trophies were earned that year; once any row does, the rows must sum to the game's earned count;
+  with none, every trophy stays on the first-played year. The panel's year rows and the dialog's
+  split gained a trophies cell; `attributeHours` carries trophies beside hours and the yearly
+  breakdown reads them from the attribution. Also: the Games pages run full width
+  (`data-full-width` → the private layout drops its 1600px cap) and the gallery is an auto-fill grid
+  (covers never under 220px, column count varies, so the side panel removes a column instead of
+  shrinking every cover).
 - **Drag to reorder, Sort, Year and Rating filters (2026-10-19).** `games.sort_order` (long present,
   unused) is the owner's hand order, `0` = unplaced so the sheet keys still apply until the first
   drop; new games land at the top; "Reset order" behind a confirm. The gallery's drag is its own

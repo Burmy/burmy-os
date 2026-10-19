@@ -25,7 +25,9 @@ export default async function GamesTabsLayout({
 
   return (
     <GamePanelProvider>
-      <div className="space-y-6">
+      {/* `data-full-width`: the private layout drops its 1600px cap for the
+          Games pages — see its comment. A cover gallery wants the width. */}
+      <div className="space-y-6" data-full-width="">
         <SubNav links={links} />
         {children}
       </div>

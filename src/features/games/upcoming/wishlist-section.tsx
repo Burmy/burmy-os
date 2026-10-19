@@ -70,7 +70,7 @@ export function WishlistSection({
         </p>
       ) : (
         // Same column counts and gap as the feed and the library grid.
-        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+        <div className="grid grid-cols-2 gap-6 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]">
           {sorted.map((game) => (
             <WishlistCard
               key={game.id}

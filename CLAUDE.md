@@ -334,10 +334,13 @@ These are verified, not folklore. Do not "fix" them back.
   are separate facts. AniList needs no auth because the owner's profile is public — if a private one
   ever needs supporting, model a three-way failure string on the removed PSN client (git history),
   not a fourth `null`.
-- **`games.hours_tenths` is the authoritative total; `game_play_years` only says WHICH YEARS it
-  happened in.** The total is the one number the owner edits; the split is an attribution of it that
-  must sum to it. Do not "normalize" this by deriving the total from the rows — 157 of 160 games have no
-  rows at all. See `docs/GAMES.md`, "Play-year attribution."
+- **`games.hours_tenths` and `games.achievements_unlocked` are the authoritative totals;
+  `game_play_years` only says WHICH YEARS they happened in.** The totals are the numbers the owner
+  edits; the split is an attribution of them that must sum to them (hours always; trophies once any
+  row carries a figure, a blank counting 0 — `validateTrophySplit`). Do not "normalize" this by
+  deriving a total from the rows — most games have no rows at all. A split whose rows all leave
+  trophies blank leaves every trophy on `first_played_year`, exactly as before the column existed
+  (2026-10-19). See `docs/GAMES.md`, "Play-year attribution."
 - **Collections: anything that COUNTS games excludes collection rows; money includes everything;
   HOURS and TROPHIES roll up from the members.** A boxed set is one `games` row wrapping several
   titles via a nullable self-FK (`games.collection_id`), so counting it alongside its own three titles

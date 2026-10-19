@@ -274,6 +274,7 @@ One row per "I played N hours of this game in year Y" (migration `drizzle/0007_n
 | `game_id` | uuid, not null, FK → `games`, `ON DELETE CASCADE` | |
 | `year` | smallint, not null | |
 | `hours_tenths` | integer, not null | Same tenths-of-an-hour convention as `games.hours_tenths` |
+| `achievements_unlocked` | smallint, null | Trophies earned THAT year (migration `0021`, 2026-10-19). `NULL` = the row says nothing about trophies. |
 
 Unique on `(game_id, year)` — a game cannot have two rows claiming the same year.
 
@@ -313,13 +314,20 @@ to accept play years directly — for a gap that now requires an actual mid-requ
 hit at all. If `replacePlayYears` does throw, the game row has already been saved; the action
 catches it and reports a field error rather than crashing, which is defense-in-depth, not a rollback.
 
-### Base achievements are not split
+### Base achievements follow the split only when a row says so
 
-`buildYearlyBreakdown` attributes hours per year but leaves a game's own achievements on
-`first_played_year`, unconditionally. No source records which year a base-game trophy was earned in,
-so splitting them proportionally across a game's played years would fabricate data the owner never
-entered. A DLC's trophies are different: they are recorded ON the DLC row, which has a year, and
-land in that year — see "DLC" below.
+Until 2026-10-19 a game's own achievements stayed on `first_played_year` unconditionally, because
+no source recorded which year a trophy was earned in and splitting them proportionally would have
+fabricated data. The owner's sheet did record it — "33 + 13" meant 33 trophies in 2024 and 13 in
+2025 — so a year row now carries an optional `achievements_unlocked`. `attributeHours` hands every
+attribution an `achievementsUnlocked` beside its hours: with no rows, or rows that all leave it
+blank, the whole earned count sits on the first-played year (the row for that year, or the first
+row when none is), exactly as before; once ANY row carries a figure, each row's own figure counts, a
+blank counting 0. `validateTrophySplit` enforces that the figures then add up to the game's earned
+count, at edit time in the panel's year rows (the hint reads "Trophies add up to 40; earned is 46")
+and again in every action that writes a split. Still never proportional, never guessed: a year gets
+the trophies the owner typed for it or nothing. A DLC's trophies are recorded ON the DLC row, which
+has a year, and land in that year — see "DLC" below.
 
 ### Seeding the three known splits (superseded)
 

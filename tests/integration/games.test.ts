@@ -257,10 +257,12 @@ describe('listGames', () => {
     });
 
     await playYearsDb.replacePlayYears(owner, withSplit.id, [
-      { year: 2024, hoursTenths: 370 },
-      { year: 2025, hoursTenths: 120 },
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
-    await playYearsDb.replacePlayYears(owner, otherSplit.id, [{ year: 2023, hoursTenths: 300 }]);
+    await playYearsDb.replacePlayYears(owner, otherSplit.id, [
+      { year: 2023, hoursTenths: 300, achievementsUnlocked: null },
+    ]);
     // noSplit deliberately has no game_play_years rows at all.
 
     const listSpy = vi.spyOn(playYearsDb, 'listPlayYears');
@@ -273,10 +275,12 @@ describe('listGames', () => {
 
     const byId = new Map(result.map((g) => [g.id, g]));
     expect(byId.get(withSplit.id)?.playYears).toEqual([
-      { year: 2024, hoursTenths: 370 },
-      { year: 2025, hoursTenths: 120 },
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
-    expect(byId.get(otherSplit.id)?.playYears).toEqual([{ year: 2023, hoursTenths: 300 }]);
+    expect(byId.get(otherSplit.id)?.playYears).toEqual([
+      { year: 2023, hoursTenths: 300, achievementsUnlocked: null },
+    ]);
     expect(byId.get(noSplit.id)?.playYears).toEqual([]);
 
     listSpy.mockRestore();

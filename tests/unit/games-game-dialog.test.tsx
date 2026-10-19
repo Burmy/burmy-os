@@ -153,7 +153,7 @@ describe('GameDialog — complete mode keeps what the wanted row already had', (
           achievementsTotal: 20,
           platinum: true,
           notes: 'pre-ordered the deluxe edition',
-          playYears: [{ year: 2026, hoursTenths: 160 }],
+          playYears: [{ year: 2026, hoursTenths: 160, achievementsUnlocked: null }],
         })}
       />,
     );

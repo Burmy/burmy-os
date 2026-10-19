@@ -127,6 +127,7 @@ export function GameDialog({
     (completing?.playYears ?? []).map((row) => ({
       year: String(row.year),
       hours: toHoursInput(hours(row.hoursTenths)),
+      trophies: row.achievementsUnlocked === null ? '' : String(row.achievementsUnlocked),
     })),
   );
   const [showSplit, setShowSplit] = useState((completing?.playYears.length ?? 0) > 0);

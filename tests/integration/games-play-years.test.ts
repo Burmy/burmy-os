@@ -55,14 +55,14 @@ describe('play-year data access', () => {
     const gameId = await makeGame(owner, 'Hollow Knight');
 
     await playYears.replacePlayYears(owner, gameId, [
-      { year: 2024, hoursTenths: 370 },
-      { year: 2025, hoursTenths: 120 },
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
 
     const rows = await playYears.listPlayYearsForGame(owner, gameId);
     expect(rows).toEqual([
-      { gameId, year: 2024, hoursTenths: 370 },
-      { gameId, year: 2025, hoursTenths: 120 },
+      { gameId, year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { gameId, year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
   });
 
@@ -70,10 +70,12 @@ describe('play-year data access', () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight');
 
-    await playYears.replacePlayYears(owner, gameId, [{ year: 2024, hoursTenths: 490 }]);
     await playYears.replacePlayYears(owner, gameId, [
-      { year: 2024, hoursTenths: 370 },
-      { year: 2025, hoursTenths: 120 },
+      { year: 2024, hoursTenths: 490, achievementsUnlocked: null },
+    ]);
+    await playYears.replacePlayYears(owner, gameId, [
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
 
     expect(await playYears.listPlayYearsForGame(owner, gameId)).toHaveLength(2);
@@ -83,7 +85,9 @@ describe('play-year data access', () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight');
 
-    await playYears.replacePlayYears(owner, gameId, [{ year: 2024, hoursTenths: 490 }]);
+    await playYears.replacePlayYears(owner, gameId, [
+      { year: 2024, hoursTenths: 490, achievementsUnlocked: null },
+    ]);
     await playYears.replacePlayYears(owner, gameId, []);
 
     expect(await playYears.listPlayYearsForGame(owner, gameId)).toEqual([]);
@@ -95,11 +99,17 @@ describe('play-year data access', () => {
     const myGame = await makeGame(mine, 'Hollow Knight');
     const theirGame = await makeGame(theirs, 'Lies of P');
 
-    await playYears.replacePlayYears(mine, myGame, [{ year: 2024, hoursTenths: 370 }]);
-    await playYears.replacePlayYears(theirs, theirGame, [{ year: 2024, hoursTenths: 520 }]);
+    await playYears.replacePlayYears(mine, myGame, [
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+    ]);
+    await playYears.replacePlayYears(theirs, theirGame, [
+      { year: 2024, hoursTenths: 520, achievementsUnlocked: null },
+    ]);
 
     const all = await playYears.listPlayYears(mine);
-    expect(all).toEqual([{ gameId: myGame, year: 2024, hoursTenths: 370 }]);
+    expect(all).toEqual([
+      { gameId: myGame, year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+    ]);
   });
 
   it('refuses to write a split onto another owner game', async () => {
@@ -107,7 +117,9 @@ describe('play-year data access', () => {
     const theirs = await makeOwner('theirs@example.invalid');
     const theirGame = await makeGame(theirs, 'Lies of P');
 
-    await playYears.replacePlayYears(mine, theirGame, [{ year: 2024, hoursTenths: 370 }]);
+    await playYears.replacePlayYears(mine, theirGame, [
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+    ]);
 
     expect(await playYears.listPlayYearsForGame(theirs, theirGame)).toEqual([]);
 
@@ -118,7 +130,8 @@ describe('play-year data access', () => {
     // for this game_id directly, with no owner filter at all, to prove no
     // write happened under ANY owner.
     const { sql } = await harness();
-    const rows = await sql`select count(*)::int as count from game_play_years where game_id = ${theirGame}`;
+    const rows =
+      await sql`select count(*)::int as count from game_play_years where game_id = ${theirGame}`;
     expect(rows[0]?.count).toBe(0);
   });
 
@@ -126,7 +139,9 @@ describe('play-year data access', () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight');
 
-    await playYears.replacePlayYears(owner, gameId, [{ year: 2024, hoursTenths: 370 }]);
+    await playYears.replacePlayYears(owner, gameId, [
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+    ]);
 
     // Two rows sharing a year violate game_play_years_game_year_idx. The
     // implementation deletes the old split before inserting the new one; the
@@ -134,20 +149,22 @@ describe('play-year data access', () => {
     // leave the game with the old rows deleted and nothing inserted.
     await expect(
       playYears.replacePlayYears(owner, gameId, [
-        { year: 2025, hoursTenths: 100 },
-        { year: 2025, hoursTenths: 50 },
+        { year: 2025, hoursTenths: 100, achievementsUnlocked: null },
+        { year: 2025, hoursTenths: 50, achievementsUnlocked: null },
       ]),
     ).rejects.toThrow();
 
     expect(await playYears.listPlayYearsForGame(owner, gameId)).toEqual([
-      { gameId, year: 2024, hoursTenths: 370 },
+      { gameId, year: 2024, hoursTenths: 370, achievementsUnlocked: null },
     ]);
   });
 
   it('cascades away when its game is deleted', async () => {
     const owner = await makeOwner('owner@example.invalid');
     const gameId = await makeGame(owner, 'Hollow Knight');
-    await playYears.replacePlayYears(owner, gameId, [{ year: 2024, hoursTenths: 370 }]);
+    await playYears.replacePlayYears(owner, gameId, [
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+    ]);
 
     await games.deleteGame(owner, gameId);
 
@@ -159,11 +176,13 @@ describe('play-year data access', () => {
     const gameId = await makeGame(owner, 'Hollow Knight');
 
     await playYears.replacePlayYears(owner, gameId, [
-      { year: 2025, hoursTenths: 120 },
-      { year: 2023, hoursTenths: 10 },
-      { year: 2024, hoursTenths: 370 },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
+      { year: 2023, hoursTenths: 10, achievementsUnlocked: null },
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
     ]);
 
-    expect((await playYears.listPlayYearsForGame(owner, gameId)).map((r) => r.year)).toEqual([2023, 2024, 2025]);
+    expect((await playYears.listPlayYearsForGame(owner, gameId)).map((r) => r.year)).toEqual([
+      2023, 2024, 2025,
+    ]);
   });
 });

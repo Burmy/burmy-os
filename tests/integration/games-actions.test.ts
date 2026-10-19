@@ -90,8 +90,8 @@ describe('createGameAction — play-year split', () => {
       baseFormData({
         hours: '49',
         playYears: JSON.stringify([
-          { year: '2024', hours: '37' },
-          { year: '2025', hours: '12' },
+          { year: '2024', hours: '37', trophies: '' },
+          { year: '2025', hours: '12', trophies: '' },
         ]),
       }),
     );
@@ -100,14 +100,14 @@ describe('createGameAction — play-year split', () => {
 
     const [listed] = await games.listGames(ownerId);
     expect(listed?.playYears).toEqual([
-      { year: 2024, hoursTenths: 370 },
-      { year: 2025, hoursTenths: 120 },
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
 
     const fetched = await games.getGame(ownerId, listed!.id);
     expect(fetched.playYears).toEqual([
-      { year: 2024, hoursTenths: 370 },
-      { year: 2025, hoursTenths: 120 },
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: null },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: null },
     ]);
   });
 });
@@ -120,8 +120,8 @@ describe('game actions — play-year split validation', () => {
       baseFormData({
         hours: '49',
         playYears: JSON.stringify([
-          { year: '2024', hours: '30' },
-          { year: '2025', hours: '12' },
+          { year: '2024', hours: '30', trophies: '' },
+          { year: '2025', hours: '12', trophies: '' },
         ]),
       }),
     );
@@ -150,9 +150,9 @@ describe('game actions — play-year split validation', () => {
       baseFormData({
         hours: '49',
         playYears: JSON.stringify([
-          { year: '2024', hours: '20' },
-          { year: '2024', hours: '17' },
-          { year: '2025', hours: '12' },
+          { year: '2024', hours: '20', trophies: '' },
+          { year: '2024', hours: '17', trophies: '' },
+          { year: '2025', hours: '12', trophies: '' },
         ]),
       }),
     );
@@ -234,7 +234,7 @@ describe('completeWishlistGameAction', () => {
         ownership: 'digital',
         // The form has no status control in complete mode; a stray value must not win.
         status: 'wanted',
-        playYears: JSON.stringify([{ year: '2026', hours: '16' }]),
+        playYears: JSON.stringify([{ year: '2026', hours: '16', trophies: '' }]),
       }),
     );
 
@@ -248,7 +248,7 @@ describe('completeWishlistGameAction', () => {
       rating: 4,
       ownership: 'digital',
     });
-    expect(saved.playYears).toEqual([{ year: 2026, hoursTenths: 160 }]);
+    expect(saved.playYears).toEqual([{ year: 2026, hoursTenths: 160, achievementsUnlocked: null }]);
   });
 });
 
@@ -325,5 +325,45 @@ describe('updateGameFieldAction — rating on a collection', () => {
     expect((await games.getGame(ownerId, set.id)).rating).toBeNull();
     // The game inside it rates normally.
     expect((await actions.updateGameFieldAction(member.id, 'rating', '4')).ok).toBe(true);
+  });
+});
+
+describe('updateGamePlayYearsAction — trophies per year', () => {
+  it('stores each year’s trophies and refuses a split that does not add up to the earned count', async () => {
+    const ownerId = await provisionOwner();
+    const created = await games.createGame(ownerId, {
+      title: 'Hollow Knight',
+      platform: 'steam',
+      hoursTenths: 490,
+      firstPlayedYear: 2024,
+      achievementsUnlocked: 46,
+    });
+
+    const short = await actions.updateGamePlayYearsAction(created.id, [
+      { year: '2024', hours: '37', trophies: '33' },
+      { year: '2025', hours: '12', trophies: '' },
+    ]);
+    expect(short.ok).toBe(false);
+    if (!short.ok) expect(short.error).toMatch(/trophies/i);
+
+    const ok = await actions.updateGamePlayYearsAction(created.id, [
+      { year: '2024', hours: '37', trophies: '33' },
+      { year: '2025', hours: '12', trophies: '13' },
+    ]);
+    expect(ok.ok).toBe(true);
+    expect((await games.getGame(ownerId, created.id)).playYears).toEqual([
+      { year: 2024, hoursTenths: 370, achievementsUnlocked: 33 },
+      { year: 2025, hoursTenths: 120, achievementsUnlocked: 13 },
+    ]);
+
+    // Rows that say nothing about trophies are fine, and stay null.
+    const silent = await actions.updateGamePlayYearsAction(created.id, [
+      { year: '2024', hours: '37', trophies: '' },
+      { year: '2025', hours: '12', trophies: '' },
+    ]);
+    expect(silent.ok).toBe(true);
+    expect(
+      (await games.getGame(ownerId, created.id)).playYears.map((r) => r.achievementsUnlocked),
+    ).toEqual([null, null]);
   });
 });
