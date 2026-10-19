@@ -145,7 +145,8 @@ See `docs/ROADMAP.md`, "▶ RESUME HERE", for the order-sensitive sequence: Cont
 - **The sheet reconciliation has not run** (`scripts/diff-game-log.mjs`); collections are unlinked in
   production until the owner links them in the app.
 - Anime has never run against the live AniList API.
-- The Netlify function-region pin is unconfirmed.
+- The Netlify function-region pin failed the 2026-10-19 deploy ("Your plan does not support
+  configuring function regions") and was removed; functions run in `us-east-1`.
 
 ---
 

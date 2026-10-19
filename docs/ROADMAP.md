@@ -1446,7 +1446,8 @@ and the `anime*` tables present). The earlier note that `0016`–`0018` were nev
    the three `DLC` placeholders and fill their trophies/price in the panel.
 
 **Still outstanding, in priority order:** a backup of the live database has never been taken; Anime
-has never run against the live AniList API; the Netlify function-region pin is unconfirmed.
+has never run against the live AniList API. (The Netlify function-region pin is RESOLVED: it failed the
+2026-10-19 deploy on the Free plan and was removed — `docs/DEPLOYMENT.md`.)
 
 ---
 

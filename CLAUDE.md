@@ -354,6 +354,13 @@ These are verified, not folklore. Do not "fix" them back.
   hours never enter the split and are credited to the DLC's own year. The owner chose attribution for
   DLC first and reversed it — the reversal is final. Every Stats builder takes the DLC rows as an
   argument; a caller that forgets them silently under-counts, which is why the parameter is required.
+- **A Netlify `[functions] region` pin on the Free plan BUILDS fine and then FAILS THE DEPLOY** —
+  "Your plan does not support configuring function regions", `___netlify-server-handler` never
+  uploads, and production silently keeps serving the previous build. `netlify.toml` carried the pin
+  for seven weeks with a comment asserting an unsupported plan "falls back to the default region
+  rather than failing the build"; the first deploy after it was added (2026-10-19) proved otherwise.
+  Removed. Do not re-add it below a plan that lists function regions as a feature, and never write
+  "falls back" about a platform behaviour nobody has watched happen.
 - **A RUNTIME import from a `server/db/**` module into a client component drags `postgres` into the
   browser bundle and fails the build with `Can't resolve 'fs'`.** `import type` from the same module is
   fine — types are erased — which is why `transactions-table.tsx` has always imported `LedgerPage`,

@@ -10,7 +10,7 @@
 > outstanding it says so explicitly, in bold, rather than being left implied. Three such items: two in
 > "Backup strategy" — the restore-verification procedure has never been run against the live Supabase
 > project (only against local dev), and no backup cadence has been established — plus one smaller,
-> under "Netlify environment-variable policy": the function region pin has not been confirmed to have
+> under "Netlify environment-variable policy": the function region pin was removed on 2026-10-19 after it failed a deploy (Free plan) — see "`netlify.toml` does NOT pin the function region"; the old note said it had not been confirmed to have
 > taken effect.
 >
 > **Not a VPS, not Docker, not a Cloudflare Tunnel.** See "Why the VPS was dropped" for the reasoning.
@@ -284,10 +284,17 @@ Scoping all four to Functions/Runtime only, Production context only, means: a De
 deploy build succeeds with **zero** of these variables set, and none of the four ever appear in a build
 log.
 
-### `netlify.toml` pins the function region to `us-east-2`
+### `netlify.toml` does NOT pin the function region (it tried to, and the deploy failed)
 
-The Supabase project is in `us-east-2`; Netlify's default function region is `us-east-1`. Pinning them
-together removes a cross-region hop from every database round trip a page makes.
+The Supabase project is in `us-east-2`; Netlify's default function region is `us-east-1`. A
+`[functions] region = "us-east-2"` pin was added to remove that cross-region hop, with the note below
+saying an unsupported plan would fall back silently. **It does not.** On 2026-10-19 the first deploy
+after the pin was added BUILT successfully and then FAILED at the deploy stage — "The following
+serverless functions failed to deploy: `___netlify-server-handler` / Your plan does not support
+configuring function regions" — and production kept serving the previous build. The pin is gone; the
+functions run in `us-east-1`, one hop from the database, and the cost is accepted. Restore it only on
+a plan whose feature list includes function regions. The rest of this section is the original
+reasoning, kept because the trade-off is still the same.
 
 **Sized honestly, so nobody expects more from it than it can give.** A page's queries run through one
 `Promise.all` against a pool of 10 connections, so a render pays roughly one or two round trips, not
@@ -296,11 +303,11 @@ permanent, not because it is the fix. The database is not the bottleneck either 
 transactions, slowest read ~100ms and everything else under 20ms); what costs time is the serverless
 round trip itself, and a cold start most of all.
 
-**Two things to verify rather than assume.** Region pinning may be plan-gated — if this deployment's
-plan does not support it, Netlify falls back to the default region rather than failing the build, so
-read the deploy log for the region the functions actually ran in. And if the Supabase project ever
-moves, this value must move with it: a region pinned to the wrong place is worse than no pin, because
-it looks deliberate.
+**What was wrong above.** "Region pinning may be plan-gated … Netlify falls back to the default
+region rather than failing the build" was an assumption, written down as if verified. The deploy log
+is the only authority on what a plan supports, and it said no. If the pin ever comes back, the
+Supabase region must move with it: a region pinned to the wrong place is worse than no pin, because it
+looks deliberate.
 
 **Never set any of the four in `netlify.toml`.** `netlify.toml` is committed to git; the four variables
 above go in Netlify's dashboard (Site configuration → Environment variables) or the Netlify CLI/API,
