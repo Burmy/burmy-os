@@ -1031,6 +1031,53 @@ export const gamePlayYears = pgTable(
   ],
 );
 
+/**
+ * One expansion / DLC the owner played, on the game it extends.
+ *
+ * ADDITIVE, NOT ATTRIBUTED. `games.hours_tenths`, `price_cents` and the two
+ * achievement counts are the BASE GAME's own figures; a DLC row carries its
+ * own hours, price and trophies, and every total the app shows outside the
+ * panel is base + every DLC row, computed at read time (`src/server/games/
+ * dlc.ts`). This is deliberately the opposite of `game_play_years`, which
+ * apportions the base game's own total across years and must sum to it.
+ *
+ * `year` is the year the owner PLAYED the DLC, not its release year — it is
+ * what the year-by-year table credits the DLC's hours and trophies to.
+ *
+ * A title INSIDE a collection never carries DLC: its hours and price live on
+ * the collection row (see `collections.ts`), so its DLC goes there too. The
+ * DAL refuses an insert on a member and refuses filing a game that already
+ * has DLC into a collection.
+ *
+ * Units: `hours_tenths` and `price_cents` follow the same integer rules as
+ * the columns on `games` (see `hours.ts` and the `games` table).
+ */
+export const gameDlc = pgTable(
+  'game_dlc',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    ownerId: text('owner_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    gameId: uuid('game_id')
+      .notNull()
+      .references(() => games.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    year: smallint('year').notNull(),
+    hoursTenths: integer('hours_tenths'),
+    priceCents: integer('price_cents'),
+    achievementsUnlocked: smallint('achievements_unlocked'),
+    achievementsTotal: smallint('achievements_total'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Two DLCs of the same name on one game is a typo, not extra detail.
+    uniqueIndex('game_dlc_game_name_idx').on(t.gameId, sql`lower(${t.name})`),
+    index('game_dlc_owner_idx').on(t.ownerId),
+  ],
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Anime
 // ─────────────────────────────────────────────────────────────────────────────
