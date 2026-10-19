@@ -128,7 +128,9 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
 - **`wanted` is excluded from stats in exactly one place**: `listGameStatRows`.
 - **A `wanted` game is never auto-flipped.** It stays on the wishlist, marked "Out now" once released,
   until the owner changes its status. (This reversed an earlier decision.)
-- **Library order is last edited first.**
+- **Library order is the owner's sheet order** — PlayStation (PS5 + PS4 together), PSP, Steam/PC;
+  wanted first, then newest first-played year, year-less rows last, title as tie-break. It replaced
+  "last edited first" on 2026-10-19; an edit or a new row never jumps to the front.
 - Upcoming is fetched **live on every visit** — no cached table.
 - **Collections only, no series/franchise concept.** Anime has a series table; Games deliberately does
   not.

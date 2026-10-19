@@ -11,19 +11,7 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-import {
-  and,
-  asc,
-  desc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  ne,
-  notInArray,
-  or,
-  sql,
-} from 'drizzle-orm';
+import { and, asc, eq, inArray, isNotNull, isNull, ne, notInArray, or, sql } from 'drizzle-orm';
 
 import { getDb } from '@/server/db';
 import { gameDlc, games as gamesTable } from '@/server/db/schema';
@@ -159,15 +147,17 @@ export async function listGames(ownerId: string, options: ListGamesOptions = {})
     .from(gamesTable)
     .where(and(...filters))
     .orderBy(
-      // LAST EDITED FIRST. The library reads as "what I last touched":
-      // adding a game, changing its status, logging hours or fixing a typo
-      // all move it to the front. Every write path sets `updated_at` by hand
-      // (there is no DB trigger — see `updateGame`), so the column is a
-      // reliable key for this. It replaced a `last_played_at` recency that
-      // only the syncs ever filled; the column went with them. Platform
-      // plays no part, deliberately — a console-shelf ordering was rejected
-      // in real use.
-      desc(gamesTable.updatedAt),
+      // THE SHEET'S ORDER. The owner's original "Game log" sheet read as three
+      // shelves — PlayStation (PS5 and PS4 together, never split), then PSP,
+      // then Steam/PC — and within a shelf, the game not yet played at the
+      // top, then newest first-played year first, with the retro rows that
+      // have no year at the bottom. Asked for by name on 2026-10-19, replacing
+      // "last edited first" (`updated_at desc`), which the owner did not want:
+      // an edit or a new row must NOT jump to the front. Title breaks ties —
+      // the sheet's own order inside a year was by hand and is not recoverable.
+      sql`case ${gamesTable.platform} when 'ps5' then 0 when 'ps4' then 0 when 'psp' then 1 when 'steam' then 2 when 'pc' then 2 else 3 end`,
+      sql`case ${gamesTable.status} when 'wanted' then 0 else 1 end`,
+      sql`${gamesTable.firstPlayedYear} desc nulls last`,
       asc(gamesTable.title),
     );
 

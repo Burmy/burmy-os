@@ -409,7 +409,12 @@ unless its own chip is active.
 
 **The gallery pins and enlarges nothing.** It once sorted `playing` games first and gave them a
 larger card; neither the treatment nor the status exists any more. The gallery renders one uniform
-card per row, in the last-edited order `listGames` already sorted by.
+card per row, in the order `listGames` already sorted by — the owner's original sheet order (asked
+for by name on 2026-10-19, replacing "last edited first"): the PlayStation shelf first with PS5 and
+PS4 together, then PSP, then Steam/PC; inside a shelf a wanted game at the top, then newest
+first-played year first, the year-less retro rows at the bottom, title breaking ties. Editing a game
+or adding one does not move it. The sheet's own order inside a year was by hand and is not
+recoverable, hence the title tie-break.
 
 ---
 

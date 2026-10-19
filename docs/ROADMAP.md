@@ -1381,8 +1381,10 @@ every glance. Decided through a product interview, then built on `feat/games-sim
 - **Upcoming** opens with "Your wishlist" and no longer auto-flips a released wanted game to backlog:
   released games show "Out now" until the owner moves them. The feed hides games already in the
   library. A hand-added wanted game can be given a release date in the panel.
-- **Library order** is last edited first (`updated_at`), since `last_played_at` was only ever filled by
-  the syncs.
+- **Library order** is the sheet's (changed 2026-10-19, from "last edited first"): the PlayStation
+  shelf (PS5 + PS4 together), then PSP, then Steam/PC; within a shelf wanted first, then newest
+  first-played year first, year-less rows last, title as the tie-break. Editing or adding a game does
+  not move it.
 - **`scripts/diff-game-log.mjs`** compares the original sheet export with production and emits the
   inserts for whatever the app is missing — pure, with platforms assigned by the owner per row.
 

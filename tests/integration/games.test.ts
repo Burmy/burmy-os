@@ -168,33 +168,62 @@ describe('deleteGame', () => {
 
 describe('listGames', () => {
   /**
-   * The library reads as "what I last touched": `listGames` orders by
-   * `updated_at desc`, which every write path sets by hand (there is no DB
-   * trigger — see `updateGame`). Creation stamps it too, so a fresh library
-   * reads newest-added first until something is edited. Platform plays no
-   * part at all — a console-shelf ordering was rejected in real use, and if
-   * it ever comes back this ordering breaks.
+   * The library reads in the owner's original sheet order (2026-10-19): the
+   * PlayStation shelf (PS5 and PS4 together), then PSP, then Steam/PC; inside
+   * a shelf a wanted game first, then newest first-played year first, the
+   * year-less retro rows last, title breaking ties. Editing or adding a row
+   * must NOT move it — that is the "last edited first" rule this replaced,
+   * and the second half of the test pins the replacement.
    */
-  it('orders by last edited, newest first, regardless of platform', async () => {
+  it('orders as the sheet did: PlayStation, PSP, Steam; wanted first, then newest year, no-year last', async () => {
     const owner = await makeOwner('owner@burmy.test');
-    const first = await games.createGame(owner, { title: 'Alpha', platform: 'ps5' });
-    const second = await games.createGame(owner, { title: 'Bravo', platform: 'steam' });
-    const third = await games.createGame(owner, { title: 'Charlie', platform: 'psp' });
+    const retroPsp = await games.createGame(owner, { title: 'Daxter', platform: 'psp' });
+    const steamOld = await games.createGame(owner, {
+      title: 'Half-Life',
+      platform: 'steam',
+      firstPlayedYear: 2016,
+    });
+    const ps4Mid = await games.createGame(owner, {
+      title: 'Bloodborne',
+      platform: 'ps4',
+      firstPlayedYear: 2022,
+    });
+    const ps5New = await games.createGame(owner, {
+      title: 'Prey',
+      platform: 'ps5',
+      firstPlayedYear: 2026,
+    });
+    const ps5Wanted = await games.createGame(owner, {
+      title: 'Crimson Desert',
+      platform: 'ps5',
+      status: 'wanted',
+    });
+    const ps5NoYear = await games.createGame(owner, { title: 'Zzz Untracked', platform: 'ps5' });
+    const ps4SameYear = await games.createGame(owner, {
+      title: 'Astro Bot',
+      platform: 'ps4',
+      firstPlayedYear: 2026,
+    });
 
-    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([
-      third.id,
-      second.id,
-      first.id,
-    ]);
+    const expected = [
+      ps5Wanted.id, // PlayStation shelf: wanted first
+      ps4SameYear.id, // 2026, 'Astro Bot' < 'Prey' — PS4 and PS5 interleave by year
+      ps5New.id,
+      ps4Mid.id, // 2022
+      ps5NoYear.id, // no year: bottom of its shelf
+      retroPsp.id, // PSP shelf
+      steamOld.id, // Steam shelf
+    ];
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual(expected);
 
-    // Editing the oldest row moves it to the front.
-    await games.updateGame(owner, first.id, { title: 'Alpha', platform: 'ps5', rating: 5 });
-
-    expect((await games.listGames(owner)).map((g) => g.id)).toEqual([
-      first.id,
-      third.id,
-      second.id,
-    ]);
+    // An edit does not move a row — the order is the sheet's, not recency.
+    await games.updateGame(owner, steamOld.id, {
+      title: 'Half-Life',
+      platform: 'steam',
+      firstPlayedYear: 2016,
+      rating: 5,
+    });
+    expect((await games.listGames(owner)).map((g) => g.id)).toEqual(expected);
   });
 
   /**
