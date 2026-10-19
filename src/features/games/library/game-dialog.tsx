@@ -84,7 +84,7 @@ export function GameDialog({
   readonly onOpenChange: (open: boolean) => void;
 }): React.ReactElement {
   const [platform, setPlatform] = useState<(typeof PLATFORM_PICKER_OPTIONS)[number]>('ps5');
-  const [status, setStatus] = useState<(typeof GAME_STATUSES)[number]>('backlog');
+  const [status, setStatus] = useState<(typeof GAME_STATUSES)[number]>('played');
   const [ownership, setOwnership] = useState('');
   const [coverUrl, setCoverUrl] = useState('');
   const [genre, setGenre] = useState('');

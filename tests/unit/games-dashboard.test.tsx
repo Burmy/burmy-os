@@ -33,7 +33,7 @@ const rows: readonly GameStatRow[] = [
   game({
     id: 'b',
     title: 'Hades',
-    status: 'backlog',
+    status: 'played',
     platform: 'steam',
     ownership: 'digital',
     genre: 'Roguelike, Action',
@@ -48,7 +48,7 @@ const rows: readonly GameStatRow[] = [
   game({
     id: 'c',
     title: 'Celeste',
-    status: 'playing',
+    status: 'played',
     hoursTenths: 200,
     rating: 4,
     metacritic: 90,
@@ -90,13 +90,13 @@ describe('GamesDashboard', () => {
     }
   });
 
-  it('shows exactly one bare stat-card row of 6: Games, Hours played, Platinums, Backlog, Total spend, Cost per hour', () => {
+  it('shows exactly one bare stat-card row of 6: Games, Hours played, Platinums, Trophies earned, Total spend, Cost per hour', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
     for (const label of [
       'Games',
       'Hours played',
       'Platinums',
-      'Backlog',
+      'Trophies earned',
       'Total spend',
       'Cost per hour',
     ]) {
@@ -108,6 +108,8 @@ describe('GamesDashboard', () => {
     expect(screen.queryByText('Average playtime')).not.toBeInTheDocument();
     expect(screen.queryByText('Average price')).not.toBeInTheDocument();
     expect(screen.queryByText('Backlog value')).not.toBeInTheDocument();
+    // There is no backlog status any more — no card, no count, no hint.
+    expect(screen.queryByText('Backlog')).not.toBeInTheDocument();
   });
 
   it('folds average rating and average Metacritic into the Games card hint', () => {
@@ -123,9 +125,9 @@ describe('GamesDashboard', () => {
     expect(screen.getByText(/78h avg per game/)).toBeInTheDocument();
   });
 
-  it('folds backlog value into the Cost per hour card hint', () => {
+  it('mentions no backlog money under Cost per hour', () => {
     render(<GamesDashboard rows={rows} playYears={[]} currentYear={2026} />);
-    expect(screen.getByText(/sitting in backlog/)).toBeInTheDocument();
+    expect(screen.queryByText(/sitting in backlog/)).not.toBeInTheDocument();
   });
 
   it('does not render a "vs. prev" column in the Year by year table', () => {

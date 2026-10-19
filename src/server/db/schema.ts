@@ -862,7 +862,7 @@ export const games = pgTable(
     ownership: gameOwnershipEnum('ownership'),
     /** Signed cents, same convention as finance. Independent of finance_transactions by design. */
     priceCents: bigint('price_cents', { mode: 'number' }),
-    status: gameStatusEnum('status').notNull().default('backlog'),
+    status: gameStatusEnum('status').notNull().default('played'),
     /** 1-5. Nullable: an unplayed backlog entry has no opinion yet. */
     rating: smallint('rating'),
     /** Tenths of an hour, stored as an integer so no float ever touches a total. 235 = 23.5h. */

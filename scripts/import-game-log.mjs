@@ -328,7 +328,12 @@ export function parseStarRating(raw) {
  * nulled for storage should not count as evidence either.
  */
 export function deriveStatus(hoursTenths, ratingValue) {
-  return hoursTenths !== null || ratingValue !== null ? 'played' : 'backlog';
+  // There is no `backlog` status any more (2026-10-18): an owned game is
+  // `played` whether or not hours or a rating are on record. Kept as a
+  // function so the parser tests still name the rule.
+  void hoursTenths;
+  void ratingValue;
+  return 'played';
 }
 
 /**

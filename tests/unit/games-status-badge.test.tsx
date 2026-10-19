@@ -6,7 +6,7 @@ import { GAME_STATUSES, STATUS_LABELS } from '@/server/games/taxonomy';
 import type { GameStatus } from '@/server/games/taxonomy';
 
 const VISIBLE_STATUSES = GAME_STATUSES.filter(
-  (status): status is Exclude<GameStatus, 'played' | 'playing'> => status !== 'played' && status !== 'playing',
+  (status): status is Exclude<GameStatus, 'played'> => status !== 'played',
 );
 
 describe('StatusBadge', () => {
@@ -26,28 +26,19 @@ describe('StatusBadge', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  /**
-   * `playing` lost its distinct badge (and hero-card sizing, and sort-pin —
-   * see `library-view.tsx`) — it now renders identically to `played`: no
-   * badge in either variant.
-   */
-  it('renders nothing for a playing game, default variant', () => {
-    const { container } = render(<StatusBadge status="playing" />);
-    expect(container).toBeEmptyDOMElement();
-  });
+  it.each(VISIBLE_STATUSES)(
+    'renders a real badge with the right label for %s, default variant',
+    (status) => {
+      render(<StatusBadge status={status} />);
+      expect(screen.getByText(STATUS_LABELS[status])).toBeInTheDocument();
+    },
+  );
 
-  it('renders nothing for a playing game, onImage variant', () => {
-    const { container } = render(<StatusBadge status="playing" variant="onImage" />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it.each(VISIBLE_STATUSES)('renders a real badge with the right label for %s, default variant', (status) => {
-    render(<StatusBadge status={status} />);
-    expect(screen.getByText(STATUS_LABELS[status])).toBeInTheDocument();
-  });
-
-  it.each(VISIBLE_STATUSES)('renders a real badge with the right label for %s, onImage variant', (status) => {
-    render(<StatusBadge status={status} variant="onImage" />);
-    expect(screen.getByText(STATUS_LABELS[status])).toBeInTheDocument();
-  });
+  it.each(VISIBLE_STATUSES)(
+    'renders a real badge with the right label for %s, onImage variant',
+    (status) => {
+      render(<StatusBadge status={status} variant="onImage" />);
+      expect(screen.getByText(STATUS_LABELS[status])).toBeInTheDocument();
+    },
+  );
 });

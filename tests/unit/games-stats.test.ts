@@ -153,15 +153,15 @@ describe('buildLibrarySummary', () => {
   it('counts totals across the whole library regardless of year', () => {
     const summary = buildLibrarySummary([
       game({ id: 'a', status: 'played', hoursTenths: 500, rating: 5 }),
-      game({ id: 'b', status: 'backlog', hoursTenths: null, rating: null }),
-      game({ id: 'c', status: 'playing', hoursTenths: 100, rating: 3 }),
+      game({ id: 'b', status: 'played', hoursTenths: null, rating: null }),
+      game({ id: 'c', status: 'played', hoursTenths: 100, rating: 3 }),
     ]);
 
     expect(summary.totalGames).toBe(3);
     expect(summary.totalHoursTenths).toBe(600);
-    expect(summary.backlogCount).toBe(1);
-    expect(summary.playingCount).toBe(1);
-    expect(summary.playedCount).toBe(1);
+    expect(summary.playedCount).toBe(3);
+    expect(summary).not.toHaveProperty('backlogCount');
+    expect(summary).not.toHaveProperty('playingCount');
   });
 
   it('averages rating over rated games only, ignoring unrated ones', () => {
@@ -183,7 +183,7 @@ describe('buildLibrarySummary', () => {
   // it pinned to 100% whenever nothing was marked dropped, regardless of
   // backlog size. `LibrarySummary` no longer carries the field at all.
   it('does not carry a completion rate field any more', () => {
-    const summary = buildLibrarySummary([game({ status: 'played' }), game({ status: 'backlog' })]);
+    const summary = buildLibrarySummary([game({ status: 'played' }), game({ status: 'wanted' })]);
     expect(summary).not.toHaveProperty('completionRatePercent');
   });
 
@@ -279,21 +279,11 @@ describe('buildFinancialSummary', () => {
     expect(financial.costPerHourCents).toBeNull();
   });
 
-  it('reports backlog count and the money sitting unplayed in it, separately from the rest of the library', () => {
-    const financial = buildFinancialSummary([
-      game({ id: 'a', status: 'backlog', priceCents: 3000 }),
-      game({ id: 'b', status: 'backlog', priceCents: 2000 }),
-      game({ id: 'c', status: 'played', priceCents: 9999 }),
-    ]);
-    expect(financial.backlogCount).toBe(2);
-    expect(financial.backlogValueCents).toBe(5000);
-  });
-
   it('has zero totals, not null or NaN, for an empty library', () => {
     const financial = buildFinancialSummary([]);
     expect(financial.totalSpendCents).toBe(0);
-    expect(financial.backlogCount).toBe(0);
-    expect(financial.backlogValueCents).toBe(0);
+    expect(financial).not.toHaveProperty('backlogCount');
+    expect(financial).not.toHaveProperty('backlogValueCents');
     expect(financial.averagePriceCents).toBeNull();
     expect(financial.costPerHourCents).toBeNull();
   });
@@ -761,31 +751,6 @@ describe('collections', () => {
     // null hours, so they contribute nothing and cannot double-count.
     expect(summary.totalHoursTenths).toBe(440 + 1360);
     expect(summary.platinumCount).toBe(1);
-  });
-
-  it('excludes the collection from status counts, so a backlog of titles is not inflated by its wrapper', () => {
-    const rows = [
-      collection({ status: 'backlog' }),
-      member('a', 'A', { status: 'backlog' }),
-      member('b', 'B', { status: 'backlog' }),
-    ];
-
-    // Two games are waiting, not three — the collection is not itself
-    // something you sit down and play.
-    expect(buildLibrarySummary(rows).backlogCount).toBe(2);
-  });
-
-  it('counts backlog TITLES but sums backlog MONEY from the collection that holds it', () => {
-    const rows = [
-      collection({ status: 'backlog' }),
-      member('a', 'A', { status: 'backlog' }),
-      member('b', 'B', { status: 'backlog' }),
-    ];
-    const financial = buildFinancialSummary(rows);
-
-    expect(financial.backlogCount).toBe(2);
-    // The price lives on the collection, and is real money sitting unplayed.
-    expect(financial.backlogValueCents).toBe(2290);
   });
 
   it('counts a collection once toward total spend, not once per title inside it', () => {

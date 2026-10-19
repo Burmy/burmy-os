@@ -15,26 +15,29 @@ export const GAME_OWNERSHIPS = ['physical', 'digital'] as const;
 export type GameOwnership = (typeof GAME_OWNERSHIPS)[number];
 
 /**
- * Three VISIBLE states — `backlog`, `playing`, `wanted` — plus `played`, an
- * invisible default for "this game has simply been played." Real usage
- * showed `completed` (now `played`) describing 171 of 180 games: a status
- * that describes 95% of the library carries no information, so `played`
- * renders no badge at all (`StatusBadge` returns `null` for it) rather than
- * standing out as a fourth thing to scan past on every card.
+ * TWO states. `wanted` — on the owner's radar, not in the library yet — is
+ * the one VISIBLE state; `played` is the invisible default for everything
+ * the owner owns. Real usage showed `completed` (now `played`) describing
+ * 171 of 180 games, and the two states that once sat between — `backlog`
+ * (owned, not started) and `playing` (in progress) — covered six games and
+ * one game respectively when the owner removed them on 2026-10-18: not
+ * buckets they ever filtered by. So `played` renders no badge at all
+ * (`StatusBadge` returns `null` for it) and a new game defaults to it.
  *
  * `played` is a deliberate non-null SENTINEL, not a nullable column — making
  * "no status" a `NULL` would turn every `WHERE status = …`, every count, and
  * the `wanted` exclusion in `listGameStatRows` into null-aware SQL, real bug
  * surface for what is otherwise a plain non-null comparison everywhere else.
  *
- * `paused_dropped` is deliberately NOT in this list even though the
- * Postgres `game_status` type still contains it (see `schema.ts`) — it had
- * zero rows when this was decided and dropping a Postgres enum VALUE isn't
- * supported, only adding/renaming one. Removing it here makes it
- * unreachable from the app; the dead label stays in the database type
- * because there is no cheap way to remove it and nothing needs to.
+ * `paused_dropped`, `backlog` and `playing` are deliberately NOT in this
+ * list even though the Postgres `game_status` type still contains them (see
+ * `schema.ts`) — dropping a Postgres enum VALUE isn't supported, only
+ * adding/renaming one. Removing them here makes them unreachable from the
+ * app; the dead labels stay in the database type because there is no cheap
+ * way to remove them and nothing needs to. Migration 0019 moved every row
+ * that held one of them to `played`.
  */
-export const GAME_STATUSES = ['backlog', 'playing', 'played', 'wanted'] as const;
+export const GAME_STATUSES = ['played', 'wanted'] as const;
 export type GameStatus = (typeof GAME_STATUSES)[number];
 
 export const PLATFORM_LABELS: Record<GamePlatform, string> = {
@@ -71,8 +74,6 @@ export const PLATFORM_PICKER_OPTIONS = GAME_PLATFORMS.filter((platform) => platf
  * badge itself never renders for it — see `GAME_STATUSES` above.
  */
 export const STATUS_LABELS: Record<GameStatus, string> = {
-  backlog: 'Backlog',
-  playing: 'Playing',
   played: 'Played',
   wanted: 'Wanted',
 };

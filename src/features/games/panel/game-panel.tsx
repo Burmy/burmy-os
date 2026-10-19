@@ -44,12 +44,7 @@ import { PlayYearsRow } from './play-years-row';
 import { RatingRow } from './rating-row';
 import { TitleField } from './title-field';
 
-const STATUS_OPTIONS = [
-  'backlog',
-  'wanted',
-  'playing',
-  'played',
-] as const satisfies readonly GameStatus[];
+const STATUS_OPTIONS = ['wanted', 'played'] as const satisfies readonly GameStatus[];
 
 /**
  * The game panel — everything about one game, in a 520px column beside the

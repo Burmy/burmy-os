@@ -164,7 +164,7 @@ describe('LibraryView', () => {
       <LibraryView
         games={[
           game({ id: 'a', title: 'Finished Game', status: 'played' }),
-          game({ id: 'b', title: 'Queued Game', status: 'backlog' }),
+          game({ id: 'b', title: 'Queued Game', status: 'played' }),
         ]}
       />,
     );
@@ -205,19 +205,12 @@ describe('LibraryView', () => {
   it('renders wanted as the only status chip, whatever the other counts are', () => {
     render(
       <LibraryView
-        games={[
-          game({ id: 'a', status: 'played' }),
-          game({ id: 'b', status: 'playing' }),
-          game({ id: 'c', status: 'backlog' }),
-          game({ id: 'd', status: 'wanted' }),
-        ]}
+        games={[game({ id: 'a', status: 'played' }), game({ id: 'd', status: 'wanted' })]}
       />,
     );
 
     expect(screen.getByRole('button', { name: /^wanted/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^backlog/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^played/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^playing/i })).not.toBeInTheDocument();
   });
 
   it('labels the steam platform chip "Steam / PC"', () => {
@@ -348,55 +341,5 @@ describe('LibraryView', () => {
 
       expect(screen.getByRole('button', { name: /^wanted/i })).toHaveTextContent('Wanted2');
     });
-  });
-
-  /**
-   * `playing` used to be pinned to the front of the grid/table and rendered
-   * as an oversized 2-column hero card in the gallery — that special
-   * treatment was deliberately removed (it read as more noise than signal
-   * once Backlog/Wanted became the only chip-filterable statuses). This is
-   * an explicit "stays this way" guard, not a regression to fix.
-   */
-  it('treats a playing game identically to backlog/played — no sort pin, no larger card', () => {
-    render(
-      <LibraryView
-        games={[
-          game({ id: 'a', title: 'Alpha', status: 'backlog' }),
-          game({ id: 'b', title: 'Bravo', status: 'playing' }),
-          game({ id: 'c', title: 'Charlie', status: 'backlog' }),
-        ]}
-      />,
-    );
-
-    // GameCard's `aria-label` still includes status text unconditionally
-    // (independent of whether a visual badge renders — see status-badge.tsx)
-    // — the em dash selects exactly the rendered cards, in DOM order, so
-    // this also proves there is no sort-to-front.
-    const cards = screen.getAllByRole('button', { name: /—/ });
-    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual([
-      'Alpha — Backlog',
-      'Bravo — Playing',
-      'Charlie — Backlog',
-    ]);
-
-    const playingCard = screen.getByRole('button', { name: 'Bravo — Playing' });
-    expect(playingCard.className).not.toMatch(/\bcol-span-2\b/);
-  });
-
-  it('does not pin a playing game first in the table view either', async () => {
-    render(
-      <LibraryView
-        games={[
-          game({ id: 'a', title: 'Alpha', status: 'backlog' }),
-          game({ id: 'b', title: 'Bravo', status: 'playing' }),
-        ]}
-      />,
-    );
-
-    await userEvent.click(screen.getByRole('button', { name: /^table$/i }));
-
-    const rows = screen.getAllByRole('row').slice(1); // drop the header row
-    expect(rows[0]).toHaveTextContent('Alpha');
-    expect(rows[1]).toHaveTextContent('Bravo');
   });
 });

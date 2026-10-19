@@ -155,7 +155,7 @@ function parse(formData: FormData, mode: 'create' | 'update'): ParsedGame {
     developer: text(formData, 'developer'),
     publisher: text(formData, 'publisher'),
     ownership: text(formData, 'ownership'),
-    status: text(formData, 'status') ?? 'backlog',
+    status: text(formData, 'status') ?? 'played',
     rating: text(formData, 'rating'),
     hours: text(formData, 'hours'),
     firstPlayedYear: text(formData, 'firstPlayedYear'),

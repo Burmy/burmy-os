@@ -128,14 +128,14 @@ describe('WishlistSection — actions', () => {
     );
   });
 
-  it('offers exactly Playing, Played and Backlog — never Wanted, which is where it already is', async () => {
+  it('offers exactly Played — never Wanted, which is where it already is', async () => {
     const user = userEvent.setup();
     render(<WishlistSection now={NOW} games={[wanted()]} />);
 
     await user.click(screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as' }));
 
     const items = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
-    expect(items).toEqual(['Playing', 'Played', 'Backlog']);
+    expect(items).toEqual(['Played']);
   });
 
   it('shows an error toast and re-enables the menu when the action rejects', async () => {
@@ -145,7 +145,7 @@ describe('WishlistSection — actions', () => {
     render(<WishlistSection now={NOW} games={[wanted()]} />);
 
     await user.click(screen.getByRole('button', { name: 'Mark Hollow Knight: Silksong as' }));
-    await user.click(await screen.findByRole('menuitem', { name: 'Backlog' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Played' }));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     await waitFor(() =>

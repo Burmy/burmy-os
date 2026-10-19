@@ -75,8 +75,6 @@ export interface YearlyBreakdown {
 export interface LibrarySummary {
   readonly totalGames: number;
   readonly totalHoursTenths: number;
-  readonly backlogCount: number;
-  readonly playingCount: number;
   readonly playedCount: number;
   /** Mean of rated games only, 1-5. Null when nothing is rated. */
   readonly averageRating: number | null;
@@ -107,9 +105,6 @@ export interface FinancialSummary {
   readonly averagePriceCents: number | null;
   /** `totalSpendCents` / total hours played (not tenths). Null when nothing has any hours logged — there is no rate to report, not a rate of zero. */
   readonly costPerHourCents: number | null;
-  readonly backlogCount: number;
-  /** Sum of `priceCents` across backlog-status games only — the money sitting unplayed. Missing prices contribute nothing. */
-  readonly backlogValueCents: number;
 }
 
 export interface DistributionSlice {
@@ -227,8 +222,6 @@ export function buildLibrarySummary(rows: readonly GameStatRow[]): LibrarySummar
   return {
     totalGames: games.length,
     totalHoursTenths: rows.reduce((total, row) => total + (row.hoursTenths ?? 0), 0),
-    backlogCount: games.filter((row) => row.status === 'backlog').length,
-    playingCount: games.filter((row) => row.status === 'playing').length,
     playedCount: games.filter((row) => row.status === 'played').length,
     averageRating:
       rated.length === 0
@@ -304,20 +297,10 @@ export function buildFinancialSummary(rows: readonly GameStatRow[]): FinancialSu
   // too small.
   const totalHours = rows.reduce((sum, row) => sum + (row.hoursTenths ?? 0), 0) / 10;
 
-  // Two different backlog questions, two different row sets — see
-  // `countableGames`. "How many games are waiting" counts titles (a
-  // collection is not itself something you play); "how much money is sitting
-  // in the backlog" sums prices, which only ever live on the collection.
-  const backlog = rows.filter((row) => row.status === 'backlog');
-  const backlogValueCents = backlog.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
-  const backlogCount = countableGames(rows).filter((row) => row.status === 'backlog').length;
-
   return {
     totalSpendCents,
     averagePriceCents: priced.length === 0 ? null : totalSpendCents / priced.length,
     costPerHourCents: totalHours === 0 ? null : totalSpendCents / totalHours,
-    backlogCount,
-    backlogValueCents,
   };
 }
 

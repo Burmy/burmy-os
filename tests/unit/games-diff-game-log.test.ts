@@ -165,7 +165,7 @@ describe('diffGameLog', () => {
       method: 'exact',
       platformMismatch: false,
     });
-    expect(twice.inAppOnly.map((row) => row.id)).toEqual(['u4-ps4']);
+    expect(twice.inAppOnly.map((row: { readonly id: string }) => row.id)).toEqual(['u4-ps4']);
   });
 });
 

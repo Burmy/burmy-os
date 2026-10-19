@@ -9,10 +9,10 @@ import {
 } from '@/server/games/taxonomy';
 
 describe('GAME_STATUSES', () => {
-  it('is exactly the three visible states plus the invisible played default', () => {
+  it('is exactly wanted plus the invisible played default', () => {
     // Order matters for the library's filter-chip row, so this is an exact
     // match, not a `toContain` per value.
-    expect(GAME_STATUSES).toEqual(['backlog', 'playing', 'played', 'wanted']);
+    expect(GAME_STATUSES).toEqual(['played', 'wanted']);
   });
 
   it('no longer offers the old completed/paused_dropped values — real usage showed one status describing 95% of the library', () => {

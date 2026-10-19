@@ -38,9 +38,21 @@ import {
 
 describe('splitCsvLine', () => {
   it('splits a plain row on commas', () => {
-    expect(splitCsvLine('Starfall Chronicles,Nova Interactive,Nova Interactive,Digital,39.99,24,2023,18,4')).toEqual(
-      ['Starfall Chronicles', 'Nova Interactive', 'Nova Interactive', 'Digital', '39.99', '24', '2023', '18', '4'],
-    );
+    expect(
+      splitCsvLine(
+        'Starfall Chronicles,Nova Interactive,Nova Interactive,Digital,39.99,24,2023,18,4',
+      ),
+    ).toEqual([
+      'Starfall Chronicles',
+      'Nova Interactive',
+      'Nova Interactive',
+      'Digital',
+      '39.99',
+      '24',
+      '2023',
+      '18',
+      '4',
+    ]);
   });
 
   it('keeps a comma inside a quoted title as part of one field', () => {
@@ -52,7 +64,9 @@ describe('splitCsvLine', () => {
   });
 
   it('unescapes a CSV-doubled quote inside a quoted title', () => {
-    const fields = splitCsvLine('"Echoes of ""Vale""",Halcyon Software,Halcyon Software,Digital,19.99,8,2021,5,3');
+    const fields = splitCsvLine(
+      '"Echoes of ""Vale""",Halcyon Software,Halcyon Software,Digital,19.99,8,2021,5,3',
+    );
     expect(fields[0]).toBe('Echoes of "Vale"');
   });
 
@@ -63,12 +77,12 @@ describe('splitCsvLine', () => {
   });
 
   it('passes non-ASCII titles through untouched', () => {
-    expect(splitCsvLine('Kōhaku no Kaze,Amber Sky,Amber Sky Studio,Digital,34.99,42,2020,20,4')[0]).toBe(
-      'Kōhaku no Kaze',
-    );
-    expect(splitCsvLine('Widow’s Vigil,Thornback,Thornback Games,Physical,24.99,15,2019,12,3')[0]).toBe(
-      'Widow’s Vigil',
-    );
+    expect(
+      splitCsvLine('Kōhaku no Kaze,Amber Sky,Amber Sky Studio,Digital,34.99,42,2020,20,4')[0],
+    ).toBe('Kōhaku no Kaze');
+    expect(
+      splitCsvLine('Widow’s Vigil,Thornback,Thornback Games,Physical,24.99,15,2019,12,3')[0],
+    ).toBe('Widow’s Vigil');
   });
 });
 
@@ -110,7 +124,12 @@ describe('findHeaderRowIndex', () => {
     // Regression: the real export's header starts with a leading empty
     // column before "Title" (`,Title,Publisher,...`), so the original
     // start-anchored regex never matched it at all.
-    const records = [',,,,', ',GAME LOG,,,', ',Title,Publisher,Hours,Rating', ',Some Game,Some Pub,10,4'];
+    const records = [
+      ',,,,',
+      ',GAME LOG,,,',
+      ',Title,Publisher,Hours,Rating',
+      ',Some Game,Some Pub,10,4',
+    ];
     expect(findHeaderRowIndex(records)).toBe(2);
   });
 
@@ -395,8 +414,8 @@ describe('deriveStatus', () => {
     expect(deriveStatus(null, 4)).toBe('played');
   });
 
-  it('reads as backlog only when neither hours nor a rating is on record', () => {
-    expect(deriveStatus(null, null)).toBe('backlog');
+  it('reads as played even when neither hours nor a rating is on record — there is no backlog status', () => {
+    expect(deriveStatus(null, null)).toBe('played');
   });
 });
 
@@ -443,7 +462,9 @@ describe('the synthetic fixture, parsed end to end', () => {
     const headerIndex = findHeaderRowIndex(records);
     expect(headerIndex).toBeGreaterThanOrEqual(0);
 
-    const columnIndex = buildColumnIndex(splitCsvLine(records[headerIndex])) as unknown as ColumnIndex;
+    const columnIndex = buildColumnIndex(
+      splitCsvLine(records[headerIndex]),
+    ) as unknown as ColumnIndex;
     const rows: string[][] = [];
     for (const record of records.slice(headerIndex + 1)) {
       const fields = realignRowFields(splitCsvLine(record));
@@ -509,9 +530,12 @@ describe('the synthetic fixture, parsed end to end', () => {
     // The end-to-end proof for the status fix: this row has null hours (like
     // every retro row) but DOES carry a rating, and must import as
     // 'played', not 'backlog' — the whole retro library hinges on this.
-    expect(deriveStatus(parseHoursTenths(row[columnIndex.Hours]), parseStarRating(row[columnIndex.Rating]))).toBe(
-      'played',
-    );
+    expect(
+      deriveStatus(
+        parseHoursTenths(row[columnIndex.Hours]),
+        parseStarRating(row[columnIndex.Rating]),
+      ),
+    ).toBe('played');
   });
 
   it('imports the collection sub-row with only a title and a year, price null', async () => {
@@ -557,7 +581,7 @@ describe('the synthetic fixture, parsed end to end', () => {
     expect(parseStarRating(row[columnIndex.Rating])).toBe(0);
   });
 
-  it('assigns platform by section position across the whole fixture, matching the owner\'s rule', async () => {
+  it("assigns platform by section position across the whole fixture, matching the owner's rule", async () => {
     const { rows, columnIndex } = await loadFixture();
     const assign = guessPlatform();
     const platforms = rows.map((fields) =>

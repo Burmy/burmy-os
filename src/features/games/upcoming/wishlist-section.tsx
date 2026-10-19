@@ -18,8 +18,8 @@ import type { Game } from '@/server/db/games/games';
 import { formatReleaseCountdown, isReleased, sortWishlist } from '@/server/games/release-date';
 import { type GameStatus, PLATFORM_LABELS, STATUS_LABELS } from '@/server/games/taxonomy';
 
-/** The three places a wishlist entry goes next. `wanted` itself is where it already is. */
-const QUICK_STATUSES = ['playing', 'played', 'backlog'] as const satisfies readonly GameStatus[];
+/** Where a wishlist entry goes next. `wanted` itself is where it already is. */
+const QUICK_STATUSES = ['played'] as const satisfies readonly GameStatus[];
 
 /**
  * Every `wanted` game the owner has, at the top of the Upcoming tab.

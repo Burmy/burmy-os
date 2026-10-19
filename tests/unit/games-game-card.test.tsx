@@ -140,9 +140,9 @@ describe('GameCard — cover-only content', () => {
   });
 
   it('carries the title and status in the accessible name, the only place they exist', () => {
-    render(<GameCard game={game({ title: 'Bloodborne', status: 'backlog' })} onOpen={vi.fn()} />);
+    render(<GameCard game={game({ title: 'Bloodborne', status: 'wanted' })} onOpen={vi.fn()} />);
 
-    expect(screen.getByRole('button', { name: 'Bloodborne — Backlog' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Bloodborne — Wanted' })).toBeInTheDocument();
   });
 
   /**

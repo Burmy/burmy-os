@@ -162,11 +162,6 @@ export function GamesDashboard({
           hint={trophyHint(trophies)}
         />
         <StatCard
-          label="Backlog"
-          value={String(summary.backlogCount)}
-          hint={`${summary.playingCount} in progress`}
-        />
-        <StatCard
           label="Total spend"
           value={formatPriceCents(financial.totalSpendCents)}
           {...(avgPriceHint === undefined ? {} : { hint: avgPriceHint })}
@@ -178,7 +173,6 @@ export function GamesDashboard({
               ? '—'
               : `${formatPriceCents(financial.costPerHourCents)}/hr`
           }
-          hint={`${formatPriceCents(financial.backlogValueCents)} sitting in backlog`}
         />
       </StatCardGrid>
 

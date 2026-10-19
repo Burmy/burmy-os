@@ -358,10 +358,10 @@ describe('GamePanel — inline editing', () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: 'Status' }));
-    await user.click(screen.getByRole('option', { name: 'Backlog' }));
+    await user.click(screen.getByRole('option', { name: 'Wanted' }));
 
     await waitFor(() =>
-      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'status', 'backlog'),
+      expect(updateGameFieldAction).toHaveBeenCalledWith('game-1', 'status', 'wanted'),
     );
   });
 

@@ -222,7 +222,7 @@ describe('reconcileWishlistReleaseDatesAction', () => {
     await games.updateGame(ownerId, game.id, {
       title: game.title,
       platform: 'ps5',
-      status: 'backlog',
+      status: 'played',
     });
 
     await actions.reconcileWishlistReleaseDatesAction([

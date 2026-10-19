@@ -52,7 +52,7 @@ describe('createGame', () => {
     const created = await games.createGame(owner, { title: 'Bloodborne', platform: 'ps4' });
 
     expect(created.title).toBe('Bloodborne');
-    expect(created.status).toBe('backlog');
+    expect(created.status).toBe('played');
     expect(created.hoursTenths).toBeNull();
     expect(created.rating).toBeNull();
   });
