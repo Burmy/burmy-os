@@ -761,3 +761,36 @@ describe('GamePanel — DLC', () => {
     await waitFor(() => expect(deleteGameDlcAction).toHaveBeenCalledWith('dlc-1'));
   });
 });
+
+describe("GamePanel — a collection's DLC trophies", () => {
+  it('adds the DLC on top of the member roll-up, not the stored wrapper figure', async () => {
+    // Members carry 30/40 + 10/20 = 40/60; the wrapper's own stored counts are
+    // stale (42/42 in the fixture) and must not be what the DLC adds to.
+    await openPanel(
+      game({
+        id: 'ndc',
+        title: NDC.title,
+        dlc: [{ ...DLC, gameId: 'ndc', achievementsUnlocked: 10, achievementsTotal: 12 }],
+      }),
+      {
+        members: [
+          member({ id: 'uc1', achievementsUnlocked: 30, achievementsTotal: 40 }),
+          member({
+            id: 'uc2',
+            title: 'Uncharted 2',
+            achievementsUnlocked: 10,
+            achievementsTotal: 20,
+          }),
+        ],
+      },
+    );
+
+    expect(
+      screen.getByText('Added up from the games in this collection · 50 with DLC'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Added up from the games in this collection · 72 with DLC'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('52 with DLC')).not.toBeInTheDocument();
+  });
+});

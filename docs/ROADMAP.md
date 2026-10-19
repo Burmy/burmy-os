@@ -1430,7 +1430,8 @@ and the `anime*` tables present). The earlier note that `0016`–`0018` were nev
    'Control Resonant' AND status = 'backlog'` (owner decision, title-keyed, by hand).
 2. Apply `0019_worried_micromacro` (ADDITIVE: `game_dlc`, `played` default, backlog/playing →
    played) — raw SQL plus the journal row, `docs/DEPLOYMENT.md`, "Applying a migration through the
-   Supabase MCP". Safe while the OLD code is live.
+   Supabase MCP". Safe while the OLD code is live. **Never `migrate.mjs` against production until
+   step 5** — it would apply `0020` in the same run and drop tables the live code reads.
 3. Apply the split-to-DLC conversion SQL from `scripts/convert-split-to-dlc.mjs` (Clair Obscur 2026,
    Lies of P 2025, Hollow Knight 2025); verify the three games' hours and DLC rows.
 4. Merge `feat/games-simplify` → `main` with CI green; Netlify deploys; smoke-test Library, Upcoming

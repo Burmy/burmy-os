@@ -452,6 +452,12 @@ pre-drop schema, so no interactive "is this a rename?" prompt), then hand-edited
 development database that had applied the earlier drop-only `0019` under its old tag. Production
 sequence: `0019` → deploy → `0020`.
 
+**Do NOT run `node scripts/migrate.mjs` (or `pnpm db:migrate`) against production during that
+window.** The migrator applies EVERY pending journal entry in one go, so with `0019` applied and the
+new code not yet deployed it would apply `0020` too and drop tables the live code still reads. The
+raw-SQL-plus-journal-row recipe above is the only way to apply `0019` on its own; once the deploy is
+live, either route applies `0020`.
+
 ### Running any OTHER script against production
 
 `migrate.mjs` and `provision-owner.mjs` are the two scripts that are *supposed* to run against

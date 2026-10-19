@@ -118,3 +118,42 @@ describe('GameDialog — complete mode', () => {
     expect(createGameAction).not.toHaveBeenCalled();
   });
 });
+
+describe('GameDialog — complete mode keeps what the wanted row already had', () => {
+  it('pre-fills every figure the owner may have entered on the wishlist, still editable', () => {
+    render(
+      <GameDialog
+        open
+        onOpenChange={vi.fn()}
+        mode="complete"
+        game={wanted({
+          hoursTenths: 160,
+          priceCents: 6999,
+          rating: 4,
+          firstPlayedYear: 2026,
+          achievementsUnlocked: 10,
+          achievementsTotal: 20,
+          platinum: true,
+          notes: 'pre-ordered the deluxe edition',
+          playYears: [{ year: 2026, hoursTenths: 160 }],
+        })}
+      />,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText('Hours played')).toHaveValue('16');
+    expect(within(dialog).getByLabelText('Price paid')).toHaveValue('69.99');
+    expect(within(dialog).getByLabelText('Rating (1-5)')).toHaveValue('4');
+    expect(within(dialog).getByLabelText('First played (year)')).toHaveValue('2026');
+    expect(within(dialog).getByLabelText('Achievements earned')).toHaveValue('10');
+    expect(within(dialog).getByLabelText('Achievements total')).toHaveValue('20');
+    expect(within(dialog).getByRole('checkbox', { name: 'Platinum trophy earned' })).toBeChecked();
+    expect(within(dialog).getByRole('textbox', { name: 'Notes' })).toHaveValue(
+      'pre-ordered the deluxe edition',
+    );
+    // The split is shown, not hidden behind "Split across years".
+    expect(
+      within(dialog).queryByRole('button', { name: 'Split across years' }),
+    ).not.toBeInTheDocument();
+  });
+});

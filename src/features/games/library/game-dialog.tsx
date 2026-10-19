@@ -24,7 +24,7 @@ import {
   type PlayYearDraft,
   PlayYearsPanel,
 } from '@/features/games/play-years-panel';
-import { fromHoursInput } from '@/server/games/hours';
+import { fromHoursInput, hours, toHoursInput } from '@/server/games/hours';
 import {
   GAME_OWNERSHIPS,
   GAME_STATUSES,
@@ -59,7 +59,10 @@ type SearchStatus = 'idle' | 'loading' | 'results' | 'empty';
  *     row with no id yet; the owner usually fills only a handful of fields.
  *   - `mode: 'complete'` — "Mark as played" on a wishlist card. The row
  *     already exists as `wanted`, so title, platform, cover and the IGDB
- *     metadata are pre-filled from it, the status control is hidden (it is
+ *     metadata are pre-filled from it — and so is EVERY figure the row already
+ *     carries (a pre-order price, a note, hours logged before it was marked), all
+ *     still editable, because the action parses in `'update'` mode where an
+ *     absent field means "cleared". The status control is hidden (it is
  *     `played`, that is the whole point), and submit goes to
  *     `completeWishlistGameAction` so the SAME row moves into the library —
  *     never a duplicate. The dialog is keyed on the game by its caller, so
@@ -124,9 +127,21 @@ export function GameDialog({
   );
   const [esrbRating, setEsrbRating] = useState<string | null>(completing?.esrbRating ?? null);
   const [title, setTitle] = useState(completing?.title ?? '');
-  const [hoursFieldValue, setHoursFieldValue] = useState('');
-  const [playYears, setPlayYears] = useState<readonly PlayYearDraft[]>([]);
-  const [showSplit, setShowSplit] = useState(false);
+  const [hoursFieldValue, setHoursFieldValue] = useState(
+    completing?.hoursTenths == null ? '' : toHoursInput(hours(completing.hoursTenths)),
+  );
+  const [playYears, setPlayYears] = useState<readonly PlayYearDraft[]>(() =>
+    (completing?.playYears ?? []).map((row) => ({
+      year: String(row.year),
+      hours: toHoursInput(hours(row.hoursTenths)),
+    })),
+  );
+  const [showSplit, setShowSplit] = useState((completing?.playYears.length ?? 0) > 0);
+  // Uncontrolled fields take the row's figure as their initial value in
+  // complete mode; `defaultValue` is spread in conditionally so an absent
+  // figure stays an absent prop (`exactOptionalPropertyTypes`).
+  const initial = (value: string | number | null | undefined) =>
+    value == null ? {} : { defaultValue: value };
   const [suggestions, setSuggestions] = useState<readonly GameSuggestion[]>([]);
   const [searchStatus, setSearchStatus] = useState<SearchStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -337,11 +352,11 @@ export function GameDialog({
              * fields go through an explicit `formData.set(...)`, everything
              * else relies on native form collection). `game-actions.ts`'s
              * `parse()` treats an ABSENT key on update as "explicitly
-             * cleared" — this dialog only ever creates, so that specific
-             * risk doesn't apply here the way it does on the edit page, but
-             * `forceMount` stays for consistency and because unmounting
-             * would also lose whatever the owner already typed into a tab
-             * they've since switched away from.
+             * cleared" — and complete mode submits in exactly that mode, so
+             * `forceMount` is what keeps a pre-filled figure on an inactive
+             * tab from being blanked on submit. It also means unmounting
+             * would lose whatever the owner typed into a tab they've since
+             * switched away from.
              */}
             <Tabs defaultValue="progress">
               <TabsList>
@@ -375,7 +390,16 @@ export function GameDialog({
                       })),
                     ]}
                   />
-                  <Field id="priceDollars" label="Price paid" placeholder="59.99" />
+                  <Field
+                    id="priceDollars"
+                    label="Price paid"
+                    placeholder="59.99"
+                    {...initial(
+                      completing?.priceCents == null
+                        ? undefined
+                        : (completing.priceCents / 100).toFixed(2),
+                    )}
+                  />
                   {/* Genre/Developer/Publisher are almost always IGDB-filled and
                       rarely hand-edited — a compact click-to-edit control instead
                       of three permanently-open input boxes, matching the density
@@ -447,10 +471,30 @@ export function GameDialog({
                       </Button>
                     )}
                   </div>
-                  <Field id="rating" label="Rating (1-5)" placeholder="4" />
-                  <Field id="firstPlayedYear" label="First played (year)" placeholder="2026" />
-                  <Field id="achievementsUnlocked" label="Achievements earned" placeholder="42" />
-                  <Field id="achievementsTotal" label="Achievements total" placeholder="54" />
+                  <Field
+                    id="rating"
+                    label="Rating (1-5)"
+                    placeholder="4"
+                    {...initial(completing?.rating)}
+                  />
+                  <Field
+                    id="firstPlayedYear"
+                    label="First played (year)"
+                    placeholder="2026"
+                    {...initial(completing?.firstPlayedYear)}
+                  />
+                  <Field
+                    id="achievementsUnlocked"
+                    label="Achievements earned"
+                    placeholder="42"
+                    {...initial(completing?.achievementsUnlocked)}
+                  />
+                  <Field
+                    id="achievementsTotal"
+                    label="Achievements total"
+                    placeholder="54"
+                    {...initial(completing?.achievementsTotal)}
+                  />
                   {/*
                    * Radix's Checkbox renders a hidden native input mirroring its
                    * state (`name`/`value` bubble through to real FormData), so an
@@ -459,7 +503,12 @@ export function GameDialog({
                    * exactly that to tell "not earned" apart from "not touched."
                    */}
                   <div className="flex items-center gap-2">
-                    <Checkbox id="platinum" name="platinum" value="true" />
+                    <Checkbox
+                      id="platinum"
+                      name="platinum"
+                      value="true"
+                      defaultChecked={completing?.platinum ?? false}
+                    />
                     <Label htmlFor="platinum" className="cursor-pointer font-normal">
                       Platinum trophy earned
                     </Label>
@@ -475,6 +524,7 @@ export function GameDialog({
                     name="notes"
                     placeholder="e.g. 6 hrs of that was the DLC in 2026"
                     rows={6}
+                    {...initial(completing?.notes)}
                   />
                 </div>
               </TabsContent>

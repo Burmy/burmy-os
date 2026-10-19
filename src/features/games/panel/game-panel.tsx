@@ -192,10 +192,6 @@ export function GamePanel({
     totals?.hoursTenths == null ? undefined : `${formatHours(hours(totals.hoursTenths))} with DLC`;
   const priceHint =
     totals?.priceCents == null ? undefined : `$${(totals.priceCents / 100).toFixed(2)} with DLC`;
-  const earnedHint =
-    totals?.achievementsUnlocked == null ? undefined : `${totals.achievementsUnlocked} with DLC`;
-  const totalHint =
-    totals?.achievementsTotal == null ? undefined : `${totals.achievementsTotal} with DLC`;
 
   return (
     <DialogPrimitive.Root
@@ -332,12 +328,7 @@ export function GamePanel({
                       <SkeletonRow label="Achievements total" />
                     </>
                   ) : (
-                    <AchievementRows
-                      data={current}
-                      onSaveField={saveField}
-                      {...(earnedHint === undefined ? {} : { earnedHint })}
-                      {...(totalHint === undefined ? {} : { totalHint })}
-                    />
+                    <AchievementRows data={current} onSaveField={saveField} />
                   )}
                   <div className={cn(ROW_CLASS, 'items-center')}>
                     <span className="text-muted-foreground">Platinum</span>
@@ -581,14 +572,9 @@ function MetaLine({
 function AchievementRows({
   data,
   onSaveField,
-  earnedHint,
-  totalHint,
 }: {
   readonly data: GamePanelData;
   readonly onSaveField: (field: GameFieldKey, value: string) => Promise<ActionResult>;
-  /** "52 with DLC" — the base + DLC total, when the game has DLC. */
-  readonly earnedHint?: string;
-  readonly totalHint?: string;
 }): React.ReactElement {
   const rollup = data.members.length > 0 ? rollUpTrophies(data.game, data.members) : undefined;
   const summedFromMembers = rollup !== undefined && !rollup.unsplit && rollup.unlocked !== null;
@@ -596,6 +582,27 @@ function AchievementRows({
   const memberSumHint = 'Added up from the games in this collection';
   const unlocked = summedFromMembers ? rollup.unlocked : data.game.achievementsUnlocked;
   const total = summedFromMembers ? rollup.total : data.game.achievementsTotal;
+
+  // "52 with DLC" — the DLC adds on top of whatever figure the row SHOWS: the
+  // member roll-up for a collection, the game's own counts otherwise. Computed
+  // here, beside that decision, so the two can never disagree (an earlier
+  // version added the DLC to the collection's stale stored figure instead).
+  const withDlc =
+    data.game.dlc.length === 0
+      ? null
+      : gameTotals(
+          {
+            hoursTenths: null,
+            priceCents: null,
+            achievementsUnlocked: unlocked,
+            achievementsTotal: total,
+          },
+          data.game.dlc,
+        );
+  const earnedHint =
+    withDlc?.achievementsUnlocked == null ? undefined : `${withDlc.achievementsUnlocked} with DLC`;
+  const totalHint =
+    withDlc?.achievementsTotal == null ? undefined : `${withDlc.achievementsTotal} with DLC`;
 
   return (
     <>
