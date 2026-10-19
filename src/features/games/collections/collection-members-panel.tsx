@@ -5,9 +5,11 @@ import { Loader2, Plus, X } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ROW_CLASS } from '@/components/ui/inline-edit-row';
 import { toast } from '@/components/ui/toast';
 import { StatusBadge } from '@/components/games/status-badge';
 import { RatingStars } from '@/components/games/rating-stars';
+import { cn } from '@/lib/utils';
 import type { CollectionMember } from '@/server/db/games/games';
 import { PLATFORM_LABELS } from '@/server/games/taxonomy';
 import {
@@ -110,9 +112,9 @@ export function CollectionMembersPanel({
                 // name a screen reader hears should be the title alone.
                 aria-label={member.title}
                 onClick={() => onOpenMember(member.id)}
-                className="hover:bg-muted/50 -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-2 text-left text-sm transition-colors"
+                className="hover:bg-muted/50 -mx-2 flex min-w-0 flex-1 items-center gap-3 rounded-md px-2 py-1 text-left text-sm transition-colors"
               >
-                <span className="bg-muted relative h-12 w-9 shrink-0 overflow-hidden rounded-md">
+                <span className="bg-muted relative h-7 w-5 shrink-0 overflow-hidden rounded-sm">
                   {member.coverUrl === null ? (
                     <span
                       className="text-muted-foreground/50 flex h-full items-center justify-center text-xs font-semibold"
@@ -165,15 +167,17 @@ export function CollectionMembersPanel({
         </ul>
       )}
 
-      <button
-        type="button"
-        aria-label="Add games to collection"
-        onClick={() => setPicking(true)}
-        className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 py-1 text-sm transition-colors"
-      >
-        <Plus className="size-3.5" aria-hidden />
-        Add games to collection
-      </button>
+      <div className={cn(ROW_CLASS, 'grid-cols-1')}>
+        <button
+          type="button"
+          aria-label="Add games to collection"
+          onClick={() => setPicking(true)}
+          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 transition-colors"
+        >
+          <Plus className="size-3.5" aria-hidden />
+          Add games to collection
+        </button>
+      </div>
 
       <GamePickerDialog
         open={picking}

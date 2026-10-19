@@ -81,7 +81,16 @@ export type InlineEditResult =
  * track and a flex item both default to an `auto` minimum, and both need the
  * override explicitly.
  */
-export const ROW_CLASS = 'grid grid-cols-[9rem_minmax(0,1fr)] items-start gap-3 py-1.5 text-sm';
+/**
+ * ONE height for every row — 36px — rather than padding around content of
+ * varying height. A value is 23px of text, a toggle is 24, an icon button is
+ * 24: padded, those made rows of 35, 40 and 47px in the same column, which
+ * the owner read (correctly) as inconsistent. A multiline value may grow
+ * past the minimum; nothing else does. (Table rows ignore `min-height`, so the
+ * parts table uses a fixed `h-9` per row instead.)
+ */
+export const ROW_HEIGHT_CLASS = 'min-h-9';
+export const ROW_CLASS = `grid grid-cols-[9rem_minmax(0,1fr)] items-center gap-3 ${ROW_HEIGHT_CLASS} text-sm`;
 
 async function commit(
   onSave: (value: string) => Promise<InlineEditResult>,
@@ -148,7 +157,7 @@ export function InlineEditField({
   const Field = multiline ? Textarea : Input;
 
   return (
-    <div className={hideLabel ? 'min-w-0 py-1.5 text-sm' : ROW_CLASS}>
+    <div className={hideLabel ? 'min-w-0 text-sm' : ROW_CLASS}>
       <span className={hideLabel ? 'sr-only' : 'text-muted-foreground'}>{label}</span>
       {disabled ? (
         <span>

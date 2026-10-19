@@ -342,10 +342,11 @@ adds to whatever row it is on.
 `null` only when both the base and the DLC side are null — a `0` would read as "tracked, and zero",
 a different fact from "never recorded", which `stats.ts` already keeps apart for the base figures.
 
-**In the panel** the parts are a small grid (`panel/dlc-grid.tsx`): parts down the left — "Base
-game", then each DLC by name — and the figures across the top (Year, Hours, Price, Trophies), so
-every number has a column heading above it and a part name beside it. The base game's Year IS
-First played: the same column, shown in both places, saved through the same field. Every cell is click-to-edit
+**In the panel** the parts are rows like every other row (`panel/dlc-grid.tsx`): "Base game" and
+each DLC's name sit in the grey label column, and their figures line up in the value column under
+one small header (Year, Hours, Price, Trophies), so every number has a column heading above it and a
+part name beside it — "three more rows", not a separate box. The base game's Year IS First played:
+the same column, shown in both places, saved through the same field. Every cell is click-to-edit
 in place; nothing opens a modal. A DLC cell saves the WHOLE row (`updateGameDlcAction`, with that
 one cell changed; a figure left blank is cleared; name and year can never be blank); a base-game
 cell goes through the ordinary per-field action. An x on each DLC row removes it behind a confirm,
@@ -695,10 +696,11 @@ blocks of rows separated by a little space, no headings: rating, release date wh
 first played (with a **+** beside the year that starts a year split — see below), the year rows,
 achievement counts, the platinum toggle; platform, ownership, price, genre, developer, publisher;
 then the parts grid (see "DLC") and the collection — its members as a list, then a plain
-"+ Add games to collection" line, the same shape as the grid's "+ Add DLC" — both INDENTED to the
-value column with the label column empty, because the part names inside the grid are values and at
-the far left they read as row labels; then Notes, an ordinary row like every other field; and
-Remove. No outlined buttons anywhere in the panel: every action is quiet text
+"+ Add games to collection" line, the same shape as the grid's "+ Add DLC", each its own
+left-aligned row; then Notes, an ordinary row like every other field; and Remove. **Every row is
+the same height (36px)** — a fixed minimum, not padding around content — with one identical 8px
+gap between the three blocks; measured in a real browser, because the owner read a 35/40/47px mix
+as "inconsistent", correctly. No outlined buttons anywhere in the panel: every action is quiet text
 with a plus or a word, by owner decision.
 
 **Years are rows, not an editor.** The split used to hide behind "Split across years" and its own

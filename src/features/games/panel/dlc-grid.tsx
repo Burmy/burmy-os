@@ -5,7 +5,7 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { InlineEditField } from '@/components/ui/inline-edit-row';
+import { InlineEditField, ROW_CLASS } from '@/components/ui/inline-edit-row';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
@@ -15,22 +15,25 @@ import {
   updateGameDlcAction,
 } from '@/features/games/dlc-actions';
 import type { GameFieldKey } from '@/features/games/game-actions';
+import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import type { GameDlcRow } from '@/server/games/dlc';
 import { formatHours, hours, toHoursInput } from '@/server/games/hours';
 
 /**
- * The game's parts — the base game and each DLC — as a small grid: parts
- * down the left, the figures (year, hours, price, trophies) across the top,
- * so every number has a column heading above it and a part name beside it.
- * Every cell is click-to-edit in place; nothing opens a modal. The grid only
- * exists while the game has DLC (or one is being added) — with none, the
- * panel's own rows ARE the base game and a plain "+ Add DLC" line is all
- * that shows.
+ * The game's parts — the base game and each DLC — as rows that look like
+ * every other row in the panel: the part's name sits in the grey label
+ * column, and its figures line up in the value column under one small
+ * header (Year / Hours / Price / Trophies). Every cell is click-to-edit in
+ * place; nothing opens a modal. The rows only exist while the game has DLC
+ * (or one is being added) — with none, the panel's own rows ARE the base
+ * game and a plain "+ Add DLC" row is all that shows.
  *
  * A DLC cell saves the WHOLE row (`updateGameDlcAction`) with that one cell
  * changed; a base-game cell goes through the ordinary per-field action the
- * panel's rows use. DLC is additive — `src/server/games/dlc.ts`.
+ * panel's rows use. DLC is additive — `src/server/games/dlc.ts`. (Earlier
+ * shapes — inline cells on one line, a dialog, a boxed grid, an indented
+ * grid — were each rejected on sight; this one is "three more rows".)
  */
 export function DlcGrid({
   game,
@@ -107,34 +110,45 @@ export function DlcGrid({
   const showGrid = game.dlc.length > 0 || adding;
 
   return (
-    <div className="py-1 text-sm">
+    <>
       {showGrid ? (
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+          {/* A table so the figures are real columns with real headers, laid
+              out on the panel's own 9rem label track: the first column IS the
+              label column, so a part reads as a row like any other. */}
+          <table className="w-full border-collapse text-sm">
+            <colgroup>
+              <col className="w-36" />
+              <col />
+              <col />
+              <col />
+              <col />
+              <col className="w-6" />
+            </colgroup>
             <thead>
-              <tr className="text-muted-foreground text-xs">
-                <th scope="col" className="w-full pb-1 text-left font-normal">
+              <tr className="text-muted-foreground h-9 text-xs">
+                <th scope="col" className="text-left font-normal">
                   <span className="sr-only">Part</span>
                 </th>
-                <th scope="col" className="pr-3 pb-1 text-right font-normal">
+                <th scope="col" className="pr-3 text-right font-normal">
                   Year
                 </th>
-                <th scope="col" className="pr-3 pb-1 text-right font-normal">
+                <th scope="col" className="pr-3 text-right font-normal">
                   Hours
                 </th>
-                <th scope="col" className="pr-3 pb-1 text-right font-normal">
+                <th scope="col" className="pr-3 text-right font-normal">
                   Price
                 </th>
-                <th scope="col" className="pb-1 text-right font-normal">
+                <th scope="col" className="text-right font-normal">
                   Trophies
                 </th>
-                <th scope="col" className="w-6" />
+                <th scope="col" />
               </tr>
             </thead>
             <tbody>
               {game.dlc.length === 0 ? null : (
-                <tr>
-                  <td className="py-0.5 pr-3">Base game</td>
+                <tr className="h-9">
+                  <td className="text-muted-foreground pr-3">Base game</td>
                   {/* The base game's year IS First played — one field, shown
                       in both places, saved through the same action. */}
                   <Cell>
@@ -195,8 +209,8 @@ export function DlcGrid({
                 </tr>
               )}
               {game.dlc.map((row) => (
-                <tr key={row.id}>
-                  <td className="min-w-28 py-0.5 pr-3 font-medium">
+                <tr key={row.id} className="h-9">
+                  <td className="text-muted-foreground pr-3">
                     <InlineEditField
                       hideLabel
                       label={`${row.name}: name`}
@@ -257,7 +271,7 @@ export function DlcGrid({
                       onSave={(value) => saveCell(row, 'achievementsTotal', value)}
                     />
                   </Cell>
-                  <td className="py-0.5 text-right">
+                  <td className="text-right">
                     <Button
                       variant="ghost"
                       size="icon"
@@ -271,29 +285,29 @@ export function DlcGrid({
                 </tr>
               ))}
               {adding ? (
-                <tr>
-                  <td className="py-1 pr-3">
+                <tr className="h-9">
+                  <td className="pr-3">
                     <Input
                       aria-label="New DLC name"
                       placeholder="Name"
                       value={newName}
                       autoFocus
                       disabled={saving}
-                      className="h-8"
+                      className="h-7"
                       onChange={(event) => setNewName(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === 'Escape') setAdding(false);
                       }}
                     />
                   </td>
-                  <td className="py-1 pr-3">
+                  <td className="pr-3">
                     <Input
                       aria-label="New DLC year"
                       placeholder="Year"
                       inputMode="numeric"
                       value={newYear}
                       disabled={saving}
-                      className="h-8 w-16"
+                      className="h-7 w-16"
                       onChange={(event) => setNewYear(event.target.value)}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') void addNew();
@@ -302,7 +316,7 @@ export function DlcGrid({
                     />
                   </td>
                   <td colSpan={3} />
-                  <td className="py-1 text-right whitespace-nowrap">
+                  <td className="text-right whitespace-nowrap">
                     <Button
                       variant="ghost"
                       size="icon"
@@ -332,15 +346,17 @@ export function DlcGrid({
       ) : null}
 
       {adding ? null : (
-        <button
-          type="button"
-          aria-label="Add DLC"
-          onClick={() => setAdding(true)}
-          className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 py-1 transition-colors"
-        >
-          <Plus className="size-3.5" aria-hidden />
-          Add DLC
-        </button>
+        <div className={cn(ROW_CLASS, 'grid-cols-1')}>
+          <button
+            type="button"
+            aria-label="Add DLC"
+            onClick={() => setAdding(true)}
+            className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 transition-colors"
+          >
+            <Plus className="size-3.5" aria-hidden />
+            Add DLC
+          </button>
+        </div>
       )}
 
       <ConfirmDialog
@@ -354,7 +370,7 @@ export function DlcGrid({
         destructive
         onConfirm={() => void remove()}
       />
-    </div>
+    </>
   );
 }
 
@@ -366,7 +382,7 @@ function Cell({
   readonly last?: boolean;
 }): React.ReactElement {
   return (
-    <td className={last ? 'py-0.5 text-right' : 'py-0.5 pr-3 text-right'}>
+    <td className={last ? 'text-right' : 'pr-3 text-right'}>
       <span className="inline-flex items-center justify-end gap-0.5 tabular-nums">{children}</span>
     </td>
   );

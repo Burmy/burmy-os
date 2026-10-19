@@ -415,16 +415,8 @@ export function GamePanel({
                     title inside a collection carries no DLC — its figures,
                     and so its DLC, live on the collection row. */}
                 <div>
-                  {/* Indented to the value column, with the label column
-                      empty: the part names inside the grid are VALUES, and at
-                      the far left they read as row labels. */}
                   {isCollectionMember ? null : (
-                    <div className={ROW_CLASS}>
-                      <span aria-hidden />
-                      <div className="min-w-0">
-                        <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
-                      </div>
-                    </div>
+                    <DlcGrid game={game} onSaveField={saveField} onChanged={refresh} />
                   )}
 
                   {/* A row that HOLDS games lists them, then "+ Add games to
@@ -441,19 +433,14 @@ export function GamePanel({
                       onSave={saveCollection}
                     />
                   ) : (
-                    <div className={ROW_CLASS}>
-                      <span aria-hidden />
-                      <div className="min-w-0">
-                        <CollectionMembersPanel
-                          collectionId={game.id}
-                          collectionTitle={game.title}
-                          members={current.members}
-                          candidates={current.collectionCandidates}
-                          onOpenMember={(id) => onOpen({ id })}
-                          onChanged={refresh}
-                        />
-                      </div>
-                    </div>
+                    <CollectionMembersPanel
+                      collectionId={game.id}
+                      collectionTitle={game.title}
+                      members={current.members}
+                      candidates={current.collectionCandidates}
+                      onOpenMember={(id) => onOpen({ id })}
+                      onChanged={refresh}
+                    />
                   )}
                 </div>
 
@@ -666,7 +653,7 @@ function PlatinumToggle({
       aria-pressed={on}
       onClick={onToggle}
       className={cn(
-        'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
+        'inline-flex h-6 items-center gap-1.5 rounded-md border px-2.5 text-sm font-medium transition-colors',
         on
           ? 'border-slate-400/50 bg-gradient-to-br from-slate-100 via-slate-300 to-slate-400 text-slate-800 shadow-sm'
           : 'text-muted-foreground hover:text-foreground -ml-2.5 border-transparent',
