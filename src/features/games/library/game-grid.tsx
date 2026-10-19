@@ -1,28 +1,11 @@
 'use client';
 
-import {
-  DndContext,
-  type DragEndEvent,
-  DragOverlay,
-  type DragStartEvent,
-  KeyboardSensor,
-  MouseSensor,
-  TouchSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  rectSortingStrategy,
-  sortableKeyboardCoordinates,
-} from '@dnd-kit/sortable';
-import { useState } from 'react';
+import { useCallback } from 'react';
 
 import type { Game } from '@/server/db/games/games';
 import type { CollectionGroup } from '@/server/games/collections';
 import { GameCard } from './game-card';
-import { SortableCard } from './sortable-card';
+import { useGridDrag } from './grid-drag';
 
 /**
  * ONE CARD PER TOP-LEVEL ROW. A collection's titles get no card of their own.
@@ -39,19 +22,12 @@ import { SortableCard } from './sortable-card';
  * a game.
  *
  * ─────────────────────────────────────────────────────────────────────────────
- * DRAG TO REORDER (2026-10-19). With `onReorder` the grid is sortable: cards
- * shift smoothly into the gap as one is dragged (`rectSortingStrategy`), the
- * lifted card follows the pointer as an overlay copy, and a drop reports the
- * two ids involved — the caller computes and persists the new order
- * (`library-view.tsx`, `moveTopLevel`). Without `onReorder` the DOM is exactly
- * what it was before: plain cards, no context, nothing to measure.
- *
- * Three sensors, on purpose. A mouse starts a drag after 6px of movement, so
- * a click still opens the panel; a touch starts one after a 250ms press (with
- * 8px of tolerance), so a scroll still scrolls and a tap still opens; the
- * keyboard picks a card up with Space and moves it with the arrows. One
- * `PointerSensor` cannot give mouse and touch different constraints, which
- * is why it is Mouse + Touch here.
+ * DRAG TO REORDER (2026-10-19). With `onReorder` the grid is sortable through
+ * `useGridDrag` — a purpose-built pointer drag for a uniform grid that does no
+ * React work while a card is in hand (see that file for why dnd-kit was
+ * replaced here). A drop reports the two ids involved; the caller computes
+ * and persists the new order (`library-view.tsx`, `moveTopLevel`). Without
+ * `onReorder` the cards carry no drag props at all.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 export function GameGrid({
@@ -67,80 +43,63 @@ export function GameGrid({
   /** Present exactly when the gallery may be reordered — see `library-view.tsx` for when that is. */
   readonly onReorder?: (activeId: string, overId: string) => void;
 }): React.ReactElement {
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const [draggingId, setDraggingId] = useState<string | null>(null);
   const sortable = onReorder !== undefined;
-
-  const grid = (
-    // Caps at 5 columns, down from 7, and holds at 4 until `2xl` (1536px).
-    // Real usage found the denser grid "too compact" — cover art too small
-    // to recognize a game without reading its title, which defeats the point
-    // of a cover-first card (see `game-card.tsx`). The 5th column only
-    // appears once there's genuinely room for it; on a typical ~1400px
-    // window that means 4 noticeably larger covers rather than 5 cramped
-    // ones. `gap-6` matches the app's shared 24px spacing step.
-    <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-      {groups.map((group) =>
-        sortable ? (
-          <SortableCard
-            key={group.game.id}
-            game={group.game}
-            memberCount={group.members.length}
-            selected={group.game.id === activeId}
-            onOpen={onOpen}
-          />
-        ) : (
-          <GameCard
-            key={group.game.id}
-            game={group.game}
-            memberCount={group.members.length}
-            selected={group.game.id === activeId}
-            onOpen={onOpen}
-          />
-        ),
-      )}
-    </div>
+  const onDrop = useCallback(
+    (from: number, to: number) => {
+      const a = groups[from]?.game.id;
+      const b = groups[to]?.game.id;
+      if (a !== undefined && b !== undefined && onReorder) onReorder(a, b);
+    },
+    [groups, onReorder],
   );
-
-  if (!sortable) return grid;
-
-  const dragging =
-    draggingId === null ? null : groups.find((group) => group.game.id === draggingId);
+  const labelOf = useCallback((index: number) => groups[index]?.game.title ?? '', [groups]);
+  const { setItem, itemProps, announcement, instructionsId } = useGridDrag({
+    count: sortable ? groups.length : 0,
+    layoutKey: groups,
+    onDrop,
+    labelOf,
+  });
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={(event: DragStartEvent) => setDraggingId(String(event.active.id))}
-      onDragCancel={() => setDraggingId(null)}
-      onDragEnd={(event: DragEndEvent) => {
-        setDraggingId(null);
-        if (event.over !== null && event.over.id !== event.active.id) {
-          onReorder(String(event.active.id), String(event.over.id));
-        }
-      }}
-    >
-      <SortableContext items={groups.map((group) => group.game.id)} strategy={rectSortingStrategy}>
-        {grid}
-      </SortableContext>
-      {/* The lifted card. A copy, so the real one can dim in place and the
-          grid can animate around the gap while this follows the pointer. */}
-      <DragOverlay dropAnimation={{ duration: 180, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}>
-        {dragging === null || dragging === undefined ? null : (
-          <div className="scale-[1.03] rounded-md shadow-lg will-change-transform">
+    <>
+      {/* Caps at 5 columns, down from 7, and holds at 4 until `2xl` (1536px).
+          Real usage found the denser grid "too compact" — cover art too small
+          to recognize a game without reading its title, which defeats the point
+          of a cover-first card (see `game-card.tsx`). The 5th column only
+          appears once there's genuinely room for it; on a typical ~1400px
+          window that means 4 noticeably larger covers rather than 5 cramped
+          ones. `gap-6` matches the app's shared 24px spacing step. */}
+      <div className="grid grid-cols-2 gap-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
+        {groups.map((group, index) => (
+          // The wrapper is what the drag moves: its transform is written
+          // directly, with the transition below for the cards stepping aside
+          // (the card in hand gets `transition: none` inline while held).
+          <div
+            key={group.game.id}
+            ref={sortable ? (el) => setItem(index, el) : undefined}
+            className="rounded-md transition-transform duration-220 ease-[cubic-bezier(0.2,0,0,1)]"
+          >
             <GameCard
-              game={dragging.game}
-              memberCount={dragging.members.length}
-              selected={dragging.game.id === activeId}
-              onOpen={() => undefined}
+              game={group.game}
+              memberCount={group.members.length}
+              selected={group.game.id === activeId}
+              onOpen={onOpen}
+              {...(sortable && itemProps[index] ? { drag: itemProps[index] } : {})}
             />
           </div>
-        )}
-      </DragOverlay>
-    </DndContext>
+        ))}
+      </div>
+      {sortable ? (
+        <>
+          <p id={instructionsId} className="sr-only">
+            Press Space to pick the game up, use the arrow keys to move it, and press Space again to
+            drop it. Press Escape to cancel.
+          </p>
+          <div aria-live="assertive" aria-atomic="true" className="sr-only">
+            {announcement}
+          </div>
+        </>
+      ) : null}
+    </>
   );
 }

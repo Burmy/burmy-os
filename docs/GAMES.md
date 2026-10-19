@@ -401,26 +401,42 @@ the filter bar, shown only once something has been placed) writes `0` everywhere
 No migration: the column had existed, unused, since the Finance-era schema. Members carry a position
 too but it is never read; `groupByCollection` files them under their set in input order.
 
-**The drag** (`@dnd-kit/core` + `sortable`, added 2026-10-19 — the case Finance's categories list
-declined it FOR: 185 cards in a responsive grid, not ten rows with arrows). The gallery is the smooth
-one: cards shift into the gap as one is dragged (`rectSortingStrategy`), a copy of the lifted card
-follows the pointer (`DragOverlay`), and the source dims in place. Three sensors on purpose — a mouse
-starts a drag after 6px, so a click still opens the panel; a touch after a 250ms press (8px
-tolerance), so a scroll still scrolls and a tap still opens; the keyboard picks a card up with Space
-and moves it with the arrows. One `PointerSensor` cannot give mouse and touch different constraints,
-hence Mouse + Touch. The table drags by a grip handle at the row start, the set and its indented
-titles as one unit, and does NOT animate row shifting: rows are `<tr>`s and CSS transforms on table
-rows are unreliable across browsers, so feedback is the ghost line in hand plus a 2px inset line on
-the row the drop would land beside. Drag is enabled exactly in My order with no filter or search
-active — a drop between two cards of a partial list has no clear meaning for the games off screen —
-and the line under the bar says "Clear the filters to reorder." when that is why it is off. The drop
-is optimistic: the cards move at once, the action runs behind, and a failure restores the previous
-order with a toast (`moveTopLevel` runs on the FULL top-level list, hidden wanted rows included, so
-they keep their relative place).
+**The gallery's drag is its own engine** (`library/grid-drag.ts` + the pure `grid-drag-math.ts`,
+2026-10-19). It was dnd-kit for a day: dnd-kit re-renders every sortable item through React on every
+pointer move and re-measures all of them at lift, which on 181 cards was a 250ms stall on the press,
+another when the first card shifted, and a card trailing the pointer — "snappy", and the owner asked
+for instant and smooth. The gallery is a UNIFORM grid, which makes the drag arithmetic: the pressed
+card itself follows the pointer by an inline transform written in a `requestAnimationFrame` loop,
+with no React work per move; the slot under its centre is a formula of the grid measured once at
+lift; when that slot changes, only the cards between the hole and the target get a transform (a
+zero `translate3d` on the other 170 is what promoted 182 compositor layers in one frame under
+dnd-kit — measured, and the cause of the snap). The drop glides the card into its slot, commits the
+order in one React update, and a layout effect clears the transforms before the next paint so nothing
+jumps. A mouse or pen lifts after 3px (a click still opens the panel); a touch lifts after a 150ms
+hold, and a finger that moves first is a scroll; once lifted, `touchmove` is cancelled so the page
+stops scrolling under the finger, and the page creeps when the card nears the top or bottom edge.
+The keyboard lifts with Space, moves with the arrows, drops with Space or Enter, cancels with
+Escape, with an `aria-live` announcement each step. Covers are `draggable={false}` and the card
+refuses `dragstart`: a few pixels of movement over an `<img>` otherwise begins the browser's own
+drag of the thumbnail and cancels the pointer events the engine runs on — the first card with art
+simply would not move.
 
-**CSP.** dnd-kit sets inline `style` attributes (transform, transition) and injects no `<style>`
-element — verified by grepping the three packages on install — so it lives inside the existing
-`style-src-attr 'unsafe-inline'` exception and never touches the nonce-only `style-src`.
+**The table keeps dnd-kit** (`@dnd-kit/core` + `sortable`): a grip handle at the row start, the set
+and its indented titles as one unit, and NO row-shift animation — rows are `<tr>`s and CSS
+transforms on table rows are unreliable across browsers, so feedback is the ghost line in hand plus
+a 2px inset line on the row the drop would land beside. 181 rows re-rendering per move is fine there
+because nothing animates; the gallery is where it was not.
+
+Drag is enabled exactly in My order with no filter or search active — a drop between two cards of
+a partial list has no clear meaning for the games off screen — and the line under the bar says
+"Clear the filters to reorder." when that is why it is off. The drop is optimistic: the cards move
+at once, the action runs behind, and a failure restores the previous order with a toast
+(`moveTopLevel` runs on the FULL top-level list, hidden wanted rows included, so they keep their
+relative place).
+
+**CSP.** Both engines write inline `style` attributes (transform, transition) and inject no `<style>`
+element — dnd-kit verified by grepping the three packages on install — so they live inside the
+existing `style-src-attr 'unsafe-inline'` exception and never touch the nonce-only `style-src`.
 
 **Sort and the two newer filters** are pure rules in `src/server/games/library-order.ts`. Sort —
 My order, Year, Hours, Rating, Title, Trophies — is a read-only view of the same list and never

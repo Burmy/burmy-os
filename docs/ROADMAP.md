@@ -1383,9 +1383,10 @@ every glance. Decided through a product interview, then built on `feat/games-sim
   library. A hand-added wanted game can be given a release date in the panel.
 - **Drag to reorder, Sort, Year and Rating filters (2026-10-19).** `games.sort_order` (long present,
   unused) is the owner's hand order, `0` = unplaced so the sheet keys still apply until the first
-  drop; new games land at the top; "Reset order" behind a confirm. dnd-kit for the gallery (smooth,
-  Mouse + Touch + Keyboard sensors) and a grip handle in the table (no row-shift animation, by
-  design). Sort is read-only (My order / Year / Hours / Rating / Title / Trophies); Year and Rating
+  drop; new games land at the top; "Reset order" behind a confirm. The gallery's drag is its own
+  engine (`grid-drag.ts`: no React work per move, transforms only on the cards that shift, 3px mouse
+  / 150ms touch-hold / keyboard) after dnd-kit proved snappy on 181 cards; the table keeps dnd-kit
+  with a grip handle and no row-shift animation, by design. Sort is read-only (My order / Year / Hours / Rating / Title / Trophies); Year and Rating
   are selects on the filter side, Sort sits with the view toggle. See `docs/GAMES.md`, "Library
   order, Sort and the drag".
 - **Three small panel rules (2026-10-19):** earning the platinum fills Achievements earned up to the

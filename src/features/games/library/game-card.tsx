@@ -95,17 +95,13 @@ export const GameCard = memo(function GameCard({
   readonly selected?: boolean;
   readonly onOpen: (game: Game) => void;
   /**
-   * Present when the card sits in a sortable gallery (`sortable-card.tsx`):
-   * the drag listeners and ARIA attributes for the button, and the ref dnd-kit
-   * uses to know which element starts a drag. Spread FIRST, so the card's own
-   * `aria-label`/`aria-pressed` win — dnd-kit's `aria-pressed` means "being
-   * dragged", and here the attribute already means "open in the panel".
+   * Present when the card sits in a sortable gallery (`grid-drag.ts`): the
+   * pointer and keyboard handlers plus the sortable ARIA attributes for the
+   * button. Spread FIRST, so the card's own `aria-label`/`aria-pressed` and
+   * `onClick` win — the drag's own click handling is a CAPTURE handler, so
+   * it still runs before this click and can swallow the one that ends a drag.
    */
-  readonly drag?: {
-    /** dnd-kit's activator ref — named so the React Compiler lint does not read it as a `useRef` box. */
-    readonly setActivator: (node: HTMLElement | null) => void;
-    readonly props: React.ButtonHTMLAttributes<HTMLButtonElement>;
-  };
+  readonly drag?: React.ButtonHTMLAttributes<HTMLButtonElement>;
 }): React.ReactElement {
   const wishlisted = game.status === 'wanted';
   const collectionLabel =
@@ -122,8 +118,7 @@ export const GameCard = memo(function GameCard({
   return (
     <button
       type="button"
-      {...(drag ? drag.props : {})}
-      {...(drag ? { ref: drag.setActivator } : {})}
+      {...(drag ?? {})}
       // Carries status and platinum even though neither renders as visible
       // text — with the card reduced to bare art this is the entire accessible
       // description of a grid item.
@@ -160,6 +155,9 @@ export const GameCard = memo(function GameCard({
               alt=""
               fill
               sizes="(max-width: 640px) 50vw, (max-width: 1536px) 25vw, 300px"
+              // Never the browser's own image drag — the gallery's drag runs
+              // on pointer events, which a native drag would cancel.
+              draggable={false}
               className={cn('object-cover', wishlisted && 'opacity-75')}
             />
           )}

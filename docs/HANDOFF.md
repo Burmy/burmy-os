@@ -130,7 +130,8 @@ Duplicates screen, the Settings → Games section. Git history before `3324656` 
   until the owner changes its status. (This reversed an earlier decision.)
 - **The library order is the owner's own, by drag.** `sort_order` `0` means unplaced (sheet keys
   apply); a drop pins every top-level row; new games land at the top; "Reset order" returns to the
-  sheet. Drag only in My order with no filter. Sort is a read-only view. dnd-kit, inline styles only.
+  sheet. Drag only in My order with no filter. Sort is a read-only view. The gallery drag is the
+  app's own engine (`grid-drag.ts`); the table uses dnd-kit. Inline styles only, no stylesheet.
 - **Platinum fills the trophy count.** Toggling Platinum on sets Achievements earned to the total when
   one is known; toggling it off changes nothing else. A collection has no rating of its own.
 - **Inside a collection, hours and trophies are the individual title's; price is the set's.** The

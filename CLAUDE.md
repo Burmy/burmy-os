@@ -446,6 +446,21 @@ These are verified, not folklore. Do not "fix" them back.
   behaviour, not bugs. The panel also sits at `z-40` on purpose: the toast stack, every nested
   dialog, Select content and the mobile nav are `z-50` and a `z-50` panel appended later to `<body>`
   would have covered the toasts that confirm its own saves.
+- **dnd-kit re-renders EVERY sortable item through React on every pointer move, and
+  `rectSortingStrategy` hands every item a transform — a zero one for the 170 that stay put.** On the
+  181-card gallery that was a 250ms stall at lift, a 200ms stall when the first card shifted (182
+  `translate3d(0,0,0)` styles written in one frame → 182 compositor layers promoted at once — measured
+  with a frame-time log, the long frame coincided with 182 inline transforms), and a card trailing the
+  pointer. Memoising the card helped (1,050ms → 380ms of long tasks) and was not enough. The gallery
+  now runs `src/features/games/library/grid-drag.ts`: one `requestAnimationFrame` loop writing
+  inline transforms directly, slot arithmetic on the uniform grid, transforms only on the cards that
+  move. dnd-kit stays in the table, where nothing animates. If a sortable surface is big and
+  uniform, do not reach for dnd-kit for it.
+- **A cover `<img>` starts the BROWSER'S OWN drag after a few pixels and cancels the pointer events a
+  custom drag runs on.** "It won't let me drag the tile if there is a thumbnail" — every card with
+  art refused to lift while the one card without art dragged fine, which is also why the headless
+  check passed: it lifted the artless card. `draggable={false}` on the image and a refused
+  `dragstart` on the button; the check now lifts a covered card and counts native `dragstart`s.
 - **A helper that removes a block of text and then "skips one more character" eats the next brace
   when the block was the LAST one in its parent.** A scripted test edit that cut an `it(...)` and then
   stepped past one extra character to swallow a blank line removed the `}` of the enclosing
