@@ -29,7 +29,7 @@ export function SegmentedToggle<T extends string>({
   readonly className?: string;
 }): React.ReactElement {
   return (
-    <div className={cn('bg-card inline-flex rounded-md p-1', className)}>
+    <div className={cn('bg-card inline-flex rounded-md', className)}>
       {options.map((option) => {
         const active = option.value === value;
         return (
