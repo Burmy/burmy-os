@@ -21,10 +21,10 @@ import {
   updateGameFieldAction,
   updateGamePlayYearsAction,
 } from '@/features/games/game-actions';
-import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import { cn } from '@/lib/utils';
 import type { Game } from '@/server/db/games/games';
 import { rollUpHours, rollUpTrophies } from '@/server/games/collections';
+import type { PlayYearDraft } from '@/server/games/play-years';
 import { gameTotals } from '@/server/games/dlc';
 import { formatHours, hours } from '@/server/games/hours';
 import { formatReleaseCountdown } from '@/server/games/release-date';

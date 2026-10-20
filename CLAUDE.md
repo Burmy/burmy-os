@@ -464,6 +464,19 @@ These are verified, not folklore. Do not "fix" them back.
   art refused to lift while the one card without art dragged fine, which is also why the headless
   check passed: it lifted the artless card. `draggable={false}` on the image and a refused
   `dragstart` on the button; the check now lifts a covered card and counts native `dragstart`s.
+- **A Server Action that imports a VALUE from a `'use client'` module gets a client REFERENCE, and
+  calling it is a 500 that no test sees.** `updateGamePlayYearsAction` imported `isRealPlayYearDraft`
+  from `play-years-panel.tsx` ('use client'); Next threw "Attempted to call isRealPlayYearDraft()
+  from the server but isRealPlayYearDraft is on the client", the action REJECTED instead of returning
+  a failure, the panel showed nothing, and every split saved from the panel since the panel existed
+  was silently lost ("adding years doesn't save — when I switch it disappears"). Vitest calls actions
+  directly and never crosses the RSC boundary, so 1,400 green tests proved nothing about it; a
+  headless run against the dev server watching the action's HTTP response found it in one go.
+  Shared helpers belong in a framework-free module (`src/server/games/play-years.ts` now holds the
+  draft type and the predicate; the client module only re-exports them), and
+  `tests/unit/server-client-boundary.test.ts` walks every `'use server'` file's value imports and
+  fails on one that resolves to a `'use client'` module. `import type` is fine; a mixed
+  `import { fn, type T }` is not.
 - **A helper that removes a block of text and then "skips one more character" eats the next brace
   when the block was the LAST one in its parent.** A scripted test edit that cut an `it(...)` and then
   stepped past one extra character to swallow a blank line removed the `}` of the enclosing

@@ -23,8 +23,13 @@ import {
 } from '@/server/db/games/games';
 import { replacePlayYears } from '@/server/db/games/play-years';
 import { fromHoursInput } from '@/server/games/hours';
-import { findDuplicateYear, validateSplit, validateTrophySplit } from '@/server/games/play-years';
-import { isRealPlayYearDraft, type PlayYearDraft } from '@/features/games/play-years-panel';
+import {
+  type PlayYearDraft,
+  findDuplicateYear,
+  isRealPlayYearDraft,
+  validateSplit,
+  validateTrophySplit,
+} from '@/server/games/play-years';
 import { GAME_OWNERSHIPS, GAME_PLATFORMS, GAME_STATUSES } from '@/server/games/taxonomy';
 import { type ActionResult, fail, ok } from './action-result';
 

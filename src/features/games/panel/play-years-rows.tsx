@@ -7,10 +7,14 @@ import { Button } from '@/components/ui/button';
 import { InlineEditField, ROW_CLASS } from '@/components/ui/inline-edit-row';
 import { toast } from '@/components/ui/toast';
 import type { ActionResult } from '@/features/games/action-result';
-import type { PlayYearDraft } from '@/features/games/play-years-panel';
 import { cn } from '@/lib/utils';
 import { formatHours, fromHoursInput, hours, toHoursInput } from '@/server/games/hours';
-import { findDuplicateYear, validateSplit, validateTrophySplit } from '@/server/games/play-years';
+import {
+  type PlayYearDraft,
+  findDuplicateYear,
+  validateSplit,
+  validateTrophySplit,
+} from '@/server/games/play-years';
 
 /**
  * "First played", and the years the game's hours were played in, as rows.
@@ -81,8 +85,16 @@ export function PlayYearsRows({
     setDrafts(next);
     if (next.length > 0 && describeProblem(next, hoursTenths ?? 0, achievementsUnlocked) !== null)
       return;
-    const result = await onSave(next);
-    if (!result.ok) toast.error(result.error);
+    // A Server Action that THROWS (rather than returning a failure) rejects
+    // this await — the drafts would sit here looking saved and vanish on the
+    // next switch, with nothing on screen. Say so. (CLAUDE.md: a rejecting
+    // action skips everything after its await.)
+    try {
+      const result = await onSave(next);
+      if (!result.ok) toast.error(result.error);
+    } catch {
+      toast.error('The years could not be saved — try again.');
+    }
   }
 
   function addYear(): void {

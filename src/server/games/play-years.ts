@@ -218,3 +218,34 @@ export function findDuplicateYear(rows: readonly { readonly year: number }[]): n
   }
   return null;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The owner's draft of a split, as typed — shared by the panel's rows, the
+// dialog's split editor AND the Server Actions that validate it.
+//
+// HERE, NOT IN A 'use client' MODULE. `isRealPlayYearDraft` lived in
+// `play-years-panel.tsx` ('use client') and the Server Action imported it
+// from there. Next turns a client module's exports into client REFERENCES
+// when a server module imports them, so calling the function on the server
+// threw ("Attempted to call isRealPlayYearDraft() from the server but
+// isRealPlayYearDraft is on the client") — a 500 on every split save from
+// the panel, invisible to Vitest, which calls the action directly and never
+// crosses that boundary. Found by the owner: "adding years doesn't save".
+// `tests/unit/server-client-boundary.test.ts` now fails on any such import.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PlayYearDraft {
+  readonly year: string;
+  readonly hours: string;
+  /** Trophies earned that year, as typed; blank means the row says nothing about trophies. */
+  readonly trophies: string;
+}
+
+/**
+ * A draft row counts as real — and must reach the server — unless it is
+ * COMPLETELY empty (year, hours and trophies all blank after trimming). That
+ * is the only state that means "clicked Add a year, then changed my mind."
+ */
+export function isRealPlayYearDraft(row: PlayYearDraft): boolean {
+  return row.year.trim() !== '' || row.hours.trim() !== '' || row.trophies.trim() !== '';
+}

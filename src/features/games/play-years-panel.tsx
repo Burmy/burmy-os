@@ -6,35 +6,31 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { formatHours, fromHoursInput, hours } from '@/server/games/hours';
-import { validateSplit } from '@/server/games/play-years';
-
-/** Draft state is TEXT, not numbers — a half-typed "2" must not become year 2. */
-export interface PlayYearDraft {
-  readonly year: string;
-  readonly hours: string;
-  /** Trophies earned that year, as typed; blank means the row says nothing about trophies. */
-  readonly trophies: string;
-}
+import { type PlayYearDraft, isRealPlayYearDraft, validateSplit } from '@/server/games/play-years';
 
 /**
- * A draft row counts as real — and must reach the server — unless it is
- * COMPLETELY empty (both `year` and `hours` blank after trimming). That is
- * the only state that means "clicked Add a year, then changed my mind."
+ * Draft state is TEXT, not numbers — a half-typed "2" must not become year 2.
  *
- * This is the ONE place that decides which rows count. Before this existed,
- * this panel's live validation counted every row while `game-dialog.tsx`
- * separately dropped any row with a blank year before submitting — two
- * independent opinions about the same drafts, which could show "49h of 49h"
- * on screen while silently submitting a mismatched (or even empty) split.
- * Both the live validation below and the dialog's FormData serialization
- * must call this same function; a partially filled row (year without hours,
- * or hours without year) is deliberately NOT dropped here — it has to reach
- * the server so `playYearsSchema` in `game-actions.ts` rejects it explicitly
- * instead of vanishing client-side.
+ * The type and `isRealPlayYearDraft` LIVE in `src/server/games/play-years.ts`
+ * (framework-free) and are only re-exported here: a Server Action imported
+ * the predicate from this 'use client' module once, Next handed it a client
+ * reference, and every split save from the panel was a 500 — see the note
+ * beside the definition. Re-exported so the dialog and the panel rows keep
+ * one import; a Server Action must import from the pure module and
+ * `tests/unit/server-client-boundary.test.ts` fails if one does not.
+ *
+ * `isRealPlayYearDraft` is the ONE place that decides which rows count.
+ * Before it existed, this panel's live validation counted every row while
+ * `game-dialog.tsx` separately dropped any row with a blank year before
+ * submitting — two independent opinions about the same drafts, which could
+ * show "49h of 49h" on screen while silently submitting a mismatched (or
+ * even empty) split. Both the live validation below and the dialog's
+ * FormData serialization must call this same function; a partially filled
+ * row (year without hours, or hours without year) is deliberately NOT
+ * dropped — it has to reach the server so `playYearsSchema` in
+ * `game-actions.ts` rejects it explicitly instead of vanishing client-side.
  */
-export function isRealPlayYearDraft(row: PlayYearDraft): boolean {
-  return row.year.trim() !== '' || row.hours.trim() !== '' || row.trophies.trim() !== '';
-}
+export { isRealPlayYearDraft, type PlayYearDraft };
 
 /**
  * Optional per-year breakdown of a game's hours.
