@@ -237,7 +237,7 @@ export function GamePanel({
               and its facts under it — the panel reads like the card it came
               from, enlarged, rather than a row with a thumbnail (owner,
               2026-10-19: "a bigger image of the game and then stuff under
-              it"). 192px wide keeps the rows within reach on a laptop. */}
+              it"), then sized up to 320px wide from a mock-up of theirs. */}
           <header className="flex flex-col items-center border-b p-4 pr-12 text-center">
             <CoverTile game={game} />
             <div className="mt-3 flex w-full min-w-0 flex-col items-center">
