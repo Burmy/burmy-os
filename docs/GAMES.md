@@ -584,15 +584,21 @@ The dashboard (`GamesDashboard`, `/games/stats`) opens with two full rows of sta
 Hours played, Platinums, Trophies earned, Total spend, Cost per hour, This year (hours, started and
 trophies in the current year, from the year table) and Completion (trophies earned as a share of
 every recorded total); the last two were added 2026-10-19 so the four-wide grid never ends on a
-half-empty row. Six of the eight carry an arrow line (`YearDelta`, `buildYearDeltas` in
-`stats.ts`): Games, Hours played, Platinums, Trophies earned and Total spend say what the current
-year has ADDED to that total ("↑ 207.7h this year"), and This year compares its hours with the
-previous year's row ("↑ 45.2h vs 2025"). The colour rule is the hobby's, not Finance's: more is
-green, less is red, nothing is grey — more money spent on games is the hobby being enjoyed, so it is
-never "unfavorable". Started, hours and trophies come straight from the year table so the arrows and
-the table can never disagree; spend and platinums are counted on games whose first-played year is the
-current one (plus DLC played this year), an approximation the owner accepted because neither a
-purchase date nor a platinum date is recorded — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
+half-empty row. Six of the eight carry an arrow line (`VsLastYear` in the dashboard,
+`buildYearComparison` in `stats.ts`) comparing THIS year with LAST year, the way Finance compares a
+month with the one before: Games (started), Hours played, Platinums, Trophies earned, Total spend and
+This year (hours) each read "↓ 219.3h (41%) vs 2025" — the change, the percentage of last year's
+figure (omitted when that was zero), the year. The owner first had the five headline cards say what
+the year had added ("↑ 207.7h this year") and changed it the same day: "this should be comparing from
+the previous year". "Last year" is the previous CALENDAR year, never the nearest earlier year with
+data; with no row for it, no card shows an arrow. The colour rule is the hobby's, not Finance's: more
+is green, less is red, no change is grey — more money spent on games is the hobby being enjoyed, so it
+is never "unfavorable". Started, hours and trophies come straight from the year table so the arrows
+and the table can never disagree; spend and platinums are counted on games whose first-played year is
+the one in question (plus DLC played that year), an approximation the owner accepted because neither
+a purchase date nor a platinum date is recorded. Hours played and This year therefore carry the same
+line — both are "this year's hours against last year's" — which is accepted rather than inventing a
+second comparison for one of them — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
 charts (games / hours / trophies per year — a continuous year axis reads as a trend on a line the way
 disconnected bars don't; matches the owner's original spreadsheet, which kept exactly these three as
 line charts), a **Breakdown** section of four charts (platform / ownership / genre distribution, rating

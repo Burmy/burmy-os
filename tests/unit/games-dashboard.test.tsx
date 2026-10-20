@@ -133,11 +133,13 @@ describe('GamesDashboard', () => {
   });
 
   /**
-   * The arrow lines (2026-10-19). Every card but Cost per hour and Completion
-   * carries one; the colour rule is more = green, less = red, nothing = grey.
+   * The arrow lines (2026-10-19): every card but Cost per hour and Completion
+   * compares this year with LAST year — more = green, less = red, no change
+   * = grey — and the percentage is of last year's figure, left out when that
+   * was zero.
    */
-  it('shows what this year added under Games, Hours, Platinums, Trophies and Total spend', () => {
-    const thisYear = [
+  it('compares this year with last year under Games, Hours, Platinums, Trophies, Total spend and This year', () => {
+    const twoYears = [
       game({
         id: 'n',
         title: 'New',
@@ -147,34 +149,40 @@ describe('GamesDashboard', () => {
         platinum: true,
         achievementsUnlocked: 7,
       }),
+      // 2025: 1 started, 100h, 42 trophies (the fixture default), $59.99, no platinum.
       game({ id: 'p', title: 'Prior', firstPlayedYear: 2025, hoursTenths: 1000, platinum: false }),
     ];
     render(
-      <GamesDashboard rows={[...rows, ...thisYear]} playYears={[]} dlc={[]} currentYear={2026} />,
+      <GamesDashboard rows={[...rows, ...twoYears]} playYears={[]} dlc={[]} currentYear={2026} />,
     );
-    const lines = screen.getAllByText('this year');
-    expect(lines).toHaveLength(5);
-    // Games: 1 started; Hours: 5.5h; Platinums: 1; Trophies: 7; Spend: $10.00 — all green.
-    for (const text of ['1', '5.5h', '7', '$10.00']) {
-      const magnitude = screen
-        .getAllByText(text)
-        .find((el) => el.parentElement?.textContent?.endsWith('this year'));
-      expect(magnitude, text).toBeDefined();
-      expect(magnitude?.parentElement?.className).toContain('text-[var(--chart-income)]');
-    }
-    // This year vs 2025: 5.5h against Prior's 100h → down, red.
-    const vs = screen.getByText('vs 2025');
-    expect(vs.parentElement?.className).toContain('text-destructive');
-    expect(vs.parentElement?.textContent).toContain('↓');
+    expect(screen.getAllByText('vs 2025')).toHaveLength(6);
+    expect(screen.queryByText('this year')).not.toBeInTheDocument();
+
+    const line = (magnitude: string): HTMLElement => {
+      const el = screen
+        .getAllByText(magnitude)
+        .find((candidate) => candidate.parentElement?.textContent?.endsWith('vs 2025'));
+      expect(el, magnitude).toBeDefined();
+      return el!.parentElement!;
+    };
+    // Games: 1 started both years → flat, grey, "0 (0%)".
+    expect(line('0 (0%)').className).toContain('text-muted-foreground');
+    expect(line('0 (0%)').textContent).toContain('→');
+    // Hours (twice: Hours played and This year): 5.5h vs 100h → down 94.5h (95%), red.
+    expect(screen.getAllByText('94.5h (95%)')).toHaveLength(2);
+    expect(line('94.5h (95%)').className).toContain('text-destructive');
+    // Platinums: 1 vs 0 → up, green, no percentage of zero.
+    expect(line('1').className).toContain('text-[var(--chart-income)]');
+    expect(line('1').textContent).toContain('↑');
+    // Trophies: 7 vs 42 → down 35 (83%). Spend: $10.00 vs $59.99 → down $49.99 (83%).
+    expect(line('35 (83%)').className).toContain('text-destructive');
+    expect(line('$49.99 (83%)').className).toContain('text-destructive');
   });
 
-  it('greys the arrows when the year has added nothing, and omits the vs line with no previous year', () => {
+  it('shows no arrow on any card when the year table has no row for last year', () => {
     render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
-    for (const line of screen.getAllByText('this year')) {
-      expect(line.parentElement?.className).toContain('text-muted-foreground');
-      expect(line.parentElement?.textContent).toContain('→');
-    }
     expect(screen.queryByText(/^vs \d{4}$/)).not.toBeInTheDocument();
+    expect(screen.queryByText('this year')).not.toBeInTheDocument();
   });
 
   it('does not render a "vs. prev" column in the Year by year table', () => {

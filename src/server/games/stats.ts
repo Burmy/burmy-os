@@ -632,10 +632,11 @@ export function buildLeaderboard(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// This year's deltas — the arrows under the headline cards (2026-10-19)
+// This year against last year — the arrows under the headline cards (2026-10-19)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface YearDeltas {
+/** One year's figures, as the arrows compare them. */
+export interface YearFigures {
   readonly year: number;
   /** Games whose first-played year is this year — the year table's own count. */
   readonly started: number;
@@ -657,43 +658,64 @@ export interface YearDeltas {
    * platinum's own date is not recorded either.
    */
   readonly platinums: number;
-  /** The previous year's hours, for "vs last year" — null when there is no such row. */
-  readonly previous: { readonly year: number; readonly hoursTenths: number } | null;
+}
+
+export interface YearComparison {
+  readonly current: YearFigures;
+  /**
+   * The previous CALENDAR year — `year - 1`, not the nearest earlier year
+   * with data. Null when the year table has no row for it, and the cards
+   * then show no arrow at all rather than comparing against a year that is
+   * not the one the label would name.
+   */
+  readonly previous: YearFigures | null;
 }
 
 /**
- * What this year has added to the library so far. The only history Games
- * keeps is the year table, so every comparison is "this year" against the
- * rest of the library, or this year's hours against the previous year's.
- * `yearlyRows` is `buildYearlyBreakdown(...).rows` — passed in rather than
- * rebuilt so the arrows and the table under them can never disagree.
+ * One year's figures. Started, hours and trophies are read from
+ * `yearlyRows` (`buildYearlyBreakdown(...).rows`) rather than rebuilt, so
+ * the arrows and the year table under them can never disagree.
  */
-export function buildYearDeltas(
+export function yearFigures(
   rows: readonly GameStatRow[],
   dlc: readonly GameDlcRow[],
   yearlyRows: readonly YearlyBreakdownRow[],
   year: number,
-): YearDeltas {
-  const thisYear = yearlyRows.find((row) => row.year === year);
-  const previousRow = yearlyRows.find((row) => row.year === year - 1);
-  const ids = new Set(rows.map((row) => row.id));
-  const startedThisYear = rows.filter((row) => row.firstPlayedYear === year);
+): YearFigures {
+  const row = yearlyRows.find((candidate) => candidate.year === year);
+  const ids = new Set(rows.map((game) => game.id));
+  const startedThisYear = rows.filter((game) => game.firstPlayedYear === year);
 
-  const baseSpend = startedThisYear.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+  const baseSpend = startedThisYear.reduce((sum, game) => sum + (game.priceCents ?? 0), 0);
   const dlcSpend = dlc
-    .filter((row) => row.year === year && ids.has(row.gameId))
-    .reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+    .filter((pack) => pack.year === year && ids.has(pack.gameId))
+    .reduce((sum, pack) => sum + (pack.priceCents ?? 0), 0);
 
   return {
     year,
-    started: thisYear?.startedCount ?? 0,
-    hoursTenths: thisYear?.hoursTenths ?? 0,
-    trophies: thisYear?.achievements ?? 0,
+    started: row?.startedCount ?? 0,
+    hoursTenths: row?.hoursTenths ?? 0,
+    trophies: row?.achievements ?? 0,
     spendCents: baseSpend + dlcSpend,
-    platinums: startedThisYear.filter((row) => row.platinum).length,
-    previous:
-      previousRow === undefined
-        ? null
-        : { year: previousRow.year, hoursTenths: previousRow.hoursTenths },
+    platinums: startedThisYear.filter((game) => game.platinum).length,
+  };
+}
+
+/**
+ * This year against last year, for every arrow on the dashboard. The only
+ * history Games keeps is the year table, so "last year" is the one honest
+ * comparison available — the owner asked for it on every card, the way
+ * Finance compares a month with the one before (2026-10-19).
+ */
+export function buildYearComparison(
+  rows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
+  yearlyRows: readonly YearlyBreakdownRow[],
+  year: number,
+): YearComparison {
+  const hasPrevious = yearlyRows.some((row) => row.year === year - 1);
+  return {
+    current: yearFigures(rows, dlc, yearlyRows, year),
+    previous: hasPrevious ? yearFigures(rows, dlc, yearlyRows, year - 1) : null,
   };
 }

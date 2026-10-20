@@ -8,13 +8,14 @@ import type { GameDlcRow } from '@/server/games/dlc';
 import type { PlayYearRow } from '@/server/games/play-years';
 import {
   type GameStatRow,
+  type YearFigures,
   buildDistribution,
   buildFinancialSummary,
   buildGenreDistribution,
   buildLeaderboard,
   buildLibrarySummary,
   buildTrophyTotals,
-  buildYearDeltas,
+  buildYearComparison,
   buildYearlyBreakdown,
   findCallouts,
 } from '@/server/games/stats';
@@ -79,11 +80,28 @@ export function GamesDashboard({
   const yearly = buildYearlyBreakdown(rows, playYears, dlc);
   const callouts = findCallouts(rows, dlc, yearly.rows);
   const thisYear = yearly.rows.find((row) => row.year === currentYear);
-  // The arrows under the headline cards: what this year has added to each
-  // total, and this year's hours against last year's (owner, 2026-10-19).
-  const deltas = buildYearDeltas(rows, dlc, yearly.rows, currentYear);
-  const hoursVsLastYear =
-    deltas.previous === null ? null : deltas.hoursTenths - deltas.previous.hoursTenths;
+  // The arrows under the headline cards: this year against last year on
+  // every one of them, the way Finance compares a month with the one before
+  // (owner, 2026-10-19: "this should be comparing from the previous year").
+  // With no row for last year there is nothing honest to compare against, so
+  // every card simply has no arrow — `vs()` returns no prop at all.
+  const years = buildYearComparison(rows, dlc, yearly.rows, currentYear);
+  const vs = (
+    pick: (figures: YearFiguresLike) => number,
+    format: (magnitude: number) => string,
+  ): { comparison?: React.ReactNode } =>
+    years.previous === null
+      ? {}
+      : {
+          comparison: (
+            <VsLastYear
+              now={pick(years.current)}
+              then={pick(years.previous)}
+              year={years.previous.year}
+              format={format}
+            />
+          ),
+        };
 
   // Platform and genre count GAMES, so they exclude collection wrappers —
   // otherwise "The Nathan Drake Collection" contributes a fourth PS4 entry
@@ -152,21 +170,22 @@ export function GamesDashboard({
         <StatCard
           label="Games"
           value={String(summary.totalGames)}
-          comparison={<YearDelta delta={deltas.started} text={String(deltas.started)} />}
+          {...vs((y) => y.started, String)}
           {...(qualityHint === undefined ? {} : { hint: qualityHint })}
         />
         <StatCard
           label="Hours played"
           value={formatHours(hours(summary.totalHoursTenths))}
-          comparison={
-            <YearDelta delta={deltas.hoursTenths} text={formatHours(hours(deltas.hoursTenths))} />
-          }
+          {...vs(
+            (y) => y.hoursTenths,
+            (tenths) => formatHours(hours(tenths)),
+          )}
           {...(avgPlaytimeHint === undefined ? {} : { hint: avgPlaytimeHint })}
         />
         <StatCard
           label="Platinums"
           value={String(summary.platinumCount)}
-          comparison={<YearDelta delta={deltas.platinums} text={String(deltas.platinums)} />}
+          {...vs((y) => y.platinums, String)}
           hint={`of ${summary.totalGames} games`}
         />
         {/* From the hand-entered earned/total counts on each game — the same
@@ -175,17 +194,16 @@ export function GamesDashboard({
         <StatCard
           label="Trophies earned"
           value={trophies.earned.toLocaleString('en-US')}
-          comparison={
-            <YearDelta delta={deltas.trophies} text={deltas.trophies.toLocaleString('en-US')} />
-          }
+          {...vs(
+            (y) => y.trophies,
+            (count) => count.toLocaleString('en-US'),
+          )}
           hint={trophyHint(trophies)}
         />
         <StatCard
           label="Total spend"
           value={formatPriceCents(financial.totalSpendCents)}
-          comparison={
-            <YearDelta delta={deltas.spendCents} text={formatPriceCents(deltas.spendCents)} />
-          }
+          {...vs((y) => y.spendCents, formatPriceCents)}
           {...(avgPriceHint === undefined ? {} : { hint: avgPriceHint })}
         />
         <StatCard
@@ -202,17 +220,10 @@ export function GamesDashboard({
         <StatCard
           label="This year"
           value={thisYear === undefined ? '—' : formatHours(hours(thisYear.hoursTenths))}
-          {...(hoursVsLastYear === null || deltas.previous === null
-            ? {}
-            : {
-                comparison: (
-                  <YearDelta
-                    delta={hoursVsLastYear}
-                    text={formatHours(hours(Math.abs(hoursVsLastYear)))}
-                    suffix={`vs ${deltas.previous.year}`}
-                  />
-                ),
-              })}
+          {...vs(
+            (y) => y.hoursTenths,
+            (tenths) => formatHours(hours(tenths)),
+          )}
           hint={
             thisYear === undefined
               ? `Nothing played in ${currentYear} yet`
@@ -351,26 +362,33 @@ export function GamesDashboard({
   );
 }
 
+/** The five figures `vs()` can pick from — `YearFigures` minus its year. */
+type YearFiguresLike = Omit<YearFigures, 'year'>;
+
 /**
- * The arrow line under a Games stat card — the same shape as Finance's
- * `ComparisonIndicator`, with the hobby's own colour rule (owner,
- * 2026-10-19): more is green, less is red, nothing is grey. Finance has
- * "favorable"/"unfavorable" because more spending is bad; here more of
- * anything — hours, trophies, even money spent — is the hobby being enjoyed.
+ * The arrow line under a Games stat card — "↓ 219.3h (41%) vs 2025": the
+ * change from last year to this one, as Finance's `ComparisonIndicator`
+ * prints a month against the one before, with the hobby's own colour rule
+ * (owner, 2026-10-19): more is green, less is red, no change is grey.
+ * Finance has "favorable"/"unfavorable" because more spending is bad; here
+ * more of anything — hours, trophies, even money spent — is the hobby being
+ * enjoyed.
  *
- * `text` is the magnitude, already formatted; `delta`'s sign only picks the
- * arrow and the colour. The headline cards say "this year" (what the year
- * added to the total); the This-year card says "vs <last year>".
+ * The percentage is of LAST year's figure and is left out when that was
+ * zero — "↑ 2 vs 2025" rather than a division by nothing.
  */
-function YearDelta({
-  delta,
-  text,
-  suffix = 'this year',
+function VsLastYear({
+  now,
+  then,
+  year,
+  format,
 }: {
-  readonly delta: number;
-  readonly text: string;
-  readonly suffix?: string;
+  readonly now: number;
+  readonly then: number;
+  readonly year: number;
+  readonly format: (magnitude: number) => string;
 }): React.ReactElement {
+  const delta = now - then;
   const tone =
     delta > 0
       ? 'text-[var(--chart-income)]'
@@ -378,11 +396,15 @@ function YearDelta({
         ? 'text-destructive'
         : 'text-muted-foreground';
   const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+  const percent = then === 0 ? null : Math.round((Math.abs(delta) / then) * 100);
   return (
     <span className={`inline-flex items-center gap-1 text-xs font-medium ${tone}`}>
       <span aria-hidden="true">{arrow}</span>
-      <span className="tabular">{text}</span>
-      <span className="text-muted-foreground font-normal">{suffix}</span>
+      <span className="tabular">
+        {format(Math.abs(delta))}
+        {percent === null ? '' : ` (${percent}%)`}
+      </span>
+      <span className="text-muted-foreground font-normal">vs {year}</span>
     </span>
   );
 }
