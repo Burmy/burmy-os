@@ -25,10 +25,8 @@ import {
   buildTrend,
   buildYearlyBreakdown,
   compareToBaseline,
-  dropUncoveredTail,
   isMonthCovered,
   lastDayOfMonth,
-  latestCoveredMonth,
   partitionCoverage,
   compareToPreviousMonth,
   computeAverageDailySpending,
@@ -43,7 +41,11 @@ import {
   type CategoryMeta,
   type TrendPoint,
 } from '@/server/finance/dashboard';
-import { buildMonthlyGrid, MONTH_ABBREVIATIONS, type GridCategoryMeta } from '@/server/finance/grid';
+import {
+  buildMonthlyGrid,
+  MONTH_ABBREVIATIONS,
+  type GridCategoryMeta,
+} from '@/server/finance/grid';
 import { cents, format } from '@/server/finance/money';
 
 export const metadata: Metadata = { title: 'Finance — Burmy' };
@@ -65,7 +67,11 @@ function readMonth(value: string | string[] | undefined, fallback: number): numb
  * inclusive — the date range `getCategoryTotalsForWindow` queries, and the
  * shared x-axis the category trend chart's series are zero-filled against.
  */
-function trailingMonths(year: number, month: number, count: number): { readonly year: number; readonly month: number }[] {
+function trailingMonths(
+  year: number,
+  month: number,
+  count: number,
+): { readonly year: number; readonly month: number }[] {
   const result: { year: number; month: number }[] = [];
   let y = year;
   let m = month;
@@ -189,7 +195,9 @@ export default async function MonthlyPage({
   const summary = toMonthSummary(selectedTotal);
 
   const previous = previousMonth(year, month);
-  const previousTotal = monthlyTotals.find((row) => row.year === previous.year && row.month === previous.month);
+  const previousTotal = monthlyTotals.find(
+    (row) => row.year === previous.year && row.month === previous.month,
+  );
   const previousSummary = previousTotal ? toMonthSummary(previousTotal) : null;
   const comparison = compareToPreviousMonth(summary, previousSummary);
   const previousMonthLabel = MONTH_ABBREVIATIONS[previous.month - 1] ?? '';
@@ -205,7 +213,10 @@ export default async function MonthlyPage({
   // dressed up as an average. The stat cards now render only for a covered
   // month (see `monthIsCovered` below), so there is no partial case left to
   // special-case, and no divisor that changes meaning depending on the date.
-  const avgDailySpendingCents = computeAverageDailySpending(summary.expenseCents, daysInMonth(year, month));
+  const avgDailySpendingCents = computeAverageDailySpending(
+    summary.expenseCents,
+    daysInMonth(year, month),
+  );
 
   const selectedGridRow = grid.rows[month - 1];
   const expenseTxnCount = selectedGridRow?.totalExpenditureTxnCount ?? 0;
@@ -215,20 +226,21 @@ export default async function MonthlyPage({
   // See `AccountCoverage` in `server/finance/dashboard.ts` for the rule and
   // why it is derived from the transactions rather than configured.
   const monthIsCovered = isMonthCovered(coverage, year, month);
-  const lastCovered = latestCoveredMonth(coverage);
   // Split here rather than inside the component so the "isn't ready" panel can
   // say which accounts it is actually waiting on and which it has written off —
   // the split is a domain decision, not a presentation one.
   const { reporting: reportingAccounts, dormant: dormantAccounts } = partitionCoverage(coverage);
 
-  // The trend is anchored at the last COVERED month, not the last month with
-  // any data at all. Anchoring at the latter put a half-imported month at the
-  // right-hand end of every line, where it read as a collapse in income and
-  // spending rather than as an artifact of the statement cycle. Anchoring
-  // rather than filtering afterwards keeps a full 12 points on the chart.
-  const trendAnchor = lastCovered ?? monthlyTotals.at(-1) ?? null;
-  const trend: TrendPoint[] = trendAnchor
-    ? buildTrend(monthlyTotals, trendAnchor.year, trendAnchor.month, 12)
+  // EVERY MONTH WITH DATA SHOWS, the current partial one included. The trend
+  // used to be anchored at the last COVERED month so a half-imported month
+  // never sat at the right-hand end of a line; the owner reversed that on
+  // 2026-10-19 ("I should be able to see previous months' expenses regardless
+  // of whether the statement reached the whole month"). The coverage note on
+  // the month view says how far each account's data reaches; the numbers are
+  // no longer withheld on its account.
+  const newest = monthlyTotals.at(-1) ?? null;
+  const trend: TrendPoint[] = newest
+    ? buildTrend(monthlyTotals, newest.year, newest.month, 12)
     : [];
 
   const categoryMetaForBreakdown: CategoryMeta[] = [
@@ -236,19 +248,23 @@ export default async function MonthlyPage({
     { id: null, name: 'Uncategorized' },
   ];
 
-  const categoryBreakdown = buildCategoryBreakdown(categoryTotals, year, month, categoryMetaForBreakdown);
+  const categoryBreakdown = buildCategoryBreakdown(
+    categoryTotals,
+    year,
+    month,
+    categoryMetaForBreakdown,
+  );
   const recentMonthLabels = recentMonths.map((m) => ({
     year: m.year,
     month: m.month,
     label: `${MONTH_ABBREVIATIONS[m.month - 1] ?? ''} ${m.year}`,
   }));
-  // Same reason as `trend` above — the trailing window is anchored on the
-  // SELECTED month, so browsing to an uncovered month would otherwise end
-  // every category line on a partial column.
+  // The trailing window is anchored on the SELECTED month and, since
+  // 2026-10-19, is not trimmed at the coverage line — see `trend` above.
   const categoryTrend = buildCategoryTrend(
     categoryTotals,
     categoryMetaForBreakdown,
-    dropUncoveredTail(recentMonthLabels, coverage),
+    recentMonthLabels,
     5,
   );
   const biggestSpendingDay = findBiggestSpendingDay(dailyTotals);
@@ -262,22 +278,21 @@ export default async function MonthlyPage({
     bestNetMonth: findExtremeMonth(monthlyTotals, 'net'),
   };
 
-  // Year Overview reports on COVERED months only, for the same reason the
-  // month view does — "year to date" that silently includes half of the
-  // current month is not a figure anything can be compared against. A past
-  // year fully behind the coverage line reads as all 12.
+  // Year Overview reports on every month WITH DATA — through the newest
+  // imported month of the selected year (a past year reads as all 12). It
+  // reported covered months only until 2026-10-19; see `trend` above.
   //
-  // The final `: 0` is a year entirely AHEAD of the coverage line (browsing to
-  // 2027 in January 2027, before the December statements land). Zero covered
-  // months is the honest answer, but a row of $0.00 stat cards is not the way
-  // to say it — `YearNotReady` renders instead, exactly like the month view's
-  // own gate. This is what put an empty Year Overview above a grid full of real
-  // 2026 numbers in production: the arithmetic was right and the screen lied.
+  // The final `: 0` is a year with nothing imported at all (browsing to 2027
+  // before any 2027 statement lands). Zero months is the honest answer, but a
+  // row of $0.00 stat cards is not the way to say it — `YearNotReady` renders
+  // instead.
   const ytdMonthsElapsed =
-    lastCovered === null ? 0 : lastCovered.year > year ? 12 : lastCovered.year === year ? lastCovered.month : 0;
+    newest === null ? 0 : newest.year > year ? 12 : newest.year === year ? newest.month : 0;
   // Both annual views read from this rather than the raw year, so the donut
   // and the stacked bars agree with the YTD cards above them.
-  const coveredYearCategoryTotals = yearCategoryTotals.filter((row) => row.month <= ytdMonthsElapsed);
+  const coveredYearCategoryTotals = yearCategoryTotals.filter(
+    (row) => row.month <= ytdMonthsElapsed,
+  );
   const ytdRows = grid.rows.map((row) => ({
     month: row.month,
     incomeCents: row.incomeCents,
@@ -293,7 +308,11 @@ export default async function MonthlyPage({
     netCents: row.grossSavingsCents,
   }));
 
-  const annualCategories = buildAnnualCategoryBreakdown(coveredYearCategoryTotals, year, categoryMetaForBreakdown);
+  const annualCategories = buildAnnualCategoryBreakdown(
+    coveredYearCategoryTotals,
+    year,
+    categoryMetaForBreakdown,
+  );
   // Every real category gets its own series — `+ 2` covers an uncategorized
   // bucket too, so the "Other categories" catch-all never actually triggers
   // for a normal category list. The 16-color chart palette is sized to
@@ -331,11 +350,18 @@ export default async function MonthlyPage({
       ) : null}
 
       {grid.unreconciled.count > 0 ? (
-        <div role="alert" className="bg-destructive/10 text-destructive mt-3 rounded-md px-3 py-2 text-sm">
-          {grid.unreconciled.count} confirmed transaction{grid.unreconciled.count === 1 ? '' : 's'} (
-          {format(cents(Math.abs(grid.unreconciled.totalCents)))}) {grid.unreconciled.count === 1 ? 'has' : 'have'}{' '}
-          no category and {grid.unreconciled.count === 1 ? "doesn't" : "don't"} appear in any column below —{' '}
-          <Link href="/finance/review?status=all&category=uncategorized" className="font-medium underline underline-offset-2">
+        <div
+          role="alert"
+          className="bg-destructive/10 text-destructive mt-3 rounded-md px-3 py-2 text-sm"
+        >
+          {grid.unreconciled.count} confirmed transaction{grid.unreconciled.count === 1 ? '' : 's'}{' '}
+          ({format(cents(Math.abs(grid.unreconciled.totalCents)))}){' '}
+          {grid.unreconciled.count === 1 ? 'has' : 'have'} no category and{' '}
+          {grid.unreconciled.count === 1 ? "doesn't" : "don't"} appear in any column below —{' '}
+          <Link
+            href="/finance/review?status=all&category=uncategorized"
+            className="font-medium underline underline-offset-2"
+          >
             Review now
           </Link>
         </div>
@@ -367,7 +393,7 @@ export default async function MonthlyPage({
             actions={actions}
             summary={summary}
             comparison={comparison}
-        baseline={baseline}
+            baseline={baseline}
             savingsRatePercent={savingsRatePercent}
             avgDailySpendingCents={avgDailySpendingCents}
             avgTransactionCents={avgTransactionCents}

@@ -405,8 +405,12 @@ These are verified, not folklore. Do not "fix" them back.
   reportable only when EVERY active account has a transaction on or after its last day
   (`isMonthCovered`, `src/server/finance/dashboard.ts`) — derived from the transactions, never from a
   configured statement-close day, because a configured day lies exactly when a statement is late. The
-  page defaults to `month − 1`, an uncovered month shows no stat cards at all, and trend charts drop
-  the uncovered tail. It is conservative by design, and that cost is accepted.
+  page defaults to `month − 1`. **Reversed in part on 2026-10-19:** the owner asked to see a partial
+  month's figures regardless, so an uncovered month now renders its cards under a one-line
+  `CoverageNote` naming how far each account's data reaches, and the trend charts run to the newest
+  month with data. The coverage rule still decides WHEN the note shows; it no longer withholds numbers.
+  `isMonthCovered`, `partitionCoverage`, `latestCoveredMonth` and `dropUncoveredTail` remain in the
+  domain module, tested, for the note and for anything that wants the conservative view back.
 - **"The owner can just go change the setting" is not a fix — especially when there is no screen to
   change it on.** The rule above originally judged every `is_active = true` account, and its own doc
   comment named the consequence (a dormant account freezes every later month) while calling the remedy

@@ -164,31 +164,24 @@ export function FinanceDashboard({
 
       {view === 'month' ? (
         <div className={SECTION_STACK}>
-          {/* THE MONTH'S OWN NUMBERS ARE ALL-OR-NOTHING.
-              Every card here, plus the category breakdown, the insights and
-              the largest-expenses list further down, describes ONE month — and
-              a month whose statements have not all arrived cannot honestly
-              produce any of them. A savings rate computed from two weeks of
-              card spending against a full month of income is not a smaller
-              truth, it is a wrong number. So the whole block is replaced by an
-              explanation of what is still missing.
-
-              The trend charts in between are deliberately NOT gated: they are
-              history rather than this month, and they already end at the last
-              covered month (`dropUncoveredTail`), so the page still has
-              something to show. */}
-          {coverage.covered ? (
-            <MonthStats
-              summary={summary}
-              comparison={comparison}
-              baseline={baseline}
-              previousMonthLabel={previousMonthLabel}
-              savingsRatePercent={savingsRatePercent}
-              avgDailySpendingCents={avgDailySpendingCents}
-            />
-          ) : (
-            <MonthNotReady coverage={coverage} year={year} month={month} />
-          )}
+          {/* THE MONTH'S NUMBERS ALWAYS SHOW. Until 2026-10-19 a month whose
+              statements had not all arrived rendered an explanation INSTEAD of
+              its cards — a savings rate from two weeks of card spending against
+              a full month of income is a wrong number, and the gate kept it off
+              the screen. The owner wanted the figures anyway ("I should be able
+              to see previous months' expenses regardless"), so the gate became
+              a note: one quiet line saying how far each account's data reaches,
+              above numbers that cover exactly what has arrived. The reader
+              decides what a partial month means; the page no longer does. */}
+          {coverage.covered ? null : <CoverageNote coverage={coverage} year={year} month={month} />}
+          <MonthStats
+            summary={summary}
+            comparison={comparison}
+            baseline={baseline}
+            previousMonthLabel={previousMonthLabel}
+            savingsRatePercent={savingsRatePercent}
+            avgDailySpendingCents={avgDailySpendingCents}
+          />
 
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
             <Section title="Income vs Expenses" description="Most recent months of activity">
@@ -199,8 +192,7 @@ export function FinanceDashboard({
             </Section>
           </div>
 
-          {coverage.covered ? (
-            <>
+          <>
             <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
               <Section title="Spending by category" description="Selected month, largest first">
                 <CategoryBreakdownChart categories={categoryBreakdown} />
@@ -225,15 +217,13 @@ export function FinanceDashboard({
             <Section title="Largest expenses this month">
               <LargestExpensesList expenses={topExpenses} year={year} month={month} />
             </Section>
-            </>
-          ) : null}
+          </>
         </div>
       ) : ytd.summary.monthsElapsed === 0 ? (
-        // NOT A ROW OF $0.00 CARDS. No month of this year is covered yet, so
-        // every annual figure would be a sum over nothing — and it would render
-        // directly above a Full year grid showing real imported numbers, which
-        // is precisely the contradiction this shipped with. Same decision as the
-        // month view above: say what is missing instead of printing a zero.
+        // NOT A ROW OF $0.00 CARDS. Nothing is imported for this year at all,
+        // so every annual figure would be a sum over nothing. Say so instead of
+        // printing zeros. (Since 2026-10-19 a year with ANY data shows its
+        // figures, partial months included — see the month view above.)
         <YearNotReady year={ytd.summary.year} coverage={coverage} />
       ) : (
         <div className={SECTION_STACK}>
@@ -242,7 +232,10 @@ export function FinanceDashboard({
               label={isCompletedYear ? 'Income' : 'YTD Income'}
               value={format(cents(ytd.summary.incomeCents), { signed: true })}
             />
-            <StatCard label={isCompletedYear ? 'Expenses' : 'YTD Expenses'} value={format(cents(ytd.summary.expenseCents))} />
+            <StatCard
+              label={isCompletedYear ? 'Expenses' : 'YTD Expenses'}
+              value={format(cents(ytd.summary.expenseCents))}
+            />
             <StatCard
               label={isCompletedYear ? 'Net / Savings' : 'YTD Net'}
               value={format(cents(ytd.summary.netCents), { signed: true })}
@@ -254,7 +247,11 @@ export function FinanceDashboard({
             />
             <StatCard
               label={isCompletedYear ? 'Savings rate' : 'YTD savings rate'}
-              value={ytd.summary.savingsRatePercent === null ? '—' : formatPercent(ytd.summary.savingsRatePercent)}
+              value={
+                ytd.summary.savingsRatePercent === null
+                  ? '—'
+                  : formatPercent(ytd.summary.savingsRatePercent)
+              }
               {...(ytd.summary.savingsRatePercent === null ? { hint: 'No income yet' } : {})}
             />
           </StatCardGrid>
@@ -265,7 +262,8 @@ export function FinanceDashboard({
               <span className="text-foreground font-medium">
                 {format(cents(ytd.summary.highestSpendingMonth.expenseCents))}
               </span>{' '}
-              in {MONTH_ABBREVIATIONS[ytd.summary.highestSpendingMonth.month - 1]} {ytd.summary.year}
+              in {MONTH_ABBREVIATIONS[ytd.summary.highestSpendingMonth.month - 1]}{' '}
+              {ytd.summary.year}
             </p>
           ) : null}
 
@@ -276,12 +274,18 @@ export function FinanceDashboard({
             <IncomeExpenseTrendChart points={ytd.trend} />
           </Section>
 
-          <Section title="Yearly breakdown" description="Why one month cost more than another — Jan through Dec">
+          <Section
+            title="Yearly breakdown"
+            description="Why one month cost more than another — Jan through Dec"
+          >
             <YearlyBreakdownChart breakdown={ytd.yearlyBreakdown} />
           </Section>
 
           <Section title="Spending by category" description={`${ytd.summary.year}, largest first`}>
-            <AnnualCategoryChart categories={ytd.annualCategories} totalCents={ytd.summary.expenseCents} />
+            <AnnualCategoryChart
+              categories={ytd.annualCategories}
+              totalCents={ytd.summary.expenseCents}
+            />
           </Section>
         </div>
       )}
@@ -324,8 +328,15 @@ function MonthStats({
           // it is the one you can hold in your head; the baseline sits
           // under it as the answer to "but is that normal?"
           <div className="flex flex-col gap-1">
-            {comparison ? <ComparisonIndicator comparison={comparison.income} previousLabel={previousMonthLabel} /> : null}
-            {baseline ? <ComparisonIndicator comparison={baseline.income} previousLabel="12-mo avg" /> : null}
+            {comparison ? (
+              <ComparisonIndicator
+                comparison={comparison.income}
+                previousLabel={previousMonthLabel}
+              />
+            ) : null}
+            {baseline ? (
+              <ComparisonIndicator comparison={baseline.income} previousLabel="12-mo avg" />
+            ) : null}
           </div>
         }
       />
@@ -338,8 +349,15 @@ function MonthStats({
           // it is the one you can hold in your head; the baseline sits
           // under it as the answer to "but is that normal?"
           <div className="flex flex-col gap-1">
-            {comparison ? <ComparisonIndicator comparison={comparison.expense} previousLabel={previousMonthLabel} /> : null}
-            {baseline ? <ComparisonIndicator comparison={baseline.expense} previousLabel="12-mo avg" /> : null}
+            {comparison ? (
+              <ComparisonIndicator
+                comparison={comparison.expense}
+                previousLabel={previousMonthLabel}
+              />
+            ) : null}
+            {baseline ? (
+              <ComparisonIndicator comparison={baseline.expense} previousLabel="12-mo avg" />
+            ) : null}
           </div>
         }
       />
@@ -352,8 +370,12 @@ function MonthStats({
           // it is the one you can hold in your head; the baseline sits
           // under it as the answer to "but is that normal?"
           <div className="flex flex-col gap-1">
-            {comparison ? <ComparisonIndicator comparison={comparison.net} previousLabel={previousMonthLabel} /> : null}
-            {baseline ? <ComparisonIndicator comparison={baseline.net} previousLabel="12-mo avg" /> : null}
+            {comparison ? (
+              <ComparisonIndicator comparison={comparison.net} previousLabel={previousMonthLabel} />
+            ) : null}
+            {baseline ? (
+              <ComparisonIndicator comparison={baseline.net} previousLabel="12-mo avg" />
+            ) : null}
           </div>
         }
         {...(summary.netCents < 0 ? { valueClassName: 'text-destructive' } : {})}
@@ -374,12 +396,9 @@ function MonthStats({
 }
 
 /**
- * The Year Overview's counterpart to `MonthNotReady` — shown when not one month
- * of the selected year has all its statements in.
- *
- * It reuses the same account list for the same reason: the answer to "why is
- * 2027 empty?" is "because December 2026 hasn't finished arriving", and the
- * dates say that directly.
+ * The Year Overview with nothing to add up — shown when not one month of the
+ * selected year has any data. The account list answers "why is 2027 empty?":
+ * because nothing has reached 2027 yet, and the dates say so directly.
  */
 function YearNotReady({
   year,
@@ -390,10 +409,10 @@ function YearNotReady({
 }): React.ReactElement {
   return (
     <div role="status" className="bg-muted/40 rounded-md border p-6">
-      <h2 className="text-sm font-semibold">No fully imported months in {year} yet</h2>
+      <h2 className="text-sm font-semibold">Nothing imported for {year} yet</h2>
       <p className="text-muted-foreground mt-1 max-w-prose text-sm">
-        Annual totals cover whole months only, so there is nothing to add up yet. They appear as soon
-        as {year}&apos;s first month has data from every account.
+        There is nothing to add up. The annual figures appear as soon as a {year} statement is
+        imported.
       </p>
 
       {coverage.accounts.length > 0 ? (
@@ -401,7 +420,9 @@ function YearNotReady({
           {coverage.accounts.map((account) => (
             <div key={account.name} className="flex items-baseline justify-between gap-4">
               <dt className="text-muted-foreground">{account.name}</dt>
-              <dd className="text-muted-foreground">through {formatHumanDate(account.latestDate)}</dd>
+              <dd className="text-muted-foreground">
+                through {formatHumanDate(account.latestDate)}
+              </dd>
             </div>
           ))}
         </dl>
@@ -417,20 +438,20 @@ function YearNotReady({
 }
 
 /**
- * What the owner sees instead of numbers, for a month whose statements have
- * not all landed.
+ * One quiet line above a month whose statements have not all landed yet.
  *
- * It names every account and the date its data currently reaches, because the
- * question this exists to answer is "why is my August empty?" — and "checking
- * through Aug 15, card through Aug 27" answers it completely, in one glance,
- * without the owner having to go and look. A bare "not enough data" would send
- * them hunting for a bug instead.
+ * It names every account still short of the month's end and the date its data
+ * reaches, because "why does September look light?" is answered completely by
+ * "card through Sep 25" — on screen, without going to look. Accounts
+ * `partitionCoverage` has written off are not listed: nothing is waiting on
+ * them, and the note is for what IS still to come.
  *
- * Deliberately NOT styled as an error. This is the normal state of the current
- * month for most of every month: `role="status"`, muted, and it says plainly
- * what will make it go away.
+ * Deliberately NOT styled as an error and deliberately not a panel: this is
+ * the normal state of the current month for most of every month, and until
+ * 2026-10-19 it was a full card that replaced the numbers (`MonthNotReady`).
+ * The owner wanted the numbers; the explanation shrank to fit above them.
  */
-function MonthNotReady({
+function CoverageNote({
   coverage,
   year,
   month,
@@ -440,55 +461,19 @@ function MonthNotReady({
   readonly month: number;
 }): React.ReactElement {
   const monthLabel = `${MONTH_ABBREVIATIONS[month - 1] ?? ''} ${year}`;
+  const waiting = coverage.accounts.filter((account) => account.latestDate < coverage.monthEnd);
 
   return (
-    <div role="status" className="bg-muted/40 rounded-md border p-6">
-      <h2 className="text-sm font-semibold">{monthLabel} isn&apos;t fully imported yet</h2>
-      <p className="text-muted-foreground mt-1 max-w-prose text-sm">
-        Statements arrive mid-month, so these numbers would be counted against a period that
-        hasn&apos;t finished. They appear once every account has data through{' '}
-        {formatHumanDate(coverage.monthEnd)}.
-      </p>
-
-      {coverage.accounts.length > 0 ? (
-        <dl className="mt-4 max-w-sm space-y-1 text-sm">
-          {coverage.accounts.map((account) => (
-            <div key={account.name} className="flex items-baseline justify-between gap-4">
-              <dt className="text-muted-foreground">{account.name}</dt>
-              <dd className={account.latestDate >= coverage.monthEnd ? '' : 'text-muted-foreground'}>
-                through {formatHumanDate(account.latestDate)}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      ) : (
-        <p className="text-muted-foreground mt-4 text-sm">Nothing imported yet.</p>
-      )}
-
-      {coverage.dormant.length > 0 ? (
-        <div className="mt-4 max-w-sm">
-          {/* No "go and deactivate it" instruction: there is no Accounts screen
-              to send anyone to, and the whole point of `partitionCoverage` is
-              that this now resolves itself. This says what the app decided and
-              why — nothing here is waiting on the owner. */}
-          <p className="text-muted-foreground text-xs">
-            {coverage.dormant.length === 1 ? 'Not waiting on this account' : 'Not waiting on these accounts'} — no
-            statements in over two months, so {coverage.dormant.length === 1 ? 'it is' : 'they are'} treated as closed.
-          </p>
-          <dl className="text-muted-foreground mt-1 space-y-1 text-sm">
-            {coverage.dormant.map((account) => (
-              <div key={account.name} className="flex items-baseline justify-between gap-4">
-                <dt>{account.name}</dt>
-                <dd>through {formatHumanDate(account.latestDate)}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      ) : null}
-
-      <p className="text-muted-foreground mt-4 text-xs">
-        The full year grid below still shows everything that has been imported.
-      </p>
-    </div>
+    <p role="status" className="text-muted-foreground text-xs">
+      <span className="text-foreground font-medium">
+        {monthLabel} isn&apos;t fully imported yet
+      </span>
+      {' — figures cover what has arrived. '}
+      {waiting.length === 0
+        ? 'Nothing imported yet.'
+        : waiting
+            .map((account) => `${account.name} through ${formatHumanDate(account.latestDate)}`)
+            .join(' · ')}
+    </p>
   );
 }

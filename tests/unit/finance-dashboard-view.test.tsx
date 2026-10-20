@@ -2,7 +2,10 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { FinanceDashboard, type FinanceDashboardProps } from '@/features/finance/dashboard/finance-dashboard';
+import {
+  FinanceDashboard,
+  type FinanceDashboardProps,
+} from '@/features/finance/dashboard/finance-dashboard';
 
 /**
  * WHY THIS FILE EXISTS.
@@ -36,7 +39,14 @@ vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 // nothing and their surrounding Sections still mount. Nothing here asserts on
 // chart internals; the assertions are about which BLOCKS are on screen.
 
-const summary = { year: 2026, month: 7, incomeCents: 640_000, expenseCents: 512_345, netCents: 127_655, transactionCount: 96 };
+const summary = {
+  year: 2026,
+  month: 7,
+  incomeCents: 640_000,
+  expenseCents: 512_345,
+  netCents: 127_655,
+  transactionCount: 96,
+};
 
 function props(overrides: Partial<FinanceDashboardProps> = {}): FinanceDashboardProps {
   return {
@@ -116,7 +126,10 @@ describe('FinanceDashboard — month view', () => {
     expect(screen.queryByText('-$6,400.00')).not.toBeInTheDocument();
   });
 
-  it('replaces every number with an explanation when the month is not covered', () => {
+  it('shows the numbers AND a coverage note when the month is not covered (2026-10-19)', () => {
+    // Until 2026-10-19 the cards were replaced by an explanation; the owner
+    // wanted the figures regardless, so the explanation became one line above
+    // them naming each account still short of the month's end.
     render(
       <FinanceDashboard
         {...props({
@@ -133,41 +146,44 @@ describe('FinanceDashboard — month view', () => {
       />,
     );
 
-    expect(screen.getByText(/isn.t fully imported yet/i)).toBeInTheDocument();
-    // Each account and the date its data reaches — the whole answer to "why is
-    // this empty?", on screen rather than inferable.
-    expect(screen.getByText('BoA Checking')).toBeInTheDocument();
-    expect(screen.getByText('through Aug 7, 2026')).toBeInTheDocument();
-    expect(screen.getByText('through Aug 26, 2026')).toBeInTheDocument();
-    // The stat cards are gone, not merely zeroed.
-    expect(screen.queryByText('$5,123.45')).not.toBeInTheDocument();
+    const note = screen.getByRole('status');
+    expect(note).toHaveTextContent(/isn.t fully imported yet/i);
+    expect(note).toHaveTextContent('BoA Checking through Aug 7, 2026');
+    expect(note).toHaveTextContent('BoA Credit Card through Aug 26, 2026');
+    // The stat cards stay: the numbers cover what has arrived.
+    expect(screen.getByText('$5,123.45')).toBeInTheDocument();
+    expect(screen.getByText('$6,400.00')).toBeInTheDocument();
+    expect(screen.getByText('Largest expenses this month')).toBeInTheDocument();
   });
 
-  it('names a written-off account and says it is not being waited on', () => {
-    // REGRESSION — the retired "Historical (2024-2025)" account. It must appear
-    // (an account silently dropped from the rule is unexplainable) and it must
-    // be clearly separated from the accounts actually holding the month up.
+  it('lists only the accounts still to come, not a written-off one, and only those short of the month end', () => {
+    // The retired "Historical (2024-2025)" account is not waited on, so the
+    // note does not name it; an account already past the month's end is not
+    // "still to come" either.
     render(
       <FinanceDashboard
         {...props({
           coverage: {
             covered: false,
             monthEnd: '2026-08-31',
-            accounts: [{ name: 'BoA Checking', latestDate: '2026-08-07' }],
+            accounts: [
+              { name: 'BoA Checking', latestDate: '2026-08-07' },
+              { name: 'BoA Credit Card', latestDate: '2026-09-02' },
+            ],
             dormant: [{ name: 'Historical (2024-2025)', latestDate: '2025-12-01' }],
           },
         })}
       />,
     );
 
-    expect(screen.getByText('Historical (2024-2025)')).toBeInTheDocument();
-    expect(screen.getByText(/not waiting on this account/i)).toBeInTheDocument();
-    expect(screen.getByText('through Dec 1, 2025')).toBeInTheDocument();
+    const note = screen.getByRole('status');
+    expect(note).toHaveTextContent('BoA Checking through Aug 7, 2026');
+    expect(note).not.toHaveTextContent('BoA Credit Card');
+    expect(note).not.toHaveTextContent('Historical');
   });
 
   it('keeps the trend charts up even for an uncovered month', () => {
-    // They are history, already trimmed at the last covered month, so gating
-    // them too would leave the page with nothing at all on it.
+    // History is never gated; since 2026-10-19 it is not trimmed either.
     render(
       <FinanceDashboard
         {...props({
@@ -205,7 +221,7 @@ describe('FinanceDashboard — year view', () => {
     expect(screen.queryByText('YTD Income')).not.toBeInTheDocument();
   });
 
-  it('says nothing is covered instead of printing $0.00 across the board', async () => {
+  it('says nothing is imported instead of printing $0.00 across the board', async () => {
     // REGRESSION — the zeroed Year Overview. `monthsElapsed: 0` is an honest
     // result (no month of this year is covered), but rendering it as a row of
     // real-looking $0.00 cards above a grid full of real numbers is not an
@@ -231,7 +247,7 @@ describe('FinanceDashboard — year view', () => {
     );
     await openYearView();
 
-    expect(screen.getByText('No fully imported months in 2026 yet')).toBeInTheDocument();
+    expect(screen.getByText('Nothing imported for 2026 yet')).toBeInTheDocument();
     expect(screen.queryByText('YTD Income')).not.toBeInTheDocument();
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
     // The account dates explain WHY, here as much as in the month view.

@@ -1143,28 +1143,32 @@ July is correctly whole even though no single statement is aligned to it — the
   January rolls the year back), deliberately *not* "the newest covered month" — the default is where
   you land and should be the same every time you open the app. Whether that month is whole is a
   separate question, answered below it.
-- **An uncovered month shows no numbers at all.** The six stat cards, the category breakdown, the
-  insights and the largest-expenses list are replaced by `MonthNotReady`, which names every account and
-  the date its data reaches: *"BoA Checking — through Aug 15."* That is the answer to "why is my August
-  empty?", on screen, without going to look. It is `role="status"` and muted, not an error — this is the
-  normal state of the current month for most of every month.
-- **Trend charts end at the last covered month.** A partial month at the right-hand end of a line reads
-  as a collapse in income and spending; a chart cannot carry a footnote. Only the TAIL is trimmed — a
-  gap mid-history is a month that was never imported, and hiding it would misrepresent the series far
-  more than showing it does.
+- **An uncovered month shows its numbers, under a one-line note** (since 2026-10-19). Until then the
+  six stat cards, the category breakdown, the insights and the largest-expenses list were replaced by a
+  `MonthNotReady` panel — the reasoning being that a savings rate computed from two weeks of card
+  spending against a full month of income is a wrong number, not a smaller one. The owner reversed it:
+  *"I should be able to see previous months' expenses regardless of whether the statement reached the
+  whole month."* `CoverageNote` now sits above the cards: *"Sep 2026 isn't fully imported yet — figures
+  cover what has arrived. Checking through Sep 28, 2026 · Credit Card through Sep 25, 2026."* It names
+  only the accounts still short of the month's end (a written-off account is not waited on and is not
+  listed). It is `role="status"` and muted, not an error — this is the normal state of the current month
+  for most of every month. The reader decides what a partial month means; the page no longer does.
+- **Trend charts run to the newest month with data** (since 2026-10-19; they ended at the last covered
+  month before). A partial month now sits at the right-hand end of the line, which the note above
+  explains. A gap mid-history is still a month that was never imported and is still shown as one.
 - **`Avg. daily spending` always divides by the whole month.** It used to divide by the elapsed day and
   label the result "So far this month" — a partial figure dressed as an average. With no partial case
   left, there is no divisor that changes meaning depending on the date.
-- **Year Overview counts covered months only**, so YTD figures and the annual donut agree with the
-  monthly cards above them. A year with **zero** covered months renders `YearNotReady` — the same
-  treatment the month view gets — rather than a row of `$0.00` cards. Zero covered months is an honest
-  result; `$0.00` presented as a total is not a way to say it.
+- **Year Overview counts every month with data**, through the newest imported month of the year (since
+  2026-10-19; covered months only before), so YTD figures and the annual donut agree with the monthly
+  cards above them. A year with **nothing imported** renders `YearNotReady` rather than a row of `$0.00`
+  cards. Zero months is an honest result; `$0.00` presented as a total is not a way to say it.
 - **The full year grid is untouched** and still shows everything imported, partial months included. It
   is a ledger view, not a set of derived headline figures, and the owner asked for it to stay as it is.
 
-**One property, stated rather than engineered around:** it is **conservative**. A month with genuinely
-no activity in its final days reads as uncovered until the next statement arrives. The cost is a short
-wait for unremarkable numbers; the cost of the opposite error is a confident wrong one.
+**One property, stated rather than engineered around:** the coverage rule itself is **conservative**. A
+month with genuinely no activity in its final days reads as uncovered until the next statement arrives.
+Since 2026-10-19 that costs only a note above the numbers rather than the numbers themselves.
 
 ### The dormant-account bug — why `partitionCoverage` exists
 

@@ -28,11 +28,18 @@ export default async function FinanceTabsLayout({
     { href: '/finance/transactions', label: 'Transactions' },
     // `exactOptionalPropertyTypes` is on — omit `badge` entirely when zero
     // rather than setting it to `undefined`. See CLAUDE.md.
-    { href: '/finance/review', label: 'Review', ...(needsReviewCount > 0 ? { badge: needsReviewCount } : {}) },
+    {
+      href: '/finance/review',
+      label: 'Review',
+      ...(needsReviewCount > 0 ? { badge: needsReviewCount } : {}),
+    },
   ];
 
   return (
-    <div className="space-y-6">
+    // `data-full-width`: the private layout drops its 1600px cap here as it
+    // does for Games — the monthly grid and the charts want the width (owner,
+    // 2026-10-19: "make the screen bigger as well just like games").
+    <div className="space-y-6" data-full-width="">
       <SubNav links={links} />
       {children}
     </div>
