@@ -294,17 +294,6 @@ export function FinanceDashboard({
             />
           </StatCardGrid>
 
-          {ytd.summary.highestSpendingMonth ? (
-            <p className="text-muted-foreground text-sm">
-              Highest-spending month:{' '}
-              <span className="text-foreground font-medium">
-                {format(cents(ytd.summary.highestSpendingMonth.expenseCents))}
-              </span>{' '}
-              in {MONTH_ABBREVIATIONS[ytd.summary.highestSpendingMonth.month - 1]}{' '}
-              {ytd.summary.year}
-            </p>
-          ) : null}
-
           <Section
             title={`${ytd.summary.year} income vs expenses`}
             description={isCompletedYear ? 'Every month this year' : 'Every month so far this year'}

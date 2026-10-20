@@ -14,6 +14,7 @@ import {
   buildLeaderboard,
   buildLibrarySummary,
   buildTrophyTotals,
+  buildYearDeltas,
   buildYearlyBreakdown,
   findCallouts,
 } from '@/server/games/stats';
@@ -78,6 +79,11 @@ export function GamesDashboard({
   const yearly = buildYearlyBreakdown(rows, playYears, dlc);
   const callouts = findCallouts(rows, dlc, yearly.rows);
   const thisYear = yearly.rows.find((row) => row.year === currentYear);
+  // The arrows under the headline cards: what this year has added to each
+  // total, and this year's hours against last year's (owner, 2026-10-19).
+  const deltas = buildYearDeltas(rows, dlc, yearly.rows, currentYear);
+  const hoursVsLastYear =
+    deltas.previous === null ? null : deltas.hoursTenths - deltas.previous.hoursTenths;
 
   // Platform and genre count GAMES, so they exclude collection wrappers —
   // otherwise "The Nathan Drake Collection" contributes a fourth PS4 entry
@@ -146,16 +152,21 @@ export function GamesDashboard({
         <StatCard
           label="Games"
           value={String(summary.totalGames)}
+          comparison={<YearDelta delta={deltas.started} text={String(deltas.started)} />}
           {...(qualityHint === undefined ? {} : { hint: qualityHint })}
         />
         <StatCard
           label="Hours played"
           value={formatHours(hours(summary.totalHoursTenths))}
+          comparison={
+            <YearDelta delta={deltas.hoursTenths} text={formatHours(hours(deltas.hoursTenths))} />
+          }
           {...(avgPlaytimeHint === undefined ? {} : { hint: avgPlaytimeHint })}
         />
         <StatCard
           label="Platinums"
           value={String(summary.platinumCount)}
+          comparison={<YearDelta delta={deltas.platinums} text={String(deltas.platinums)} />}
           hint={`of ${summary.totalGames} games`}
         />
         {/* From the hand-entered earned/total counts on each game — the same
@@ -164,11 +175,17 @@ export function GamesDashboard({
         <StatCard
           label="Trophies earned"
           value={trophies.earned.toLocaleString('en-US')}
+          comparison={
+            <YearDelta delta={deltas.trophies} text={deltas.trophies.toLocaleString('en-US')} />
+          }
           hint={trophyHint(trophies)}
         />
         <StatCard
           label="Total spend"
           value={formatPriceCents(financial.totalSpendCents)}
+          comparison={
+            <YearDelta delta={deltas.spendCents} text={formatPriceCents(deltas.spendCents)} />
+          }
           {...(avgPriceHint === undefined ? {} : { hint: avgPriceHint })}
         />
         <StatCard
@@ -185,6 +202,17 @@ export function GamesDashboard({
         <StatCard
           label="This year"
           value={thisYear === undefined ? '—' : formatHours(hours(thisYear.hoursTenths))}
+          {...(hoursVsLastYear === null || deltas.previous === null
+            ? {}
+            : {
+                comparison: (
+                  <YearDelta
+                    delta={hoursVsLastYear}
+                    text={formatHours(hours(Math.abs(hoursVsLastYear)))}
+                    suffix={`vs ${deltas.previous.year}`}
+                  />
+                ),
+              })}
           hint={
             thisYear === undefined
               ? `Nothing played in ${currentYear} yet`
@@ -320,6 +348,42 @@ export function GamesDashboard({
         />
       </StatCardGrid>
     </div>
+  );
+}
+
+/**
+ * The arrow line under a Games stat card — the same shape as Finance's
+ * `ComparisonIndicator`, with the hobby's own colour rule (owner,
+ * 2026-10-19): more is green, less is red, nothing is grey. Finance has
+ * "favorable"/"unfavorable" because more spending is bad; here more of
+ * anything — hours, trophies, even money spent — is the hobby being enjoyed.
+ *
+ * `text` is the magnitude, already formatted; `delta`'s sign only picks the
+ * arrow and the colour. The headline cards say "this year" (what the year
+ * added to the total); the This-year card says "vs <last year>".
+ */
+function YearDelta({
+  delta,
+  text,
+  suffix = 'this year',
+}: {
+  readonly delta: number;
+  readonly text: string;
+  readonly suffix?: string;
+}): React.ReactElement {
+  const tone =
+    delta > 0
+      ? 'text-[var(--chart-income)]'
+      : delta < 0
+        ? 'text-destructive'
+        : 'text-muted-foreground';
+  const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-medium ${tone}`}>
+      <span aria-hidden="true">{arrow}</span>
+      <span className="tabular">{text}</span>
+      <span className="text-muted-foreground font-normal">{suffix}</span>
+    </span>
   );
 }
 

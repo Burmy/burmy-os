@@ -40,29 +40,29 @@ row. Pre-2015 PSP/PS2 entries in the source spreadsheet routinely carry a rating
 `firstPlayedYear` is genuinely sparse, and that sparseness is preserved rather than backfilled with a
 guess.
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `title` | text, not null | |
-| `platform` | enum, not null, default `other` | `ps5 \| ps4 \| psp \| steam \| pc \| other`. `pc` is displayed as "PC" but is no longer OFFERED in the add/edit picker — see below |
-| `developer`, `publisher` | text | |
-| `ownership` | enum, nullable | `physical \| digital` |
-| `price_cents` | signed bigint | Same convention as `finance_transactions.amount_cents`. No FK to Finance — see "Out of scope" |
-| `status` | enum, not null, default `played` | App-reachable: `played \| wanted`. The Postgres type also still contains `backlog`, `playing` and `paused_dropped`, dead labels kept only because Postgres cannot drop an enum value — see "Lifecycle statuses" below |
-| `rating` | smallint, nullable | 1–5. Null means "no opinion yet," not zero |
-| `hours_tenths` | integer, nullable | Tenths of an hour. 235 = 23.5h. See "Hours" below. The authoritative total — see "Play-year attribution" below for how it's optionally split across years |
-| `first_played_year` | smallint, nullable | Sparse by design. Also where hours land by default when no `game_play_years` split exists — see "Play-year attribution" below |
-| `achievements_unlocked`, `achievements_total` | smallint, nullable | Counts, not a checklist — see below |
-| `cover_url`, `genre` | text, nullable | Populated by hand or from an IGDB suggestion |
-| `platinum` | boolean, not null, default `false` | The owner's own claim, not derived from achievement counts — see "Platinum" below |
-| `metacritic` | smallint, nullable | IGDB's `aggregated_rating`. Read-only, filled only from a metadata suggestion |
-| `average_playtime_hours` | smallint, nullable | IGDB's `game_time_to_beats.normally`, whole hours. A third-party estimate, not the owner's measured time — deliberately not tenths |
-| `esrb_rating` | text, nullable | Read-only, filled only from a metadata suggestion |
-| `notes` | text, nullable | Free text — carries nuance the schema deliberately doesn't model, e.g. "6h of that was the DLC" |
-| `collection_id` | uuid, nullable, FK → `games.id` `ON DELETE SET NULL` | The boxed set this title belongs to. Null for a standalone game AND for a collection row itself — see "Collections" below |
+| Column                                        | Type                                                 | Notes                                                                                                                                                                                                                 |
+| --------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `title`                                       | text, not null                                       |                                                                                                                                                                                                                       |
+| `platform`                                    | enum, not null, default `other`                      | `ps5 \| ps4 \| psp \| steam \| pc \| other`. `pc` is displayed as "PC" but is no longer OFFERED in the add/edit picker — see below                                                                                    |
+| `developer`, `publisher`                      | text                                                 |                                                                                                                                                                                                                       |
+| `ownership`                                   | enum, nullable                                       | `physical \| digital`                                                                                                                                                                                                 |
+| `price_cents`                                 | signed bigint                                        | Same convention as `finance_transactions.amount_cents`. No FK to Finance — see "Out of scope"                                                                                                                         |
+| `status`                                      | enum, not null, default `played`                     | App-reachable: `played \| wanted`. The Postgres type also still contains `backlog`, `playing` and `paused_dropped`, dead labels kept only because Postgres cannot drop an enum value — see "Lifecycle statuses" below |
+| `rating`                                      | smallint, nullable                                   | 1–5. Null means "no opinion yet," not zero                                                                                                                                                                            |
+| `hours_tenths`                                | integer, nullable                                    | Tenths of an hour. 235 = 23.5h. See "Hours" below. The authoritative total — see "Play-year attribution" below for how it's optionally split across years                                                             |
+| `first_played_year`                           | smallint, nullable                                   | Sparse by design. Also where hours land by default when no `game_play_years` split exists — see "Play-year attribution" below                                                                                         |
+| `achievements_unlocked`, `achievements_total` | smallint, nullable                                   | Counts, not a checklist — see below                                                                                                                                                                                   |
+| `cover_url`, `genre`                          | text, nullable                                       | Populated by hand or from an IGDB suggestion                                                                                                                                                                          |
+| `platinum`                                    | boolean, not null, default `false`                   | The owner's own claim, not derived from achievement counts — see "Platinum" below                                                                                                                                     |
+| `metacritic`                                  | smallint, nullable                                   | IGDB's `aggregated_rating`. Read-only, filled only from a metadata suggestion                                                                                                                                         |
+| `average_playtime_hours`                      | smallint, nullable                                   | IGDB's `game_time_to_beats.normally`, whole hours. A third-party estimate, not the owner's measured time — deliberately not tenths                                                                                    |
+| `esrb_rating`                                 | text, nullable                                       | Read-only, filled only from a metadata suggestion                                                                                                                                                                     |
+| `notes`                                       | text, nullable                                       | Free text — carries nuance the schema deliberately doesn't model, e.g. "6h of that was the DLC"                                                                                                                       |
+| `collection_id`                               | uuid, nullable, FK → `games.id` `ON DELETE SET NULL` | The boxed set this title belongs to. Null for a standalone game AND for a collection row itself — see "Collections" below                                                                                             |
 
 **Uniqueness is case-insensitive per platform**: `(owner_id, lower(title), platform)`. The same title
 legitimately appears twice when replayed on a different platform — `Uncharted 4` on PS4 and again on
-PS5 are two real rows — but twice on the *same* platform is always a duplicate entry, and the database
+PS5 are two real rows — but twice on the _same_ platform is always a duplicate entry, and the database
 enforces that rather than trusting the application to catch it.
 
 ### Taxonomy lives apart from data access, on purpose
@@ -129,7 +129,7 @@ always a single number, never a list, and the module doesn't invent structure th
 
 `platinum` is a plain `boolean`, edited via a toggle button — not computed from
 `achievementsUnlocked === achievementsTotal`. The source spreadsheet only ever recorded trophies
-*earned*, never the total, so a platinum could not be derived for any imported game; and on Steam,
+_earned_, never the total, so a platinum could not be derived for any imported game; and on Steam,
 100% achievements is not a platinum at all. (From late August to 2026-10-18 a PSN sync owned this flag
 for PSN-linked games; that sync is gone and the toggle is the only writer again.)
 
@@ -272,13 +272,13 @@ were this at first; they turned out to mean base game + DLC and became DLC rows 
 
 One row per "I played N hours of this game in year Y" (migration `drizzle/0007_nervous_kid_colt.sql`).
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `owner_id` | text, not null, FK → `user`, `ON DELETE CASCADE` | |
-| `game_id` | uuid, not null, FK → `games`, `ON DELETE CASCADE` | |
-| `year` | smallint, not null | |
-| `hours_tenths` | integer, not null | Same tenths-of-an-hour convention as `games.hours_tenths` |
-| `achievements_unlocked` | smallint, null | Trophies earned THAT year (migration `0021`, 2026-10-19). `NULL` = the row says nothing about trophies. |
+| Column                  | Type                                              | Notes                                                                                                   |
+| ----------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `owner_id`              | text, not null, FK → `user`, `ON DELETE CASCADE`  |                                                                                                         |
+| `game_id`               | uuid, not null, FK → `games`, `ON DELETE CASCADE` |                                                                                                         |
+| `year`                  | smallint, not null                                |                                                                                                         |
+| `hours_tenths`          | integer, not null                                 | Same tenths-of-an-hour convention as `games.hours_tenths`                                               |
+| `achievements_unlocked` | smallint, null                                    | Trophies earned THAT year (migration `0021`, 2026-10-19). `NULL` = the row says nothing about trophies. |
 
 Unique on `(game_id, year)` — a game cannot have two rows claiming the same year.
 
@@ -339,7 +339,7 @@ has a year, and land in that year — see "DLC" below.
 — as prose in `notes` (e.g. "Imported as \"53 + 6\" across 2025 + 2026") — into real rows: Clair
 Obscur: Expedition 33 (2025/53h + 2026/6h), Hollow Knight (2024/37h + 2025/12h), and Lies of P
 (2024/52h + 2025/25h). Dry-run by default, `--apply` to write, and it re-verifies each split against
-the game's *current* `hours_tenths` before writing — a hand-recovered split that no longer sums to
+the game's _current_ `hours_tenths` before writing — a hand-recovered split that no longer sums to
 the live total is refused, not force-written. A one-off script rather than a SQL data migration for
 the same reason `fix-game-platforms.mjs` gives: migrations run against both local and production,
 where `games.id` values differ, and a title-keyed write inside a migration is fragile.
@@ -367,7 +367,7 @@ attribution model for DLC and then reversed it: base and DLC figures are two thi
 separately, and a total is what they want to read.
 
 **Year-by-year.** A DLC's hours and trophies are credited to the DLC's own year. It does not count as
-a game *started* (`startedCount` is untouched), but its year counts as a year the game was *played*
+a game _started_ (`startedCount` is untouched), but its year counts as a year the game was _played_
 (`playedCount`). `unattributedTenths` never includes DLC — DLC is not attributed.
 
 **Collections.** A title inside a collection carries its own hours and trophies, so it carries its own
@@ -468,14 +468,14 @@ left/right split Finance keeps.
 
 Two states. One visible, one invisible:
 
-| Status | Meaning |
-| --- | --- |
+| Status   | Meaning                                                                                                     |
+| -------- | ----------------------------------------------------------------------------------------------------------- |
 | `played` | In the library — the **invisible default**: `StatusBadge` renders no badge at all for it, in either variant |
-| `wanted` | Wishlisted, not bought yet — see "Upcoming games" below |
+| `wanted` | Wishlisted, not bought yet — see "Upcoming games" below                                                     |
 
 **Real usage is why `played` renders nothing.** Of 180 games, 171 sat in this one status (then called
 `completed`) — a status describing 95% of the library carries no information, so as of migration
-`0013` it is the library's *default assumption* rather than a badge to scan past on every card.
+`0013` it is the library's _default assumption_ rather than a badge to scan past on every card.
 `played` is a deliberate non-null SENTINEL, not a nullable column: modelling "no status" as `NULL`
 would turn every `WHERE status = …`, every count, and the `wanted` exclusion below into null-aware SQL,
 real bug surface for what stays a plain non-null comparison everywhere else.
@@ -554,7 +554,7 @@ output — see below and "Play-year attribution" above.
 - **`buildYearlyBreakdown`** — returns `{ rows, unattributedTenths }`. One row per year present in
   the data, newest first, each carrying `startedCount` (games whose `firstPlayedYear` is that year —
   sums to the library total across years, same as the old plain game count did), `playedCount`
-  (distinct games with hours *attributed* to that year via `attributeHours` — deliberately does NOT
+  (distinct games with hours _attributed_ to that year via `attributeHours` — deliberately does NOT
   sum to the total, since a game played across two years is genuinely played in both), hours,
   achievements (still keyed to `firstPlayedYear`, never split — see "Play-year attribution" above),
   and the hours delta from the previous year present (`null` for the earliest year). A game with no
@@ -562,14 +562,14 @@ output — see below and "Play-year attribution" above.
   a fake "year zero": it genuinely has no place in a year-by-year comparison. `unattributedTenths` is
   rendered as its own "Unattributed" line by `YearlyBreakdownTable`, never folded into a year.
 - **`buildDistribution`** — a generic key/label counter used three times on the dashboard (platform,
-  ownership, genre). Its `percent` is the share of rows that actually *had* a value for that key, not
+  ownership, genre). Its `percent` is the share of rows that actually _had_ a value for that key, not
   a share of the whole library — a game with no genre recorded doesn't silently deflate every genre's
   percentage.
 - **`findCallouts`** — longest game and top developer by total hours, each computed over played games
   only (`hoursTenths > 0`), neither year-scoped. `bestYear` takes `buildYearlyBreakdown`'s own
   `YearlyBreakdownRow[]` and picks the max by `hoursTenths`, rather than building a second, independent
   year→hours map off `firstPlayedYear`. An earlier version did build that second map, crediting a
-  game's *full* total to a single year — the same bug play-year attribution exists to fix everywhere
+  game's _full_ total to a single year — the same bug play-year attribution exists to fix everywhere
   else — and the two callers disagreed: the callout read 591.7h for 2024 while the table, going
   through `attributeHours`, read 579.7h for the same year and the same library. One attribution
   implementation now, not two kept in sync by hand.
@@ -584,7 +584,15 @@ The dashboard (`GamesDashboard`, `/games/stats`) opens with two full rows of sta
 Hours played, Platinums, Trophies earned, Total spend, Cost per hour, This year (hours, started and
 trophies in the current year, from the year table) and Completion (trophies earned as a share of
 every recorded total); the last two were added 2026-10-19 so the four-wide grid never ends on a
-half-empty row — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
+half-empty row. Six of the eight carry an arrow line (`YearDelta`, `buildYearDeltas` in
+`stats.ts`): Games, Hours played, Platinums, Trophies earned and Total spend say what the current
+year has ADDED to that total ("↑ 207.7h this year"), and This year compares its hours with the
+previous year's row ("↑ 45.2h vs 2025"). The colour rule is the hobby's, not Finance's: more is
+green, less is red, nothing is grey — more money spent on games is the hobby being enjoyed, so it is
+never "unfavorable". Started, hours and trophies come straight from the year table so the arrows and
+the table can never disagree; spend and platinums are counted on games whose first-played year is the
+current one (plus DLC played this year), an approximation the owner accepted because neither a
+purchase date nor a platinum date is recorded — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
 charts (games / hours / trophies per year — a continuous year axis reads as a trend on a line the way
 disconnected bars don't; matches the owner's original spreadsheet, which kept exactly these three as
 line charts), a **Breakdown** section of four charts (platform / ownership / genre distribution, rating
@@ -610,7 +618,7 @@ the 160-game library exposed two problems serious enough to reverse that decisio
    badly cropped — confirmed live by testing roughly a dozen crop/resize dimension pairs against
    `media.rawg.io`, all of which 404 for a portrait output. There is no fix on RAWG's side; its resize
    CDN only serves a small whitelist of pre-generated landscape-ish sizes.
-2. **RAWG's *search* response silently omits `developers`/`publishers` entirely** — not merely empty,
+2. **RAWG's _search_ response silently omits `developers`/`publishers` entirely** — not merely empty,
    the keys don't exist on that endpoint. The app's one-call design read them anyway and always got
    `null`, for every real search, from day one.
 
@@ -630,7 +638,7 @@ client-credentials token exchange (cached in module scope for its ~64-day life, 
 case a cached token was invalidated server-side before its stated expiry), a POST to IGDB's `/v4/games`
 for the primary search, and a POST to `/v4/game_time_to_beats` for the average-playtime figure.
 
-The playtime call is *separate*, not a field on the games query, because IGDB's `Game` schema has no
+The playtime call is _separate_, not a field on the games query, because IGDB's `Game` schema has no
 relation field for it at all — confirmed by fetching `api.igdb.com/v4/igdbapi.proto` live and reading
 the full field list. `game_time_to_beats` is its own endpoint, filtered by `game_id`, unlike `cover` or
 `involved_companies` which genuinely do expand inline. It is deliberately isolated in its own
@@ -711,7 +719,7 @@ this table in a comment — if you change it, re-measure rather than nudging the
   rumoured," but `status` is unset on virtually every upcoming game and IGDB's `!=` drops null rows
   rather than passing them through — adding it collapsed a real 45-game result to 1. Do not re-add it.
 - **IGDB returns `release_dates` rows in the PAST** even when the whole query is `first_release_date >
-  now`. A probe produced 2025-03 and 2026-04 buckets for a future-only query, so `groupByMonth`
+now`. A probe produced 2025-03 and 2026-04 buckets for a future-only query, so `groupByMonth`
   rejects any month earlier than the current one.
 
 ### Grouping

@@ -32,7 +32,11 @@ import { Skeleton } from './skeleton';
  * than repeating the ARIA — a fallback that is invisible to a screen reader is
  * a silent navigation for exactly the users least able to guess what happened.
  */
-export function PageSkeleton({ children }: { readonly children: React.ReactNode }): React.ReactElement {
+export function PageSkeleton({
+  children,
+}: {
+  readonly children: React.ReactNode;
+}): React.ReactElement {
   return (
     <div aria-busy="true" aria-live="polite" className="space-y-8">
       <span className="sr-only">Loading</span>
@@ -42,7 +46,11 @@ export function PageSkeleton({ children }: { readonly children: React.ReactNode 
 }
 
 /** Title on the left, action button on the right — matches `PageHeader`. */
-export function PageHeaderSkeleton({ withAction = true }: { readonly withAction?: boolean }): React.ReactElement {
+export function PageHeaderSkeleton({
+  withAction = true,
+}: {
+  readonly withAction?: boolean;
+}): React.ReactElement {
   return (
     <div className="flex items-start justify-between gap-4">
       <div className="space-y-2">
@@ -80,11 +88,15 @@ export function FilterBarSkeleton(): React.ReactElement {
  * `stat-card-grid.tsx` exactly; if that one changes, this one has to change
  * with it, which is the cost of a fallback that is a separate element.
  */
-export function StatCardGridSkeleton({ count = 6 }: { readonly count?: number }): React.ReactElement {
+export function StatCardGridSkeleton({
+  count = 6,
+}: {
+  readonly count?: number;
+}): React.ReactElement {
   return (
     <div className="grid auto-rows-fr grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
       {Array.from({ length: count }, (_, i) => (
-        <Skeleton key={i} className="h-32 w-full" />
+        <Skeleton key={i} className="h-46 w-full" />
       ))}
     </div>
   );
@@ -131,7 +143,11 @@ export function CoverGridSkeleton({ count = 12 }: { readonly count?: number }): 
 }
 
 /** A titled block — one `Section` with its content area. */
-export function SectionSkeleton({ height = 'h-40' }: { readonly height?: string }): React.ReactElement {
+export function SectionSkeleton({
+  height = 'h-40',
+}: {
+  readonly height?: string;
+}): React.ReactElement {
   return (
     <div className="space-y-3">
       <Skeleton className="h-5 w-44" />

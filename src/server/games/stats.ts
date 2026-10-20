@@ -630,3 +630,70 @@ export function buildLeaderboard(
     value,
   }));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// This year's deltas — the arrows under the headline cards (2026-10-19)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface YearDeltas {
+  readonly year: number;
+  /** Games whose first-played year is this year — the year table's own count. */
+  readonly started: number;
+  /** Hours credited to this year by the year table (splits and DLC included). */
+  readonly hoursTenths: number;
+  /** Trophies credited to this year by the year table. */
+  readonly trophies: number;
+  /**
+   * Price paid on games first played this year, plus DLC played this year.
+   * An APPROXIMATION the owner accepted: a game bought in December and
+   * started in January counts as January's, because the purchase date is
+   * not recorded — only the first-played year is. A collection's price sits
+   * on the set and its members carry none, so a set started this year
+   * counts once.
+   */
+  readonly spendCents: number;
+  /**
+   * Platinums on games first played this year — the same approximation; the
+   * platinum's own date is not recorded either.
+   */
+  readonly platinums: number;
+  /** The previous year's hours, for "vs last year" — null when there is no such row. */
+  readonly previous: { readonly year: number; readonly hoursTenths: number } | null;
+}
+
+/**
+ * What this year has added to the library so far. The only history Games
+ * keeps is the year table, so every comparison is "this year" against the
+ * rest of the library, or this year's hours against the previous year's.
+ * `yearlyRows` is `buildYearlyBreakdown(...).rows` — passed in rather than
+ * rebuilt so the arrows and the table under them can never disagree.
+ */
+export function buildYearDeltas(
+  rows: readonly GameStatRow[],
+  dlc: readonly GameDlcRow[],
+  yearlyRows: readonly YearlyBreakdownRow[],
+  year: number,
+): YearDeltas {
+  const thisYear = yearlyRows.find((row) => row.year === year);
+  const previousRow = yearlyRows.find((row) => row.year === year - 1);
+  const ids = new Set(rows.map((row) => row.id));
+  const startedThisYear = rows.filter((row) => row.firstPlayedYear === year);
+
+  const baseSpend = startedThisYear.reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+  const dlcSpend = dlc
+    .filter((row) => row.year === year && ids.has(row.gameId))
+    .reduce((sum, row) => sum + (row.priceCents ?? 0), 0);
+
+  return {
+    year,
+    started: thisYear?.startedCount ?? 0,
+    hoursTenths: thisYear?.hoursTenths ?? 0,
+    trophies: thisYear?.achievements ?? 0,
+    spendCents: baseSpend + dlcSpend,
+    platinums: startedThisYear.filter((row) => row.platinum).length,
+    previous:
+      previousRow === undefined
+        ? null
+        : { year: previousRow.year, hoursTenths: previousRow.hoursTenths },
+  };
+}

@@ -10,6 +10,7 @@ import {
   buildGenreDistribution,
   buildLibrarySummary,
   buildTrophyTotals,
+  buildYearDeltas,
   buildYearlyBreakdown,
   capDistributionSlices,
   findCallouts,
@@ -1154,5 +1155,73 @@ describe('findCallouts — genre and price (2026-10-19)', () => {
     expect(
       findCallouts([game({ id: 'y', genre: null, hoursTenths: 10 })], [], []).topGenre,
     ).toBeNull();
+  });
+});
+
+describe('buildYearDeltas (2026-10-19)', () => {
+  it('reads this year from the year table and sums spend and platinums on games first played this year', () => {
+    const rows = [
+      game({
+        id: 'a',
+        firstPlayedYear: 2026,
+        hoursTenths: 100,
+        priceCents: 5000,
+        platinum: true,
+        achievementsUnlocked: 10,
+      }),
+      game({
+        id: 'b',
+        firstPlayedYear: 2026,
+        hoursTenths: 50,
+        priceCents: null,
+        platinum: false,
+        achievementsUnlocked: 5,
+      }),
+      game({
+        id: 'c',
+        firstPlayedYear: 2025,
+        hoursTenths: 900,
+        priceCents: 7000,
+        platinum: true,
+        achievementsUnlocked: 40,
+      }),
+    ];
+    const dlc = [
+      {
+        id: 'd1',
+        gameId: 'c',
+        name: 'Pack',
+        year: 2026,
+        hoursTenths: 20,
+        priceCents: 1500,
+        achievementsUnlocked: 3,
+        achievementsTotal: null,
+      },
+    ];
+    const { rows: yearlyRows } = buildYearlyBreakdown(rows, [], dlc);
+
+    const deltas = buildYearDeltas(rows, dlc, yearlyRows, 2026);
+    expect(deltas).toEqual({
+      year: 2026,
+      started: 2,
+      hoursTenths: 170,
+      trophies: 18,
+      spendCents: 6500,
+      platinums: 1,
+      previous: { year: 2025, hoursTenths: 900 },
+    });
+  });
+
+  it('is all zeros with no previous year when the year has nothing', () => {
+    const rows = [game({ id: 'a', firstPlayedYear: 2020, hoursTenths: 10 })];
+    expect(buildYearDeltas(rows, [], buildYearlyBreakdown(rows, [], []).rows, 2026)).toEqual({
+      year: 2026,
+      started: 0,
+      hoursTenths: 0,
+      trophies: 0,
+      spendCents: 0,
+      platinums: 0,
+      previous: null,
+    });
   });
 });

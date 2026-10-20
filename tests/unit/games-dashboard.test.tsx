@@ -132,6 +132,51 @@ describe('GamesDashboard', () => {
     expect(screen.queryByText(/sitting in backlog/)).not.toBeInTheDocument();
   });
 
+  /**
+   * The arrow lines (2026-10-19). Every card but Cost per hour and Completion
+   * carries one; the colour rule is more = green, less = red, nothing = grey.
+   */
+  it('shows what this year added under Games, Hours, Platinums, Trophies and Total spend', () => {
+    const thisYear = [
+      game({
+        id: 'n',
+        title: 'New',
+        firstPlayedYear: 2026,
+        hoursTenths: 55,
+        priceCents: 1000,
+        platinum: true,
+        achievementsUnlocked: 7,
+      }),
+      game({ id: 'p', title: 'Prior', firstPlayedYear: 2025, hoursTenths: 1000, platinum: false }),
+    ];
+    render(
+      <GamesDashboard rows={[...rows, ...thisYear]} playYears={[]} dlc={[]} currentYear={2026} />,
+    );
+    const lines = screen.getAllByText('this year');
+    expect(lines).toHaveLength(5);
+    // Games: 1 started; Hours: 5.5h; Platinums: 1; Trophies: 7; Spend: $10.00 — all green.
+    for (const text of ['1', '5.5h', '7', '$10.00']) {
+      const magnitude = screen
+        .getAllByText(text)
+        .find((el) => el.parentElement?.textContent?.endsWith('this year'));
+      expect(magnitude, text).toBeDefined();
+      expect(magnitude?.parentElement?.className).toContain('text-[var(--chart-income)]');
+    }
+    // This year vs 2025: 5.5h against Prior's 100h → down, red.
+    const vs = screen.getByText('vs 2025');
+    expect(vs.parentElement?.className).toContain('text-destructive');
+    expect(vs.parentElement?.textContent).toContain('↓');
+  });
+
+  it('greys the arrows when the year has added nothing, and omits the vs line with no previous year', () => {
+    render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
+    for (const line of screen.getAllByText('this year')) {
+      expect(line.parentElement?.className).toContain('text-muted-foreground');
+      expect(line.parentElement?.textContent).toContain('→');
+    }
+    expect(screen.queryByText(/^vs \d{4}$/)).not.toBeInTheDocument();
+  });
+
   it('does not render a "vs. prev" column in the Year by year table', () => {
     render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     expect(screen.queryByText('vs. prev')).not.toBeInTheDocument();

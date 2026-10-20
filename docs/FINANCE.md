@@ -52,16 +52,16 @@ money math. Splits use **largest-remainder allocation** so children always sum t
 
 ## Transaction types
 
-| Type | In the grid? | In Expenses? | In Total Outflow? | Notes |
-| --- | --- | --- | --- | --- |
-| `expense` | Yes (Spending) | Yes | Yes | Ordinary spending |
-| `refund` | Yes (Spending) | Yes, net | Yes, net | Negative amount, same category as the purchase |
-| `fee` | Yes (Spending) | Yes | Yes | Interest, service charges |
-| `adjustment` | Yes (Spending) | Yes | Yes | Manual correction |
-| `investment` | Yes (Spending) | **No** | **Yes** | Appears as e.g. a `Stocks` row |
-| `income` | Yes (**Income section**) | No | No | Sign flipped for display only |
-| `transfer` | **No** | No | No | Between the owner's own accounts |
-| `credit_card_payment` | **No** | No | No | Checking → credit card |
+| Type                  | In the grid?             | In Expenses? | In Total Outflow? | Notes                                          |
+| --------------------- | ------------------------ | ------------ | ----------------- | ---------------------------------------------- |
+| `expense`             | Yes (Spending)           | Yes          | Yes               | Ordinary spending                              |
+| `refund`              | Yes (Spending)           | Yes, net     | Yes, net          | Negative amount, same category as the purchase |
+| `fee`                 | Yes (Spending)           | Yes          | Yes               | Interest, service charges                      |
+| `adjustment`          | Yes (Spending)           | Yes          | Yes               | Manual correction                              |
+| `investment`          | Yes (Spending)           | **No**       | **Yes**           | Appears as e.g. a `Stocks` row                 |
+| `income`              | Yes (**Income section**) | No           | No                | Sign flipped for display only                  |
+| `transfer`            | **No**                   | No           | No                | Between the owner's own accounts               |
+| `credit_card_payment` | **No**                   | No           | No                | Checking → credit card                         |
 
 ### Credit card payments must not double-count
 
@@ -91,7 +91,7 @@ Investments         $800      ← the Stocks row still appears in the grid
 Total Outflow     $4,983
 ```
 
-A `Stocks` category with `kind='investment'` gives a grid row *and* correct subtotals.
+A `Stocks` category with `kind='investment'` gives a grid row _and_ correct subtotals.
 
 ### Refunds are not income
 
@@ -120,15 +120,15 @@ Categories are **archived, never deleted** — history must stay intact.
 
 ### Two keys, deliberately separate
 
-| | `dedupe_key` | `merchant_key` |
-| --- | --- | --- |
-| Purpose | **Identity only** | Categorization matching + display |
-| Input | Raw `original_description` | Aggressively normalized merchant |
-| Normalization | **Frozen**: trim, uppercase, collapse whitespace. Nothing else, ever. | Evolving |
-| Lifecycle | Computed once at import, persisted, never recomputed in place | Recomputable anytime |
-| Versioned | Yes (`dedupe_key_version`) | No |
+|               | `dedupe_key`                                                          | `merchant_key`                    |
+| ------------- | --------------------------------------------------------------------- | --------------------------------- |
+| Purpose       | **Identity only**                                                     | Categorization matching + display |
+| Input         | Raw `original_description`                                            | Aggressively normalized merchant  |
+| Normalization | **Frozen**: trim, uppercase, collapse whitespace. Nothing else, ever. | Evolving                          |
+| Lifecycle     | Computed once at import, persisted, never recomputed in place         | Recomputable anytime              |
+| Versioned     | Yes (`dedupe_key_version`)                                            | No                                |
 
-**Why:** merchant normalization is *meant* to evolve — every new strip rule improves categorization.
+**Why:** merchant normalization is _meant_ to evolve — every new strip rule improves categorization.
 If identity depended on it, adding one rule would change the key for every future import and silently
 stop matching against years of committed transactions, quietly reintroducing duplicates.
 
@@ -175,7 +175,7 @@ positional index, nothing to corrupt, naturally idempotent.
 Same account, same amount, date ±3 days, similar merchant → **flagged, requires a decision. Never
 auto-excluded.**
 
-Plus a file-level pre-check: an already-committed `file_sha256` warns *before* parsing.
+Plus a file-level pre-check: an already-committed `file_sha256` warns _before_ parsing.
 
 **Nothing is ever silently destroyed.** Every exclusion is visible and reversible in the preview.
 
@@ -194,7 +194,7 @@ Plus a file-level pre-check: an already-committed `file_sha256` warns *before* p
 ```
 
 Below threshold (default 70) → Needs Review regardless of source. `categorization_source` and
-`categorization_confidence` are stored so the review UI can explain *why*, and a bad rule can be found
+`categorization_confidence` are stored so the review UI can explain _why_, and a bad rule can be found
 later.
 
 ### Exclusionary types are a separate, stricter track
@@ -211,16 +211,16 @@ Those three are **never assigned by graded heuristic.** They require one of:
 
 **A qualified counterpart match requires all of:**
 
-*Structural (necessary, never sufficient):* equal absolute amount · opposite sign · both accounts
+_Structural (necessary, never sufficient):_ equal absolute amount · opposite sign · both accounts
 owned · dates within ±7 days · **account-type compatibility** (`credit_card_payment` needs exactly one
 card and one deposit account; `transfer` needs two non-card accounts; `investment` needs a brokerage
 leg).
 
-*Plus a semantic signal:* a recognized keyword on either leg (`PAYMENT`, `TRANSFER`, `XFER`,
+_Plus a semantic signal:_ a recognized keyword on either leg (`PAYMENT`, `TRANSFER`, `XFER`,
 `ONLINE BANKING TRANSFER`, `AUTOPAY`, `EPAY`, `PMT`), **or** the counterpart account's name fragment
 or last-four appearing in the other description.
 
-*Plus uniqueness:* **exactly one** candidate. Two or more → review item, never a guess.
+_Plus uniqueness:_ **exactly one** candidate. Two or more → review item, never a guess.
 
 Matching runs against **both the current batch and committed history** (±7 days) — the two legs may
 arrive in different months.
@@ -240,7 +240,7 @@ Every rule is a test case.
 
 ### Learning
 
-Changing a suggested category offers *"Always categorize merchants matching VIA 313 as Food?"*.
+Changing a suggested category offers _"Always categorize merchants matching VIA 313 as Food?"_.
 Accepting writes `finance_merchant_memory`. Memory is **learned and per-merchant**; rules are
 **explicit and user-authored** — they are different things and live in different tables.
 
@@ -347,12 +347,12 @@ drifts from reality permanently and silently.
 
 ### What the plan expected versus what the files contain
 
-| Plan assumed | Reality |
-| --- | --- |
-| Deposit trends `Date / Description / Amount` | Adds `Running Bal.`, and is preceded by a **five-line preamble with its own three-column header, then a blank line**. Row 1 is not the header. |
-| Card is `Posted Date / Reference Number / Payee / Amount` | Also carries `Address`, fixed-width padded with a trailing space, empty on payment rows. |
-| "Multiple dates per transaction" | The card export has **one date only**, labelled `Posted Date`. There is no transaction date. |
-| Filename indicates the period | The file named for May covered 04/28–05/27. |
+| Plan assumed                                              | Reality                                                                                                                                        |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Deposit trends `Date / Description / Amount`              | Adds `Running Bal.`, and is preceded by a **five-line preamble with its own three-column header, then a blank line**. Row 1 is not the header. |
+| Card is `Posted Date / Reference Number / Payee / Amount` | Also carries `Address`, fixed-width padded with a trailing space, empty on payment rows.                                                       |
+| "Multiple dates per transaction"                          | The card export has **one date only**, labelled `Posted Date`. There is no transaction date.                                                   |
+| Filename indicates the period                             | The file named for May covered 04/28–05/27.                                                                                                    |
 
 ### Deposit export
 
@@ -368,16 +368,16 @@ Date,Description,Amount,Running Bal.       ← the real header, 4 columns
 05/14/2026,"…","-540.25","9,909.75"
 ```
 
-| Aspect | Observed |
-| --- | --- |
-| Header position | Line 7. Located by scanning for required columns, never by index. |
-| First data row | A `Beginning balance` pseudo-row with an **empty** amount. Skipped — importing it would put a phantom 0.00 transaction on day one of every statement. |
-| Amounts | Quoted, comma thousands separators, single signed column. |
-| Sign | **Negative = outflow**, the inverse of Burmy's convention. Inverted once, in the normalizer. |
-| Quoting | Mixed: some descriptions quoted, some not. Commas appear **inside** quoted description fields. |
-| Descriptions | ACH detail as `ORIGINATOR DES:PURPOSE ID:… INDN:… CO ID:… PPD`. `INDN:` is the **account holder's own name** and must never become a merchant key. |
-| Row order | Ascending. |
-| `Running Bal.` | Unmapped, discarded at parse. Used transiently for validation only. |
+| Aspect          | Observed                                                                                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Header position | Line 7. Located by scanning for required columns, never by index.                                                                                     |
+| First data row  | A `Beginning balance` pseudo-row with an **empty** amount. Skipped — importing it would put a phantom 0.00 transaction on day one of every statement. |
+| Amounts         | Quoted, comma thousands separators, single signed column.                                                                                             |
+| Sign            | **Negative = outflow**, the inverse of Burmy's convention. Inverted once, in the normalizer.                                                          |
+| Quoting         | Mixed: some descriptions quoted, some not. Commas appear **inside** quoted description fields.                                                        |
+| Descriptions    | ACH detail as `ORIGINATOR DES:PURPOSE ID:… INDN:… CO ID:… PPD`. `INDN:` is the **account holder's own name** and must never become a merchant key.    |
+| Row order       | Ascending.                                                                                                                                            |
+| `Running Bal.`  | Unmapped, discarded at parse. Used transiently for validation only.                                                                                   |
 
 **The summary block is a checksum, and it is the strongest correctness signal the
 project has.** Verified against the real export to the cent:
@@ -397,17 +397,17 @@ the totals are recomputed after redaction.
 
 ### Card export
 
-| Aspect | Observed |
-| --- | --- |
-| Header position | Line 1. No preamble, therefore **no summary block and no checksum** — the deposit export's strongest guarantee is unavailable here. |
-| Dates | `Posted Date` only. Populates **both** `transaction_date` and `posted_date`, because the column is `NOT NULL` and the monthly grid buckets on it. Inventing an earlier transaction date would be fabricating data. |
-| Amounts | Unquoted, **no thousands separator in the sample**. No value reached four figures, so behaviour above 999.99 is an **assumption**; `parseMoney` accepts both forms and fixtures cover each. |
-| Sign | Negative = purchase. Inverted, as above. |
-| `Address` | `city` left-justified in 14 columns, then the state, then a trailing space. Empty on payment rows. **Discarded at parse** (never persisted to staging), read transiently as an exact location hint for merchant normalization. |
-| `Payee` | Truncated to ~22 characters. City and state are appended, sometimes **fused with no separator** (`BAY HARBOURCA`, `Sunset ValleyTX`) and sometimes spaced (`SPRINGFIELD TX`) — in the same file. One payee had its spaces stripped entirely. |
-| Row order | **Descending**, the opposite of the deposit export. No stage assumes ordering. |
-| Processor prefixes | `TST*`, `SQ *`, `NPO* `, `YSI*`, `PADDLE.NET* `, `OPENAI *`, `ROVER.COM* ` |
-| Store numbers | Trailing hashed (`#0366`, `# 2065`, `#801`), trailing bare (5 and 9 digits), and **leading bare** (`078 …`). |
+| Aspect             | Observed                                                                                                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Header position    | Line 1. No preamble, therefore **no summary block and no checksum** — the deposit export's strongest guarantee is unavailable here.                                                                                                          |
+| Dates              | `Posted Date` only. Populates **both** `transaction_date` and `posted_date`, because the column is `NOT NULL` and the monthly grid buckets on it. Inventing an earlier transaction date would be fabricating data.                           |
+| Amounts            | Unquoted, **no thousands separator in the sample**. No value reached four figures, so behaviour above 999.99 is an **assumption**; `parseMoney` accepts both forms and fixtures cover each.                                                  |
+| Sign               | Negative = purchase. Inverted, as above.                                                                                                                                                                                                     |
+| `Address`          | `city` left-justified in 14 columns, then the state, then a trailing space. Empty on payment rows. **Discarded at parse** (never persisted to staging), read transiently as an exact location hint for merchant normalization.               |
+| `Payee`            | Truncated to ~22 characters. City and state are appended, sometimes **fused with no separator** (`BAY HARBOURCA`, `Sunset ValleyTX`) and sometimes spaced (`SPRINGFIELD TX`) — in the same file. One payee had its spaces stripped entirely. |
+| Row order          | **Descending**, the opposite of the deposit export. No stage assumes ordering.                                                                                                                                                               |
+| Processor prefixes | `TST*`, `SQ *`, `NPO* `, `YSI*`, `PADDLE.NET* `, `OPENAI *`, `ROVER.COM* `                                                                                                                                                                   |
+| Store numbers      | Trailing hashed (`#0366`, `# 2065`, `#801`), trailing bare (5 and 9 digits), and **leading bare** (`078 …`).                                                                                                                                 |
 
 **The spaced-versus-fused city/state rule is unresolved.** Both forms appear in one
 file and no reliable rule separates them from the payee text, so the fixtures record
@@ -447,10 +447,10 @@ Three corroborating observations, all of which confirm existing design decisions
 
 ### Verdict: Tier 2 is the active mechanism. Tier 1 remains unverified.
 
-| Account type | Identifier column | Coverage | Unique in sample | Stable across exports | Verdict | Date |
-| --- | --- | --- | --- | --- | --- | --- |
-| BoA deposit | *(none provided)* | 0% | n/a | n/a | **No identifier exists.** Tier 2 only. | 2026-08-17 |
-| BoA card | `Reference Number` | **100%** (40/40 rows, payments included) | **Yes** (40 distinct) | **UNVERIFIED** | **Candidate only. No unique constraint.** | 2026-08-17 |
+| Account type | Identifier column  | Coverage                                 | Unique in sample      | Stable across exports | Verdict                                   | Date       |
+| ------------ | ------------------ | ---------------------------------------- | --------------------- | --------------------- | ----------------------------------------- | ---------- |
+| BoA deposit  | _(none provided)_  | 0%                                       | n/a                   | n/a                   | **No identifier exists.** Tier 2 only.    | 2026-08-17 |
+| BoA card     | `Reference Number` | **100%** (40/40 rows, payments included) | **Yes** (40 distinct) | **UNVERIFIED**        | **Candidate only. No unique constraint.** | 2026-08-17 |
 
 **What was measured.** Both properties a single export can answer: coverage and
 in-file uniqueness. `observeTierOne()` computes them, and a test asserts the result
@@ -502,7 +502,7 @@ per key:  surplus = staged_count − committed_count
 `identityDescription` is **frozen**: trim, collapse whitespace, uppercase. Nothing
 else, ever. Punctuation is identity-bearing here precisely because stripping it is a
 `merchantKey` concern — and a test asserts that two descriptions which normalize to
-the *same* `merchantKey` still produce *different* dedupe keys. That is the whole
+the _same_ `merchantKey` still produce _different_ dedupe keys. That is the whole
 reason the two are separate.
 
 The database query that supplies `committed_count`, and the preview that lets the
@@ -532,7 +532,7 @@ history and so would never surface as a duplicate either.
 ### Tolerant parsing
 
 `parseStatement()` (M4) throws on the first row that fails normalization — a
-missing field, an impossible date — which aborts the *entire* file. M5 needs
+missing field, an impossible date — which aborts the _entire_ file. M5 needs
 per-row failures to be visible and reviewable instead, so `parse/index.ts` gained
 `parseStatementTolerant()`, additive alongside the original: same format detection,
 same FILE-level assertions (the deposit checksum, the running balance, the
@@ -559,7 +559,7 @@ That single check is not enough for correctness under concurrency: two imports
 staged around the same time can each see "0 committed" for the same key and each
 default their row to Include — correct individually, wrong if both commit.
 `commitImport()` therefore re-runs the identical reconciliation a second time,
-*inside* the commit transaction, immediately before inserting, against the
+_inside_ the commit transaction, immediately before inserting, against the
 now-current committed count. Postgres's default READ COMMITTED isolation would not
 catch this on its own (two inserts of new rows never conflict with each other), so
 the transaction opens with `pg_advisory_xact_lock`, keyed to the owner, which
@@ -650,7 +650,7 @@ the memory to the new category, not the old one. This is the whole mechanism
 behind "Capital One Auto → Car Payments", "Planet Fitness → Gym", and "known
 payroll → Income" — none of them needed bespoke logic. Payroll in particular
 needs nothing extra: M5 already types inflows `income` by sign; memory only
-ever supplies the *category*.
+ever supplies the _category_.
 
 `review_status` follows directly: `needs_review` with no category,
 `confirmed` when `categorization_source = 'manual'` (the owner picked it),
@@ -770,8 +770,8 @@ Exclusionary types (`transfer`, `credit_card_payment`, `investment`) are
 exempt because they never appear in a spending category total in the first
 place — requiring a category from them would serve nothing. This rule is
 **not** the same function as M6's `reviewStatusFor` (which distinguishes
-`confirmed` from `auto` by *who* categorized something) — that one still
-governs a transaction *reverting* to its default type when a counterpart pair
+`confirmed` from `auto` by _who_ categorized something) — that one still
+governs a transaction _reverting_ to its default type when a counterpart pair
 is unlinked (below), because reverting restores a prior state rather than
 correcting one, and its status should reflect whatever categorization already
 existed, not this rule.
@@ -1075,8 +1075,12 @@ Savings rate, Average daily spending, Transaction count, Expense transactions an
 (the last two added 2026-10-19 so the four-wide grid fills both rows: "I don't like random white
 spaces") — the money ones with a month-over-month comparison. Insights gained Largest income
 (`getLargestIncomeForMonth`, the mirror of the top-expenses query, formatted with `formatInflow`
-because it is a raw negative row) for the same reason, and the year view gained Highest-spending
-month, Expense transactions and Months imported. **Charts** (Recharts): income-vs-expense trend,
+because it is a raw negative row) for the same reason, and the year view gained Average daily
+spending, Expense transactions and Months imported. (The year view's "Highest-spending month" line
+under the cards was removed the same day — the figure is visible in the Yearly Breakdown chart
+directly below it.) Every `StatCard` in the app is one fixed minimum height (184px, `min-h-46`), so
+a card carrying only a hint sits level with one carrying two comparison lines, and every
+`loading.tsx` draws the same number of cards at the same height as the page it stands in for. **Charts** (Recharts): income-vs-expense trend,
 net cashflow, category breakdown and trend, largest expenses. **A "This Year"
 tab** with a Jan–Dec stacked bar and an annual category donut that falls back
 to a horizontal bar past 7 categories.
@@ -1116,44 +1120,44 @@ and completely misleading. The month wasn't bad; it wasn't over.
 > A month is COVERED when every still-reporting account has at least one transaction dated on or after
 > that month's last day.
 
-Read it as *"we have imported data that runs past the end of this month."* It lives in
+Read it as _"we have imported data that runs past the end of this month."_ It lives in
 `src/server/finance/dashboard.ts` (`partitionCoverage`, `isMonthCovered`, `latestCoveredMonth`,
 `dropUncoveredTail`) and is fed by one query, `getAccountCoverage` — the max `transaction_date` per
 active account.
 
 **"Still-reporting" is `partitionCoverage`, and it is not optional.** An account more than
-`DORMANT_AFTER_DAYS` (75) behind the newest transaction *in the ledger* is treated as closed and drops
+`DORMANT_AFTER_DAYS` (75) behind the newest transaction _in the ledger_ is treated as closed and drops
 out of the rule. See "The dormant-account bug" below for why the number is 75 and why it is measured
 against the ledger rather than against today.
 
 **Derived from the transactions, not configured.** No statement-close-day setting, no "mark month
-complete" checkbox. A configured close day *lies* when a statement is late or an import is skipped,
+complete" checkbox. A configured close day _lies_ when a statement is late or an import is skipped,
 which are precisely the situations where a wrong answer does damage; the derived rule self-corrects
 the moment the next file lands.
 
 **Worked through the real cycle, on 5 September** — card latest `Aug 26`, checking latest `Aug 14`:
 
-| Month | Covered? | Why |
-| --- | --- | --- |
-| July | **Yes** | Both accounts run past Jul 31. The card statement closing 27 Aug contains Jul 28–31; the checking one closing 15 Aug contains Jul 16–31 |
-| August | **No** | Neither reaches Aug 31 |
+| Month  | Covered? | Why                                                                                                                                     |
+| ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| July   | **Yes**  | Both accounts run past Jul 31. The card statement closing 27 Aug contains Jul 28–31; the checking one closing 15 Aug contains Jul 16–31 |
+| August | **No**   | Neither reaches Aug 31                                                                                                                  |
 
 July is correctly whole even though no single statement is aligned to it — the month is complete
-*across* the two files even though neither file is a month.
+_across_ the two files even though neither file is a month.
 
 **What changes on screen:**
 
 - **`/finance/monthly` lands on last month, not this one.** A plain `month − 1` (`previousMonth`, so
-  January rolls the year back), deliberately *not* "the newest covered month" — the default is where
+  January rolls the year back), deliberately _not_ "the newest covered month" — the default is where
   you land and should be the same every time you open the app. Whether that month is whole is a
   separate question, answered below it.
 - **An uncovered month shows its numbers, under a one-line note** (since 2026-10-19). Until then the
   six stat cards, the category breakdown, the insights and the largest-expenses list were replaced by a
   `MonthNotReady` panel — the reasoning being that a savings rate computed from two weeks of card
   spending against a full month of income is a wrong number, not a smaller one. The owner reversed it:
-  *"I should be able to see previous months' expenses regardless of whether the statement reached the
-  whole month."* `CoverageNote` now sits above the cards: *"Sep 2026 isn't fully imported yet — figures
-  cover what has arrived. Checking through Sep 28, 2026 · Credit Card through Sep 25, 2026."* It names
+  _"I should be able to see previous months' expenses regardless of whether the statement reached the
+  whole month."_ `CoverageNote` now sits above the cards: _"Sep 2026 isn't fully imported yet — figures
+  cover what has arrived. Checking through Sep 28, 2026 · Credit Card through Sep 25, 2026."_ It names
   only the accounts still short of the month's end (a written-off account is not waited on and is not
   listed). It is `role="status"` and muted, not an error — this is the normal state of the current month
   for most of every month. The reader decides what a partial month means; the page no longer does.
@@ -1177,8 +1181,8 @@ Since 2026-10-19 that costs only a note above the numbers rather than the number
 ### The dormant-account bug — why `partitionCoverage` exists
 
 The first version of this rule judged every account the caller considered active, and documented the
-consequence as an accepted cost: *"a dormant active account freezes every later month; the fix is
-`is_active = false`."* That was written into the code, the docs and a passing test, and shipped.
+consequence as an accepted cost: _"a dormant active account freezes every later month; the fix is
+`is_active = false`."_ That was written into the code, the docs and a passing test, and shipped.
 
 In production the owner had a retired **"Historical (2024–2025)"** account whose last transaction was
 1 Dec 2025. The result, on real data:
@@ -1194,8 +1198,8 @@ noticing an account flag and going to change it — and there is no Accounts scr
 it on. **Dormancy is derivable from the data, so it is derived.**
 
 **The threshold: 75 days.** It has to separate two things that look identical from one account's latest
-date — a *late statement* (still in use, file not imported yet; must keep holding coverage) from a
-*retired account* (nothing will ever release it; must stop). A cycle is ~1 month and the two accounts'
+date — a _late statement_ (still in use, file not imported yet; must keep holding coverage) from a
+_retired account_ (nothing will ever release it; must stop). A cycle is ~1 month and the two accounts'
 cycles are offset by half of one, so a live account sitting ~45 days behind the newest data is routine.
 75 days is past two full cycles: two missed statements in a row, which ordinary lateness does not
 produce.
@@ -1206,8 +1210,8 @@ still counting — their data is simply old — not every account declared dorma
 silently mark stale months "covered". Tested directly (`partitionCoverage` › "measures against the
 newest transaction, not against today").
 
-**A written-off account is still shown.** `MonthNotReady` lists it under *"Not waiting on this account —
-no statements in over two months, so it is treated as closed."* An account silently dropped from the
+**A written-off account is still shown.** `MonthNotReady` lists it under _"Not waiting on this account —
+no statements in over two months, so it is treated as closed."_ An account silently dropped from the
 rule that decides whether the dashboard renders is exactly what makes an app unexplainable to the person
 who owns it. There is deliberately no "go and deactivate it" instruction: nothing here is waiting on the
 owner any more.

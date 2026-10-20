@@ -38,9 +38,19 @@ export function StatCard({
   // up with its 29.2% floating an inch below its own label — a rendering fault,
   // not a layout. Stacking from the top keeps a value under its label whatever
   // its neighbours contain.
+  // ONE HEIGHT EVERYWHERE (owner, 2026-10-19: "make sure all the cards are the
+  // same size"). `min-h-46` (184px) is the MEASURED height of the tallest card
+  // — label, value, an arrow line and a hint — taken from a real browser, not
+  // computed from the type scale. A grid with `auto-rows-fr` already stretches
+  // every card in it to its tallest sibling; the minimum is what keeps a grid
+  // of hint-only cards (Insights, the Games callouts) level with the grid of
+  // fuller cards above it instead of sitting visibly shorter.
+  // `StatCardGridSkeleton` draws the same 184px.
   return (
-    <div className="flex h-full flex-col gap-3 rounded-md bg-card p-8">
-      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">{label}</div>
+    <div className="flex h-full min-h-46 flex-col gap-3 rounded-md bg-card p-8">
+      <div className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+        {label}
+      </div>
       <div>
         <div
           className={cn('tabular truncate text-[2rem] leading-none font-semibold', valueClassName)}
