@@ -1,7 +1,7 @@
 import type { TopExpenseRow } from '@/server/db/finance/grid';
 import { MONTH_ABBREVIATIONS } from '@/server/finance/grid';
 import type { BiggestSpendingDay, CategoryAmount, MonthSummary } from '@/server/finance/dashboard';
-import { cents, format } from '@/server/finance/money';
+import { cents, format, formatInflow } from '@/server/finance/money';
 import { formatPercent } from '@/components/finance/format-percent';
 import { StatCard } from '@/components/ui/stat-card';
 import { StatCardGrid } from '@/components/ui/stat-card-grid';
@@ -22,7 +22,6 @@ import { StatCardGrid } from '@/components/ui/stat-card-grid';
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-
 function monthLabel(summary: MonthSummary): string {
   return `${MONTH_ABBREVIATIONS[summary.month - 1]} ${summary.year}`;
 }
@@ -36,6 +35,7 @@ function monthLabel(summary: MonthSummary): string {
  */
 export function InsightsSection({
   largestExpense,
+  largestIncome,
   topCategory,
   biggestSpendingDay,
   spendingDayYear,
@@ -46,6 +46,8 @@ export function InsightsSection({
   bestNetMonth,
 }: {
   readonly largestExpense: TopExpenseRow | null;
+  /** The single biggest inflow this month — the mirror of `largestExpense` (2026-10-19). */
+  readonly largestIncome: TopExpenseRow | null;
   readonly topCategory: CategoryAmount | null;
   readonly biggestSpendingDay: BiggestSpendingDay | null;
   readonly spendingDayYear: number;
@@ -64,6 +66,20 @@ export function InsightsSection({
         label="Largest expense"
         value={format(cents(largestExpense.amountCents))}
         hint={largestExpense.normalizedMerchant ?? largestExpense.originalDescription}
+      />,
+    );
+  }
+
+  if (largestIncome) {
+    items.push(
+      <StatCard
+        key="largest-income"
+        label="Largest income"
+        // A RAW stored row: income is negative in the ledger, and
+        // `formatInflow` is the right call exactly here (never on a summed,
+        // already-flipped figure — see CLAUDE.md).
+        value={formatInflow(cents(largestIncome.amountCents), { signed: true })}
+        hint={largestIncome.normalizedMerchant ?? largestIncome.originalDescription}
       />,
     );
   }
@@ -92,7 +108,11 @@ export function InsightsSection({
 
   if (averageTransactionCents !== null) {
     items.push(
-      <StatCard key="avg-transaction" label="Average transaction" value={format(cents(Math.round(averageTransactionCents)))} />,
+      <StatCard
+        key="avg-transaction"
+        label="Average transaction"
+        value={format(cents(Math.round(averageTransactionCents)))}
+      />,
     );
   }
 

@@ -1111,3 +1111,48 @@ describe('buildYearlyBreakdown — trophies per year', () => {
     ]);
   });
 });
+
+describe('findCallouts — genre and price (2026-10-19)', () => {
+  it('finds the genre with the most hours, crediting a multi-genre game to each of its genres', () => {
+    const callouts = findCallouts(
+      [
+        game({ id: 'a', genre: 'Platform, Adventure', hoursTenths: 490 }),
+        game({ id: 'b', genre: 'Adventure', hoursTenths: 200 }),
+        game({ id: 'c', genre: 'Fighting', hoursTenths: 600 }),
+      ],
+      [],
+      [],
+    );
+    // Adventure: 490 + 200 = 690 beats Fighting's 600 and Platform's 490.
+    expect(callouts.topGenre).toEqual({ name: 'Adventure', hoursTenths: 690 });
+  });
+
+  it('finds the priciest game with its DLC counted, and reports none when nothing has a price', () => {
+    const callouts = findCallouts(
+      [
+        game({ id: 'a', title: 'Elden Ring', priceCents: 6565 }),
+        game({ id: 'b', title: 'Cyberpunk 2077', priceCents: 8455 }),
+        game({ id: 'c', title: 'Free', priceCents: 0 }),
+      ],
+      [
+        {
+          id: 'd',
+          gameId: 'a',
+          name: 'Shadow of the Erdtree',
+          year: 2024,
+          hoursTenths: 760,
+          priceCents: 3999,
+          achievementsUnlocked: null,
+          achievementsTotal: null,
+        },
+      ],
+      [],
+    );
+    // 6565 + 3999 = 10564 beats 8455.
+    expect(callouts.priciestGame).toEqual({ title: 'Elden Ring', priceCents: 10564 });
+    expect(findCallouts([game({ id: 'x', priceCents: null })], [], []).priciestGame).toBeNull();
+    expect(
+      findCallouts([game({ id: 'y', genre: null, hoursTenths: 10 })], [], []).topGenre,
+    ).toBeNull();
+  });
+});

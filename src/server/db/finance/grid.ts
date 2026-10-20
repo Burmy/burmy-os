@@ -110,8 +110,10 @@ export async function getCellTransactions(
   if (month !== null) {
     conditions.push(sql`extract(month from ${financeTransactions.transactionDate}) = ${month}`);
   }
-  if (selector.kind === 'category') conditions.push(eq(financeTransactions.categoryId, selector.categoryId));
-  else if (selector.kind === 'income') conditions.push(eq(financeTransactions.transactionType, 'income'));
+  if (selector.kind === 'category')
+    conditions.push(eq(financeTransactions.categoryId, selector.categoryId));
+  else if (selector.kind === 'income')
+    conditions.push(eq(financeTransactions.transactionType, 'income'));
   else conditions.push(ne(financeTransactions.transactionType, 'income'));
 
   const rows = await getDb()
@@ -387,4 +389,42 @@ export async function getAccountCoverage(ownerId: string): Promise<AccountCovera
   // switch to a LEFT JOIN would otherwise put a `null` into a string field and
   // make every comparison in `isMonthCovered` quietly false.
   return rows.filter((row): row is AccountCoverage => row.latestDate !== null);
+}
+
+/**
+ * The single largest inflow of the month, for the "Largest income" insight
+ * (2026-10-19) — the mirror of `getTopExpensesForMonth`. Income is stored
+ * NEGATIVE (positive = outflow), so the largest is the smallest amount; the
+ * caller formats it with `formatInflow`, which expects exactly this raw sign.
+ */
+export async function getLargestIncomeForMonth(
+  ownerId: string,
+  year: number,
+  month: number,
+): Promise<TopExpenseRow | null> {
+  const { start, endExclusive } = monthRange(year, month);
+
+  const [row] = await getDb()
+    .select({
+      id: financeTransactions.id,
+      transactionDate: financeTransactions.transactionDate,
+      normalizedMerchant: financeTransactions.normalizedMerchant,
+      originalDescription: financeTransactions.originalDescription,
+      categoryName: financeCategories.name,
+      amountCents: financeTransactions.amountCents,
+    })
+    .from(financeTransactions)
+    .leftJoin(financeCategories, eq(financeCategories.id, financeTransactions.categoryId))
+    .where(
+      and(
+        ...dashboardBaseConditions(ownerId),
+        eq(financeTransactions.transactionType, 'income'),
+        gte(financeTransactions.transactionDate, start),
+        lt(financeTransactions.transactionDate, endExclusive),
+      ),
+    )
+    .orderBy(asc(financeTransactions.amountCents))
+    .limit(1);
+
+  return row ?? null;
 }

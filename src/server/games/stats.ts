@@ -119,6 +119,15 @@ export interface DistributionSlice {
 export interface Callouts {
   readonly topDeveloper: { readonly name: string; readonly hoursTenths: number } | null;
   readonly bestYear: { readonly year: number; readonly hoursTenths: number } | null;
+  /**
+   * The genre with the most hours. A multi-genre game ("Platform, Adventure")
+   * credits its full hours to EACH of its genres — the same rule the genre
+   * distribution uses for counts — so this is "the genre you spend the most
+   * time in", not a partition of the total.
+   */
+  readonly topGenre: { readonly name: string; readonly hoursTenths: number } | null;
+  /** The highest price paid, base + DLC. */
+  readonly priciestGame: { readonly title: string; readonly priceCents: number } | null;
 }
 
 /**
@@ -494,6 +503,24 @@ export function findCallouts(
     null,
   );
 
+  const genreHours = new Map<string, number>();
+  for (const row of played) {
+    for (const genre of splitGenres(row.genre)) {
+      genreHours.set(genre, (genreHours.get(genre) ?? 0) + (row.hoursTenths ?? 0));
+    }
+  }
+  const topGenreEntry = [...genreHours.entries()].sort((a, b) => b[1] - a[1])[0];
+
+  const priciest = rows.reduce<GameStatRow | null>(
+    (best, row) =>
+      row.priceCents !== null &&
+      row.priceCents > 0 &&
+      (best === null || row.priceCents > (best.priceCents ?? 0))
+        ? row
+        : best,
+    null,
+  );
+
   return {
     topDeveloper:
       topDeveloperEntry === undefined
@@ -503,6 +530,12 @@ export function findCallouts(
       bestYearRow === null
         ? null
         : { year: bestYearRow.year, hoursTenths: bestYearRow.hoursTenths },
+    topGenre:
+      topGenreEntry === undefined
+        ? null
+        : { name: topGenreEntry[0], hoursTenths: topGenreEntry[1] },
+    priciestGame:
+      priciest === null ? null : { title: priciest.title, priceCents: priciest.priceCents ?? 0 },
   };
 }
 

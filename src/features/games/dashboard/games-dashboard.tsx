@@ -77,6 +77,7 @@ export function GamesDashboard({
   const financial = buildFinancialSummary(rows, dlc);
   const yearly = buildYearlyBreakdown(rows, playYears, dlc);
   const callouts = findCallouts(rows, dlc, yearly.rows);
+  const thisYear = yearly.rows.find((row) => row.year === currentYear);
 
   // Platform and genre count GAMES, so they exclude collection wrappers —
   // otherwise "The Nathan Drake Collection" contributes a fourth PS4 entry
@@ -178,6 +179,31 @@ export function GamesDashboard({
               : `${formatPriceCents(financial.costPerHourCents)}/hr`
           }
         />
+        {/* Two more so the four-wide grid fills both rows (owner, 2026-10-19:
+            "I don't like random white spaces"). Both read figures the page
+            already computes — the year table and the trophy totals. */}
+        <StatCard
+          label="This year"
+          value={thisYear === undefined ? '—' : formatHours(hours(thisYear.hoursTenths))}
+          hint={
+            thisYear === undefined
+              ? `Nothing played in ${currentYear} yet`
+              : `${thisYear.startedCount} started · ${thisYear.achievements.toLocaleString('en-US')} trophies`
+          }
+        />
+        <StatCard
+          label="Completion"
+          value={
+            trophies.total === null || trophies.total === 0
+              ? '—'
+              : `${((trophies.earned / trophies.total) * 100).toFixed(1)}%`
+          }
+          hint={
+            trophies.total === null || trophies.total === 0
+              ? 'No trophy totals recorded'
+              : `of every trophy on the ${trophies.gamesWithTrophies} games that track one`
+          }
+        />
       </StatCardGrid>
 
       <Section
@@ -277,6 +303,20 @@ export function GamesDashboard({
           {...(callouts.bestYear === null
             ? {}
             : { hint: formatHours(hours(callouts.bestYear.hoursTenths)) })}
+        />
+        <StatCard
+          label="Most-played genre"
+          value={callouts.topGenre?.name ?? '—'}
+          {...(callouts.topGenre === null
+            ? {}
+            : { hint: formatHours(hours(callouts.topGenre.hoursTenths)) })}
+        />
+        <StatCard
+          label="Priciest game"
+          value={callouts.priciestGame?.title ?? '—'}
+          {...(callouts.priciestGame === null
+            ? {}
+            : { hint: formatPriceCents(callouts.priciestGame.priceCents) })}
         />
       </StatCardGrid>
     </div>

@@ -70,12 +70,15 @@ function props(overrides: Partial<FinanceDashboardProps> = {}): FinanceDashboard
     savingsRatePercent: 19.9,
     avgDailySpendingCents: 16_527,
     avgTransactionCents: 5_337,
+    spendingDays: { days: 18, of: 31 },
+    expenseTransactionCount: 71,
     trend: [],
     categoryBreakdown: [],
     categoryTrend: [],
     topExpenses: [],
     insights: {
       largestExpense: null,
+      largestIncome: null,
       topCategory: null,
       biggestSpendingDay: null,
       highestIncomeMonth: null,
@@ -93,6 +96,7 @@ function props(overrides: Partial<FinanceDashboardProps> = {}): FinanceDashboard
         savingsRatePercent: 19.9,
         highestSpendingMonth: null,
       },
+      expenseTransactionCount: 512,
       trend: [],
       annualCategories: [],
       yearlyBreakdown: { months: [], series: [] },
@@ -252,5 +256,63 @@ describe('FinanceDashboard — year view', () => {
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
     // The account dates explain WHY, here as much as in the month view.
     expect(screen.getByText('BoA Checking')).toBeInTheDocument();
+  });
+});
+
+describe('FinanceDashboard — the full rows of cards (2026-10-19)', () => {
+  it('shows eight month cards, Expense transactions and Days with spending included', () => {
+    render(<FinanceDashboard {...props()} />);
+    expect(screen.getByText('Expense transactions')).toBeInTheDocument();
+    expect(screen.getByText('71')).toBeInTheDocument();
+    expect(screen.getByText('Days with spending')).toBeInTheDocument();
+    expect(screen.getByText('18 of 31')).toBeInTheDocument();
+  });
+
+  it('shows Largest income as a positive figure from the raw negative row', () => {
+    render(
+      <FinanceDashboard
+        {...props({
+          insights: {
+            ...props().insights,
+            largestIncome: {
+              id: 'i1',
+              transactionDate: '2026-07-01',
+              normalizedMerchant: 'Payroll',
+              originalDescription: 'PAYROLL DEP',
+              categoryName: null,
+              amountCents: -123_456,
+            },
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText('Largest income')).toBeInTheDocument();
+    expect(screen.getByText('Payroll')).toBeInTheDocument();
+    expect(screen.getByText('$1,234.56')).toBeInTheDocument();
+    expect(screen.queryByText('-$1,234.56')).not.toBeInTheDocument();
+  });
+
+  it('shows eight year cards, Avg. daily spending, Expense transactions and Months imported included', async () => {
+    render(
+      <FinanceDashboard
+        {...props({
+          ytd: {
+            ...props().ytd,
+            summary: {
+              ...props().ytd.summary,
+              highestSpendingMonth: { month: 3, incomeCents: 640_000, expenseCents: 812_345 },
+            },
+          },
+        })}
+      />,
+    );
+    await openYearView();
+    // 3,586,415 cents over Jan–Jul 2026 = 212 days → $169.17 a day.
+    expect(screen.getByText('Avg. daily spending')).toBeInTheDocument();
+    expect(screen.getByText('$169.17')).toBeInTheDocument();
+    expect(screen.getByText('over 212 days')).toBeInTheDocument();
+    expect(screen.getByText('Expense transactions')).toBeInTheDocument();
+    expect(screen.getByText('512')).toBeInTheDocument();
+    expect(screen.getByText('7 of 12')).toBeInTheDocument();
   });
 });

@@ -1071,8 +1071,12 @@ categorization/classification work: M6 and M7's mechanisms are untouched.
 relabeled "Full year grid" and otherwise untouched.
 
 **Headline stat cards** for the selected month — Income, Expenses, Net,
-Savings rate, Average daily spending, Transaction count — each with a
-month-over-month comparison. **Charts** (Recharts): income-vs-expense trend,
+Savings rate, Average daily spending, Transaction count, Expense transactions and Days with spending
+(the last two added 2026-10-19 so the four-wide grid fills both rows: "I don't like random white
+spaces") — the money ones with a month-over-month comparison. Insights gained Largest income
+(`getLargestIncomeForMonth`, the mirror of the top-expenses query, formatted with `formatInflow`
+because it is a raw negative row) for the same reason, and the year view gained Highest-spending
+month, Expense transactions and Months imported. **Charts** (Recharts): income-vs-expense trend,
 net cashflow, category breakdown and trend, largest expenses. **A "This Year"
 tab** with a Jan–Dec stacked bar and an annual category donut that falls back
 to a horizontal bar past 7 categories.

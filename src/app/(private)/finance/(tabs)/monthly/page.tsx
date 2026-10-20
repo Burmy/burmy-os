@@ -10,6 +10,7 @@ import {
   getAccountCoverage,
   getCategoryTotalsForWindow,
   getDailyTotalsForMonth,
+  getLargestIncomeForMonth,
   getMonthlyGridAggregates,
   getMonthlyTotalsAllTime,
   getTopExpensesForMonth,
@@ -40,6 +41,7 @@ import {
   toMonthSummary,
   type CategoryMeta,
   type TrendPoint,
+  countSpendingDays,
 } from '@/server/finance/dashboard';
 import {
   buildMonthlyGrid,
@@ -152,6 +154,7 @@ export default async function MonthlyPage({
     categoryTotals,
     dailyTotals,
     topExpenses,
+    largestIncome,
     yearCategoryTotals,
     hiddenGridColumnIds,
   ] = await Promise.all([
@@ -166,6 +169,7 @@ export default async function MonthlyPage({
     getCategoryTotalsForWindow(owner.userId, categoryWindowStart, categoryWindowEnd),
     getDailyTotalsForMonth(owner.userId, year, month),
     getTopExpensesForMonth(owner.userId, year, month, 8),
+    getLargestIncomeForMonth(owner.userId, year, month),
     // Same query as `categoryTotals` above, just parameterized with the FULL
     // calendar year instead of a trailing 6-month window — the Year Overview's
     // annual category breakdown and Yearly Breakdown chart both read this.
@@ -269,8 +273,11 @@ export default async function MonthlyPage({
   );
   const biggestSpendingDay = findBiggestSpendingDay(dailyTotals);
 
+  const spendingDays = { days: countSpendingDays(dailyTotals), of: daysInMonth(year, month) };
+
   const insights = {
     largestExpense: topExpenses[0] ?? null,
+    largestIncome,
     topCategory: categoryBreakdown[0] ?? null,
     biggestSpendingDay,
     highestIncomeMonth: findExtremeMonth(monthlyTotals, 'income'),
@@ -299,6 +306,9 @@ export default async function MonthlyPage({
     expenseCents: row.totalExpenditureCents,
   }));
   const ytdSummary = computeYtdSummary(ytdRows, year, ytdMonthsElapsed);
+  const ytdExpenseTransactionCount = grid.rows
+    .slice(0, ytdMonthsElapsed)
+    .reduce((sum, row) => sum + row.totalExpenditureTxnCount, 0);
   const ytdTrend: TrendPoint[] = grid.rows.slice(0, ytdMonthsElapsed).map((row) => ({
     year,
     month: row.month,
@@ -397,12 +407,20 @@ export default async function MonthlyPage({
             savingsRatePercent={savingsRatePercent}
             avgDailySpendingCents={avgDailySpendingCents}
             avgTransactionCents={avgTransactionCents}
+            spendingDays={spendingDays}
+            expenseTransactionCount={expenseTxnCount}
             trend={trend}
             categoryBreakdown={categoryBreakdown}
             categoryTrend={categoryTrend}
             topExpenses={topExpenses}
             insights={insights}
-            ytd={{ summary: ytdSummary, trend: ytdTrend, annualCategories, yearlyBreakdown }}
+            ytd={{
+              summary: ytdSummary,
+              expenseTransactionCount: ytdExpenseTransactionCount,
+              trend: ytdTrend,
+              annualCategories,
+              yearlyBreakdown,
+            }}
           />
 
           <div className="mt-8">

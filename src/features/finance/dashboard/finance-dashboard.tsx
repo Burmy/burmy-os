@@ -22,6 +22,7 @@ import type {
   YearlyBreakdown,
   YtdSummary,
 } from '@/server/finance/dashboard';
+import { daysInMonth } from '@/server/finance/dashboard';
 import { cents, format } from '@/server/finance/money';
 import { AnnualCategoryChart } from './charts/annual-category-chart';
 import { CategoryBreakdownChart } from './charts/category-breakdown-chart';
@@ -70,12 +71,17 @@ export interface FinanceDashboardProps {
   readonly savingsRatePercent: number | null;
   readonly avgDailySpendingCents: number;
   readonly avgTransactionCents: number | null;
+  /** Days of the month with any spending, out of the month's days (2026-10-19). */
+  readonly spendingDays: { readonly days: number; readonly of: number };
+  /** Outflow transactions only — beside the all-transactions count (2026-10-19). */
+  readonly expenseTransactionCount: number;
   readonly trend: readonly TrendPoint[];
   readonly categoryBreakdown: readonly CategoryAmount[];
   readonly categoryTrend: readonly CategoryTrendSeries[];
   readonly topExpenses: readonly TopExpenseRow[];
   readonly insights: {
     readonly largestExpense: TopExpenseRow | null;
+    readonly largestIncome: TopExpenseRow | null;
     readonly topCategory: CategoryAmount | null;
     readonly biggestSpendingDay: BiggestSpendingDay | null;
     readonly highestIncomeMonth: MonthSummary | null;
@@ -84,6 +90,8 @@ export interface FinanceDashboardProps {
   };
   readonly ytd: {
     readonly summary: YtdSummary;
+    /** Outflow transactions across the months counted, for the year view's own card (2026-10-19). */
+    readonly expenseTransactionCount: number;
     readonly trend: readonly TrendPoint[];
     readonly annualCategories: readonly CategoryAmount[];
     readonly yearlyBreakdown: YearlyBreakdown;
@@ -121,6 +129,8 @@ export function FinanceDashboard({
   savingsRatePercent,
   avgDailySpendingCents,
   avgTransactionCents,
+  spendingDays,
+  expenseTransactionCount,
   trend,
   categoryBreakdown,
   categoryTrend,
@@ -130,6 +140,10 @@ export function FinanceDashboard({
 }: FinanceDashboardProps): React.ReactElement {
   const [view, setView] = useState<'month' | 'year'>('month');
   const isCompletedYear = ytd.summary.monthsElapsed >= 12;
+  // Whole months only, like the month card's whole-month divisor.
+  const ytdDaysCounted = Array.from({ length: ytd.summary.monthsElapsed }, (_, index) =>
+    daysInMonth(ytd.summary.year, index + 1),
+  ).reduce((sum, days) => sum + days, 0);
 
   return (
     <div className="space-y-8">
@@ -181,6 +195,8 @@ export function FinanceDashboard({
             previousMonthLabel={previousMonthLabel}
             savingsRatePercent={savingsRatePercent}
             avgDailySpendingCents={avgDailySpendingCents}
+            spendingDays={spendingDays}
+            expenseTransactionCount={expenseTransactionCount}
           />
 
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
@@ -204,6 +220,7 @@ export function FinanceDashboard({
 
             <InsightsSection
               largestExpense={insights.largestExpense}
+              largestIncome={insights.largestIncome}
               topCategory={insights.topCategory}
               biggestSpendingDay={insights.biggestSpendingDay}
               spendingDayYear={year}
@@ -254,6 +271,27 @@ export function FinanceDashboard({
               }
               {...(ytd.summary.savingsRatePercent === null ? { hint: 'No income yet' } : {})}
             />
+            {/* Three more so the four-wide grid fills both rows (owner,
+                2026-10-19: "I don't like random white spaces"). */}
+            <StatCard
+              label="Avg. daily spending"
+              value={
+                ytdDaysCounted === 0
+                  ? '—'
+                  : format(cents(Math.round(ytd.summary.expenseCents / ytdDaysCounted)))
+              }
+              hint={`over ${ytdDaysCounted} days`}
+            />
+            <StatCard
+              label="Expense transactions"
+              value={ytd.expenseTransactionCount.toLocaleString('en-US')}
+              hint={`across ${ytd.summary.monthsElapsed} month${ytd.summary.monthsElapsed === 1 ? '' : 's'}`}
+            />
+            <StatCard
+              label="Months imported"
+              value={`${ytd.summary.monthsElapsed} of 12`}
+              hint={isCompletedYear ? 'Complete year' : 'Through the newest statement'}
+            />
           </StatCardGrid>
 
           {ytd.summary.highestSpendingMonth ? (
@@ -294,9 +332,9 @@ export function FinanceDashboard({
 }
 
 /**
- * The six headline cards. Extracted from the body only so the coverage branch
- * above reads as one decision — "these numbers, or an explanation of why there
- * are none" — instead of six conditionals threaded through the JSX.
+ * The eight headline cards — two rows of four, so the grid never ends on a
+ * half-empty row (owner, 2026-10-19). Extracted from the body so the month
+ * view reads as one block.
  */
 function MonthStats({
   summary,
@@ -305,6 +343,8 @@ function MonthStats({
   previousMonthLabel,
   savingsRatePercent,
   avgDailySpendingCents,
+  spendingDays,
+  expenseTransactionCount,
 }: {
   readonly summary: MonthSummary;
   readonly comparison: MonthComparison | null;
@@ -312,6 +352,8 @@ function MonthStats({
   readonly previousMonthLabel: string;
   readonly savingsRatePercent: number | null;
   readonly avgDailySpendingCents: number;
+  readonly spendingDays: { readonly days: number; readonly of: number };
+  readonly expenseTransactionCount: number;
 }): React.ReactElement {
   return (
     <StatCardGrid>
@@ -391,6 +433,16 @@ function MonthStats({
         hint="Daily average"
       />
       <StatCard label="Transactions" value={String(summary.transactionCount)} />
+      <StatCard
+        label="Expense transactions"
+        value={String(expenseTransactionCount)}
+        hint={`of ${summary.transactionCount} in total`}
+      />
+      <StatCard
+        label="Days with spending"
+        value={`${spendingDays.days} of ${spendingDays.of}`}
+        hint={spendingDays.days === 0 ? 'No spending recorded' : 'Days with at least one expense'}
+      />
     </StatCardGrid>
   );
 }

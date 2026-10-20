@@ -26,15 +26,30 @@ import {
   partitionCoverage,
   previousMonth,
   toMonthSummary,
+  countSpendingDays,
 } from '@/server/finance/dashboard';
 import type { CategoryMonthlyTotal, MonthlyTotal } from '@/server/db/finance/grid';
 
 function total(overrides: Partial<MonthlyTotal>): MonthlyTotal {
-  return { year: 2026, month: 1, incomeCents: 0, expenseCents: 0, transactionCount: 0, ...overrides };
+  return {
+    year: 2026,
+    month: 1,
+    incomeCents: 0,
+    expenseCents: 0,
+    transactionCount: 0,
+    ...overrides,
+  };
 }
 
 function catRow(overrides: Partial<CategoryMonthlyTotal>): CategoryMonthlyTotal {
-  return { year: 2026, month: 1, categoryId: 'cat-1', amountCents: 1000, txnCount: 1, ...overrides };
+  return {
+    year: 2026,
+    month: 1,
+    categoryId: 'cat-1',
+    amountCents: 1000,
+    txnCount: 1,
+    ...overrides,
+  };
 }
 
 const CATEGORIES: CategoryMeta[] = [
@@ -61,7 +76,9 @@ describe('date math', () => {
 
 describe('toMonthSummary — income, expenses, net', () => {
   it('net is income minus expenses', () => {
-    const summary = toMonthSummary(total({ incomeCents: 500000, expenseCents: 320000, transactionCount: 42 }));
+    const summary = toMonthSummary(
+      total({ incomeCents: 500000, expenseCents: 320000, transactionCount: 42 }),
+    );
     expect(summary.incomeCents).toBe(500000);
     expect(summary.expenseCents).toBe(320000);
     expect(summary.netCents).toBe(180000);
@@ -70,7 +87,12 @@ describe('toMonthSummary — income, expenses, net', () => {
 
   it('an empty month is all zeros, not fabricated', () => {
     const summary = toMonthSummary(total({}));
-    expect(summary).toMatchObject({ incomeCents: 0, expenseCents: 0, netCents: 0, transactionCount: 0 });
+    expect(summary).toMatchObject({
+      incomeCents: 0,
+      expenseCents: 0,
+      netCents: 0,
+      transactionCount: 0,
+    });
   });
 
   it('never produces a negative-zero net for a zero/zero month', () => {
@@ -202,7 +224,10 @@ describe('buildCategoryBreakdown', () => {
   });
 
   it('an uncategorized (null) bucket is never dropped, and reconciles into the total', () => {
-    const rows = [catRow({ categoryId: 'cat-1', amountCents: 6000 }), catRow({ categoryId: null, amountCents: 4000 })];
+    const rows = [
+      catRow({ categoryId: 'cat-1', amountCents: 6000 }),
+      catRow({ categoryId: null, amountCents: 4000 }),
+    ];
     const breakdown = buildCategoryBreakdown(rows, 2026, 1, CATEGORIES);
     const sum = breakdown.reduce((acc, b) => acc + b.amountCents, 0);
     expect(sum).toBe(10000);
@@ -214,7 +239,10 @@ describe('buildCategoryBreakdown', () => {
   });
 
   it('only rows for the requested (year, month) are included', () => {
-    const rows = [catRow({ year: 2026, month: 1, amountCents: 5000 }), catRow({ year: 2026, month: 2, amountCents: 9000 })];
+    const rows = [
+      catRow({ year: 2026, month: 1, amountCents: 5000 }),
+      catRow({ year: 2026, month: 2, amountCents: 9000 }),
+    ];
     const breakdown = buildCategoryBreakdown(rows, 2026, 1, CATEGORIES);
     expect(breakdown).toHaveLength(1);
     expect(breakdown[0]!.amountCents).toBe(5000);
@@ -296,7 +324,12 @@ describe('computeYtdSummary', () => {
 
   it('zero elapsed months is an empty, not fabricated, summary', () => {
     const summary = computeYtdSummary(rows, 2026, 0);
-    expect(summary).toMatchObject({ incomeCents: 0, expenseCents: 0, netCents: 0, highestSpendingMonth: null });
+    expect(summary).toMatchObject({
+      incomeCents: 0,
+      expenseCents: 0,
+      netCents: 0,
+      highestSpendingMonth: null,
+    });
   });
 
   it('a completed historical year (monthsElapsed = 12) sums the whole year, same code path as YTD', () => {
@@ -329,7 +362,9 @@ describe('buildAnnualCategoryBreakdown', () => {
       catRow({ year: 2026, month: 1, categoryId: 'cat-1', amountCents: 2000 }),
     ];
     const breakdown = buildAnnualCategoryBreakdown(rows, 2026, CATEGORIES);
-    expect(breakdown).toEqual([expect.objectContaining({ categoryId: 'cat-1', amountCents: 2000 })]);
+    expect(breakdown).toEqual([
+      expect.objectContaining({ categoryId: 'cat-1', amountCents: 2000 }),
+    ]);
   });
 
   it('percent of expenses is computed against the ANNUAL total, not any one month', () => {
@@ -404,13 +439,30 @@ describe('buildYearlyBreakdown', () => {
  * and with 32 months of history sitting in the database it does not have to.
  */
 describe('compareToBaseline', () => {
-  function month(year: number, m: number, income: number, expense: number, count = 10): MonthSummary {
-    return { year, month: m, incomeCents: income, expenseCents: expense, netCents: income - expense, transactionCount: count };
+  function month(
+    year: number,
+    m: number,
+    income: number,
+    expense: number,
+    count = 10,
+  ): MonthSummary {
+    return {
+      year,
+      month: m,
+      incomeCents: income,
+      expenseCents: expense,
+      netCents: income - expense,
+      transactionCount: count,
+    };
   }
 
   it('compares against the mean of the trailing 12 months', () => {
     // Three prior months averaging 3000 in expenses; this month is 4000.
-    const history = [month(2026, 1, 5000, 2000), month(2026, 2, 5000, 3000), month(2026, 3, 5000, 4000)];
+    const history = [
+      month(2026, 1, 5000, 2000),
+      month(2026, 2, 5000, 3000),
+      month(2026, 3, 5000, 4000),
+    ];
     const current = month(2026, 4, 5000, 4000);
 
     const result = compareToBaseline(current, [...history, current], 2026, 4);
@@ -430,7 +482,11 @@ describe('compareToBaseline', () => {
   });
 
   it('ignores months after the selected one, so an old month is judged against its own past', () => {
-    const history = [month(2026, 1, 5000, 1000), month(2026, 2, 5000, 2000), month(2026, 3, 5000, 9000)];
+    const history = [
+      month(2026, 1, 5000, 1000),
+      month(2026, 2, 5000, 2000),
+      month(2026, 3, 5000, 9000),
+    ];
     const result = compareToBaseline(month(2026, 2, 5000, 2000), history, 2026, 2);
 
     // Only January counts; March is in the future relative to the selection.
@@ -443,7 +499,11 @@ describe('compareToBaseline', () => {
    * extravagant by comparison.
    */
   it('excludes months with no data at all rather than averaging in zeros', () => {
-    const history = [month(2026, 1, 4000, 4000), month(2026, 2, 0, 0, 0), month(2026, 3, 4000, 4000)];
+    const history = [
+      month(2026, 1, 4000, 4000),
+      month(2026, 2, 0, 0, 0),
+      month(2026, 3, 4000, 4000),
+    ];
     const result = compareToBaseline(month(2026, 4, 4000, 4000), history, 2026, 4);
 
     // Baseline is 4000 from the two real months, not 2667 from three.
@@ -582,7 +642,8 @@ describe('statement coverage', () => {
    * shipped.
    */
   describe('partitionCoverage', () => {
-    const names = (accounts: readonly AccountCoverage[]): string[] => accounts.map((a) => a.accountName);
+    const names = (accounts: readonly AccountCoverage[]): string[] =>
+      accounts.map((a) => a.accountName);
 
     it('keeps both accounts on the owner’s real offset cycle', () => {
       // ~6 weeks apart at the extreme, well inside the grace period. This is
@@ -593,19 +654,26 @@ describe('statement coverage', () => {
     });
 
     it('writes off an account that has missed more than two cycles', () => {
-      const { reporting, dormant } = partitionCoverage([card('2026-08-26'), checking('2025-12-01')]);
+      const { reporting, dormant } = partitionCoverage([
+        card('2026-08-26'),
+        checking('2025-12-01'),
+      ]);
       expect(names(reporting)).toEqual(['BoA Credit Card']);
       expect(names(dormant)).toEqual(['BoA Checking']);
     });
 
     it('is measured in whole days, inclusive at the boundary', () => {
       // Exactly DORMANT_AFTER_DAYS behind still counts; one day further does not.
-      const atLimit = new Date(Date.UTC(2026, 7, 26) - DORMANT_AFTER_DAYS * 86_400_000).toISOString().slice(0, 10);
+      const atLimit = new Date(Date.UTC(2026, 7, 26) - DORMANT_AFTER_DAYS * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
       const pastLimit = new Date(Date.UTC(2026, 7, 26) - (DORMANT_AFTER_DAYS + 1) * 86_400_000)
         .toISOString()
         .slice(0, 10);
       expect(partitionCoverage([card('2026-08-26'), checking(atLimit)]).dormant).toEqual([]);
-      expect(names(partitionCoverage([card('2026-08-26'), checking(pastLimit)]).dormant)).toEqual(['BoA Checking']);
+      expect(names(partitionCoverage([card('2026-08-26'), checking(pastLimit)]).dormant)).toEqual([
+        'BoA Checking',
+      ]);
     });
 
     it('measures against the newest transaction, not against today', () => {
@@ -626,7 +694,10 @@ describe('statement coverage', () => {
     it('keeps an unparsable date in the reporting set rather than excusing it', () => {
       // Fails toward holding coverage: a row this function cannot read must not
       // be the reason a month silently becomes reportable.
-      const { reporting, dormant } = partitionCoverage([card('2026-08-26'), checking('not-a-date')]);
+      const { reporting, dormant } = partitionCoverage([
+        card('2026-08-26'),
+        checking('not-a-date'),
+      ]);
       expect(names(reporting)).toEqual(['BoA Credit Card', 'BoA Checking']);
       expect(dormant).toEqual([]);
     });
@@ -679,5 +750,19 @@ describe('statement coverage', () => {
     it('empties the series when nothing is covered', () => {
       expect(dropUncoveredTail(points, [])).toEqual([]);
     });
+  });
+});
+
+describe('countSpendingDays', () => {
+  it('counts the days with any spending, ignoring zero and refund-only days', () => {
+    expect(
+      countSpendingDays([
+        { day: 1, amountCents: 1200 },
+        { day: 2, amountCents: 0 },
+        { day: 3, amountCents: -500 },
+        { day: 9, amountCents: 1 },
+      ]),
+    ).toBe(2);
+    expect(countSpendingDays([])).toBe(0);
   });
 });

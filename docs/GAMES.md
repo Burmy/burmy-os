@@ -580,9 +580,11 @@ from Finance (Games never imports Finance code, full stop); it exists because `p
 same signed-cents convention independently, as already documented under "Price is independent of
 Finance" above.
 
-The dashboard (`GamesDashboard`, `/games/stats`) is seven `Section`s holding eight stat cards in
-total — **Library** (Games, Hours played, Platinums, Backlog) and **Money** (Total spend, Cost per
-hour) — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
+The dashboard (`GamesDashboard`, `/games/stats`) opens with two full rows of stat cards — Games,
+Hours played, Platinums, Trophies earned, Total spend, Cost per hour, This year (hours, started and
+trophies in the current year, from the year table) and Completion (trophies earned as a share of
+every recorded total); the last two were added 2026-10-19 so the four-wide grid never ends on a
+half-empty row — followed by **Year by year** (the Yearly Breakdown table), a **Trends** section of three line
 charts (games / hours / trophies per year — a continuous year axis reads as a trend on a line the way
 disconnected bars don't; matches the owner's original spreadsheet, which kept exactly these three as
 line charts), a **Breakdown** section of four charts (platform / ownership / genre distribution, rating

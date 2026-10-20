@@ -24,7 +24,10 @@ export function daysInMonth(year: number, month: number): number {
 }
 
 /** `'YYYY-MM-DD'` boundaries for one calendar month — `endExclusive` is the first day of the FOLLOWING month, so callers use `lt`, never an inclusive `lte` that would need to know how many days the month has. */
-export function monthRange(year: number, month: number): { readonly start: string; readonly endExclusive: string } {
+export function monthRange(
+  year: number,
+  month: number,
+): { readonly start: string; readonly endExclusive: string } {
   const pad = (n: number): string => String(n).padStart(2, '0');
   const nextYear = month === 12 ? year + 1 : year;
   const nextMonth = month === 12 ? 1 : month + 1;
@@ -35,7 +38,10 @@ export function monthRange(year: number, month: number): { readonly start: strin
 }
 
 /** The (year, month) immediately before this one — crosses the year boundary at January. */
-export function previousMonth(year: number, month: number): { readonly year: number; readonly month: number } {
+export function previousMonth(
+  year: number,
+  month: number,
+): { readonly year: number; readonly month: number } {
   return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
 }
 
@@ -101,11 +107,19 @@ export interface MonthComparison {
   readonly net: MetricComparison;
 }
 
-function compareMetric(current: number, previous: number, higherIsFavorable: boolean): MetricComparison {
+function compareMetric(
+  current: number,
+  previous: number,
+  higherIsFavorable: boolean,
+): MetricComparison {
   const deltaCents = current - previous;
   const deltaPercent = previous === 0 ? null : (deltaCents / Math.abs(previous)) * 100;
   const direction: ComparisonDirection =
-    deltaCents === 0 ? 'neutral' : (deltaCents > 0) === higherIsFavorable ? 'favorable' : 'unfavorable';
+    deltaCents === 0
+      ? 'neutral'
+      : deltaCents > 0 === higherIsFavorable
+        ? 'favorable'
+        : 'unfavorable';
   return { deltaCents, deltaPercent, direction };
 }
 
@@ -116,7 +130,10 @@ function compareMetric(current: number, previous: number, higherIsFavorable: boo
  * (no prior month has any data — e.g. the very first imported month) returns
  * `null`: there is nothing to compare against, not a manufactured "0% change".
  */
-export function compareToPreviousMonth(current: MonthSummary, previous: MonthSummary | null): MonthComparison | null {
+export function compareToPreviousMonth(
+  current: MonthSummary,
+  previous: MonthSummary | null,
+): MonthComparison | null {
   if (!previous) return null;
   return {
     income: compareMetric(current.incomeCents, previous.incomeCents, true),
@@ -165,7 +182,10 @@ export function compareToBaseline(
     })
     // A month whose income, expenses AND transaction count are all zero was
     // never imported — see the doc comment above.
-    .filter((entry) => entry.incomeCents !== 0 || entry.expenseCents !== 0 || entry.transactionCount !== 0);
+    .filter(
+      (entry) =>
+        entry.incomeCents !== 0 || entry.expenseCents !== 0 || entry.transactionCount !== 0,
+    );
 
   if (priors.length === 0) return null;
 
@@ -173,9 +193,21 @@ export function compareToBaseline(
     Math.round(priors.reduce((total, entry) => total + pick(entry), 0) / priors.length);
 
   return {
-    income: compareMetric(current.incomeCents, mean((e) => e.incomeCents), true),
-    expense: compareMetric(current.expenseCents, mean((e) => e.expenseCents), false),
-    net: compareMetric(current.netCents, mean((e) => e.netCents), true),
+    income: compareMetric(
+      current.incomeCents,
+      mean((e) => e.incomeCents),
+      true,
+    ),
+    expense: compareMetric(
+      current.expenseCents,
+      mean((e) => e.expenseCents),
+      false,
+    ),
+    net: compareMetric(
+      current.netCents,
+      mean((e) => e.netCents),
+      true,
+    ),
   };
 }
 
@@ -244,9 +276,16 @@ export function findExtremeMonth(
   if (monthlyTotals.length === 0) return null;
 
   const value = (row: MonthlyTotal): number =>
-    metric === 'income' ? row.incomeCents : metric === 'expense' ? row.expenseCents : row.incomeCents - row.expenseCents;
+    metric === 'income'
+      ? row.incomeCents
+      : metric === 'expense'
+        ? row.expenseCents
+        : row.incomeCents - row.expenseCents;
 
-  const best = monthlyTotals.reduce((max, row) => (value(row) > value(max) ? row : max), monthlyTotals[0]!);
+  const best = monthlyTotals.reduce(
+    (max, row) => (value(row) > value(max) ? row : max),
+    monthlyTotals[0]!,
+  );
   return toMonthSummary(best);
 }
 
@@ -314,14 +353,21 @@ export interface CategoryTrendSeries {
 export function buildCategoryTrend(
   categoryTotals: readonly CategoryMonthlyTotal[],
   categories: readonly CategoryMeta[],
-  monthlyWindow: readonly { readonly year: number; readonly month: number; readonly label: string }[],
+  monthlyWindow: readonly {
+    readonly year: number;
+    readonly month: number;
+    readonly label: string;
+  }[],
   limit: number,
 ): CategoryTrendSeries[] {
   const nameById = new Map(categories.map((c) => [c.id, c.name]));
 
   const totalByCategory = new Map<string | null, number>();
   for (const row of categoryTotals) {
-    totalByCategory.set(row.categoryId, (totalByCategory.get(row.categoryId) ?? 0) + row.amountCents);
+    totalByCategory.set(
+      row.categoryId,
+      (totalByCategory.get(row.categoryId) ?? 0) + row.amountCents,
+    );
   }
 
   const topCategoryIds = [...totalByCategory.entries()]
@@ -329,7 +375,9 @@ export function buildCategoryTrend(
     .slice(0, limit)
     .map(([categoryId]) => categoryId);
 
-  const byMonthAndCategory = new Map(categoryTotals.map((row) => [`${row.year}-${row.month}-${row.categoryId}`, row]));
+  const byMonthAndCategory = new Map(
+    categoryTotals.map((row) => [`${row.year}-${row.month}-${row.categoryId}`, row]),
+  );
 
   return topCategoryIds.map((categoryId) => ({
     categoryId,
@@ -355,7 +403,10 @@ export function findBiggestSpendingDay(
   dailyTotals: readonly { readonly day: number; readonly amountCents: number }[],
 ): BiggestSpendingDay | null {
   if (dailyTotals.length === 0) return null;
-  return dailyTotals.reduce((max, row) => (row.amountCents > max.amountCents ? row : max), dailyTotals[0]!);
+  return dailyTotals.reduce(
+    (max, row) => (row.amountCents > max.amountCents ? row : max),
+    dailyTotals[0]!,
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -386,7 +437,11 @@ export interface YtdSummary {
   readonly highestSpendingMonth: YtdMonthRow | null;
 }
 
-export function computeYtdSummary(monthRows: readonly YtdMonthRow[], year: number, monthsElapsed: number): YtdSummary {
+export function computeYtdSummary(
+  monthRows: readonly YtdMonthRow[],
+  year: number,
+  monthsElapsed: number,
+): YtdSummary {
   const rows = monthRows.slice(0, monthsElapsed);
   const incomeCents = rows.reduce((sum, row) => sum + row.incomeCents, 0);
   const expenseCents = rows.reduce((sum, row) => sum + row.expenseCents, 0);
@@ -395,7 +450,10 @@ export function computeYtdSummary(monthRows: readonly YtdMonthRow[], year: numbe
   const highestSpendingMonth =
     spendingRows.length === 0
       ? null
-      : spendingRows.reduce((max, row) => (row.expenseCents > max.expenseCents ? row : max), spendingRows[0]!);
+      : spendingRows.reduce(
+          (max, row) => (row.expenseCents > max.expenseCents ? row : max),
+          spendingRows[0]!,
+        );
 
   return {
     year,
@@ -492,10 +550,15 @@ export function buildYearlyBreakdown(
 
   const totalByCategory = new Map<string | null, number>();
   for (const row of rowsForYear) {
-    totalByCategory.set(row.categoryId, (totalByCategory.get(row.categoryId) ?? 0) + row.amountCents);
+    totalByCategory.set(
+      row.categoryId,
+      (totalByCategory.get(row.categoryId) ?? 0) + row.amountCents,
+    );
   }
 
-  const rankedCategoryIds = [...totalByCategory.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+  const rankedCategoryIds = [...totalByCategory.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id]) => id);
   const topCategoryIds = rankedCategoryIds.slice(0, Math.max(0, maxSeries - 1));
   const topSet = new Set(topCategoryIds);
   const hasOther = rankedCategoryIds.length > topCategoryIds.length;
@@ -516,7 +579,9 @@ export function buildYearlyBreakdown(
     let totalCents = 0;
     for (const row of rowsForYear.filter((r) => r.month === month)) {
       totalCents += row.amountCents;
-      const key = topSet.has(row.categoryId) ? (row.categoryId ?? 'uncategorized') : OTHER_SERIES_KEY;
+      const key = topSet.has(row.categoryId)
+        ? (row.categoryId ?? 'uncategorized')
+        : OTHER_SERIES_KEY;
       segments[key] = (segments[key] ?? 0) + row.amountCents;
     }
     months.push({ month, label: MONTH_ABBREVIATIONS[month - 1] ?? '', totalCents, segments });
@@ -657,7 +722,10 @@ export function partitionCoverage(coverage: readonly AccountCoverage[]): {
 } {
   if (coverage.length === 0) return { reporting: [], dormant: [] };
 
-  const newest = coverage.reduce((max, a) => (a.latestDate > max ? a.latestDate : max), coverage[0]!.latestDate);
+  const newest = coverage.reduce(
+    (max, a) => (a.latestDate > max ? a.latestDate : max),
+    coverage[0]!.latestDate,
+  );
   const newestDay = toDayNumber(newest);
 
   const reporting: AccountCoverage[] = [];
@@ -717,7 +785,10 @@ export function latestCoveredMonth(
   const { reporting } = partitionCoverage(coverage);
   if (reporting.length === 0) return null;
 
-  const earliest = reporting.reduce((min, a) => (a.latestDate < min ? a.latestDate : min), reporting[0]!.latestDate);
+  const earliest = reporting.reduce(
+    (min, a) => (a.latestDate < min ? a.latestDate : min),
+    reporting[0]!.latestDate,
+  );
   let year = Number.parseInt(earliest.slice(0, 4), 10);
   let month = Number.parseInt(earliest.slice(5, 7), 10);
   if (!Number.isFinite(year) || !Number.isFinite(month)) return null;
@@ -751,4 +822,11 @@ export function dropUncoveredTail<T extends { readonly year: number; readonly mo
   if (last === null) return [];
   const bar = last.year * 12 + last.month;
   return points.filter((point) => point.year * 12 + point.month <= bar);
+}
+
+/** How many days of the month had any spending-kind activity — for the "Days with spending" card (2026-10-19). */
+export function countSpendingDays(
+  dailyTotals: readonly { readonly day: number; readonly amountCents: number }[],
+): number {
+  return dailyTotals.filter((row) => row.amountCents > 0).length;
 }

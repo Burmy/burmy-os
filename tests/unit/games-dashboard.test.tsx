@@ -90,7 +90,7 @@ describe('GamesDashboard', () => {
     }
   });
 
-  it('shows exactly one bare stat-card row of 6: Games, Hours played, Platinums, Trophies earned, Total spend, Cost per hour', () => {
+  it('shows two full rows of stat cards: Games, Hours played, Platinums, Trophies earned, Total spend, Cost per hour, This year, Completion', () => {
     render(<GamesDashboard rows={rows} playYears={[]} dlc={[]} currentYear={2026} />);
     for (const label of [
       'Games',
@@ -99,6 +99,8 @@ describe('GamesDashboard', () => {
       'Trophies earned',
       'Total spend',
       'Cost per hour',
+      'This year',
+      'Completion',
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
