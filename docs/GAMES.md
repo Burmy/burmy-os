@@ -555,12 +555,19 @@ output — see below and "Play-year attribution" above.
   the data, newest first, each carrying `startedCount` (games whose `firstPlayedYear` is that year —
   sums to the library total across years, same as the old plain game count did), `playedCount`
   (distinct games with hours _attributed_ to that year via `attributeHours` — deliberately does NOT
-  sum to the total, since a game played across two years is genuinely played in both), hours,
+  sum to the total, since a game played across two years is genuinely played in both; since 2026-10-25
+  only a game with hours > 0 in the year counts, so a rolled-up set's wrapper is not counted beside
+  the members that carry its hours and an unsplit set's titles are not counted beside the set — the
+  old rule put 2026 at 16 for 15 and 2024 at 19 for 14), hours,
   achievements (still keyed to `firstPlayedYear`, never split — see "Play-year attribution" above),
   and the hours delta from the previous year present (`null` for the earliest year). A game with no
-  `firstPlayedYear` — a retro entry — is **excluded from this breakdown entirely**, not bucketed into
-  a fake "year zero": it genuinely has no place in a year-by-year comparison. `unattributedTenths` is
-  rendered as its own "Unattributed" line by `YearlyBreakdownTable`, never folded into a year.
+  `firstPlayedYear` — a retro entry — is **excluded from every year row**, not bucketed into a fake
+  "year zero": it genuinely has no place in a year-by-year comparison. It IS counted in `noYear`
+  (games under the counting rule, plus whatever hours and trophies those rows carry), which
+  `YearlyBreakdownTable` renders as a "No year" line above Total and INCLUDES in the Total — added
+  2026-10-25 when the Total read 116 games / 3673.3h / 3715 trophies under cards saying 167 / 3688.1h
+  / 3736, with 51 year-less games (mostly PSP) silently missing. `unattributedTenths` is rendered as
+  its own "Unattributed" line, never folded into a year.
 - **`buildDistribution`** — a generic key/label counter used three times on the dashboard (platform,
   ownership, genre). Its `percent` is the share of rows that actually _had_ a value for that key, not
   a share of the whole library — a game with no genre recorded doesn't silently deflate every genre's

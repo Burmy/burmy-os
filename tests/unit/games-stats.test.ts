@@ -70,18 +70,98 @@ describe('buildYearlyBreakdown', () => {
     });
   });
 
-  it('excludes a game with no first-played year', () => {
-    const { rows } = buildYearlyBreakdown([game({ firstPlayedYear: null })], [], []);
+  it('excludes a game with no first-played year from every row but counts it under noYear', () => {
+    const { rows, noYear } = buildYearlyBreakdown(
+      [game({ firstPlayedYear: null, hoursTenths: 75, achievementsUnlocked: 21 })],
+      [],
+      [],
+    );
     expect(rows).toEqual([]);
+    expect(noYear).toEqual({ games: 1, hoursTenths: 75, achievements: 21 });
   });
 
-  it('treats null hours and null achievements as zero', () => {
+  /**
+   * 2026-10-25: the Total row read 116 started / 3673.3h / 3715 against cards
+   * saying 167 / 3688.1h / 3736 — 51 games with no year had vanished from the
+   * table without a trace. `noYear` is what the table adds back.
+   */
+  it('noYear follows the counting rule: a collection wrapper is not a game, but its own figures count', () => {
+    const { noYear } = buildYearlyBreakdown(
+      [
+        game({ id: 'set', firstPlayedYear: null, hoursTenths: 50, achievementsUnlocked: 4 }),
+        game({ id: 'm1', collectionId: 'set', firstPlayedYear: 2024, hoursTenths: 120 }),
+        game({ id: 'psp', firstPlayedYear: null, hoursTenths: null, achievementsUnlocked: null }),
+        game({ id: 'placed', firstPlayedYear: 2023, hoursTenths: 10 }),
+      ],
+      [],
+      [],
+    );
+    expect(noYear).toEqual({ games: 1, hoursTenths: 50, achievements: 4 });
+  });
+
+  it('a game with no year but a split is placed by its rows, not counted as no-year', () => {
+    const { rows, noYear } = buildYearlyBreakdown(
+      [game({ id: 'hk', firstPlayedYear: null, hoursTenths: 100 })],
+      [{ gameId: 'hk', year: 2024, hoursTenths: 100, achievementsUnlocked: null }],
+      [],
+    );
+    expect(rows.map((r) => [r.year, r.hoursTenths])).toEqual([[2024, 100]]);
+    expect(noYear).toEqual({ games: 0, hoursTenths: 0, achievements: 0 });
+  });
+
+  it('treats null hours and null achievements as zero, and such a game as started but not played', () => {
     const { rows } = buildYearlyBreakdown(
       [game({ firstPlayedYear: 2020, hoursTenths: null, achievementsUnlocked: null })],
       [],
       [],
     );
-    expect(rows[0]).toMatchObject({ year: 2020, hoursTenths: 0, achievements: 0 });
+    expect(rows[0]).toMatchObject({
+      year: 2020,
+      startedCount: 1,
+      playedCount: 0,
+      hoursTenths: 0,
+      achievements: 0,
+    });
+  });
+
+  /**
+   * 2026-10-25: 2026 read "16 played" for 13 games plus two DLC — the sixteenth
+   * was The Arkane Collection's wrapper, counted on top of the four members
+   * that carry its hours. 2024 read 19 for 14 the same way (five Uncharted
+   * titles with no hours of their own beside their two sets).
+   */
+  it('played counts only games with hours in the year — not a rolled-up wrapper, not a title with none', () => {
+    const { rows } = buildYearlyBreakdown(
+      [
+        // A rolled-up set: the wrapper arrives with null hours, the members carry them.
+        game({ id: 'set', firstPlayedYear: 2026, hoursTenths: null, achievementsUnlocked: null }),
+        game({ id: 'm1', collectionId: 'set', firstPlayedYear: 2026, hoursTenths: 225 }),
+        game({ id: 'm2', collectionId: 'set', firstPlayedYear: 2026, hoursTenths: 118 }),
+        // An unsplit set: the wrapper carries the hours, the titles none.
+        game({ id: 'unc', firstPlayedYear: 2024, hoursTenths: 429, achievementsUnlocked: 101 }),
+        game({ id: 'u1', collectionId: 'unc', firstPlayedYear: 2024, hoursTenths: null }),
+        game({ id: 'u2', collectionId: 'unc', firstPlayedYear: 2024, hoursTenths: null }),
+        // A DLC with no hours recorded does not make its game "played" that year either.
+        game({ id: 'co', firstPlayedYear: 2025, hoursTenths: 539 }),
+      ],
+      [],
+      [
+        {
+          id: 'd1',
+          gameId: 'co',
+          name: 'Update',
+          year: 2026,
+          hoursTenths: null,
+          priceCents: null,
+          achievementsUnlocked: null,
+          achievementsTotal: null,
+        },
+      ],
+    );
+    const byYear = new Map(rows.map((r) => [r.year, r]));
+    expect(byYear.get(2026)).toMatchObject({ startedCount: 2, playedCount: 2 });
+    expect(byYear.get(2024)).toMatchObject({ startedCount: 2, playedCount: 1 });
+    expect(byYear.get(2025)).toMatchObject({ startedCount: 1, playedCount: 1 });
   });
 
   it('reports hours in the year they were played, not the year the game started', () => {

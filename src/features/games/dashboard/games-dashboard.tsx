@@ -252,6 +252,7 @@ export function GamesDashboard({
         <YearlyBreakdownTable
           rows={yearly.rows}
           unattributedTenths={yearly.unattributedTenths}
+          noYear={yearly.noYear}
           currentYear={currentYear}
         />
       </Section>

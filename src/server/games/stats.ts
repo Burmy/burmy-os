@@ -59,6 +59,13 @@ export interface YearlyBreakdownRow {
    * attributed to the row that carries them. `startedCount` above is the
    * figure that reflects the owner's own game count; this one answers "what
    * did I have on the go," where the collection is the honest unit.
+   *
+   * Only a game with HOURS in the year counts (2026-10-25). A row with a year
+   * and nothing played is not "on the go": a rolled-up set arrives with null
+   * hours beside the members that carry them, and an unsplit set's titles
+   * arrive with none beside the set — counting those put The Arkane
+   * Collection on top of its own four titles (16 for 15) and five Uncharted
+   * titles beside their two sets (19 for 14).
    */
   readonly playedCount: number;
   readonly hoursTenths: number;
@@ -71,6 +78,21 @@ export interface YearlyBreakdown {
   readonly rows: readonly YearlyBreakdownRow[];
   /** See `AttributionResult.unattributedTenths`. Rendered as its own line, never folded into a year. */
   readonly unattributedTenths: number;
+  /**
+   * The games that belong to NO row — no first-played year and no split —
+   * so the table's Total can still equal the library (2026-10-25). Before
+   * this they simply vanished: 51 games, 14.8h and 21 trophies short of the
+   * cards above the table, with nothing on screen saying why. `games`
+   * follows the counting rule (a collection wrapper is not a game); hours
+   * and trophies are whatever those rows carry.
+   */
+  readonly noYear: NoYearTotals;
+}
+
+export interface NoYearTotals {
+  readonly games: number;
+  readonly hoursTenths: number;
+  readonly achievements: number;
 }
 
 export interface LibrarySummary {
@@ -202,7 +224,7 @@ export function buildYearlyBreakdown(
     // year" credits 13 there; a game or split that says nothing leaves them
     // all on the first-played year (`attributeHours`).
     target.achievements += attribution.achievementsUnlocked;
-    target.playedGames.add(attribution.gameId);
+    if (attribution.hoursTenths > 0) target.playedGames.add(attribution.gameId);
   }
 
   // A collection is not itself a game that was started, but an UNSPLIT set's
@@ -211,11 +233,22 @@ export function buildYearlyBreakdown(
   // and its members carry them instead. So this loop walks every row and
   // applies the counting rule to `startedCount` alone. See `countableGames`.
   const collections = collectionIdsIn(rows);
+  const splitGameIds = new Set(playYears.map((row) => row.gameId));
+  const noYear = { games: 0, hoursTenths: 0, achievements: 0 };
 
   for (const row of rows) {
     // A retro entry with no year is not year zero — it has no place in a
-    // year-by-year comparison and is excluded rather than bucketed.
-    if (row.firstPlayedYear === null) continue;
+    // year-by-year comparison and is excluded rather than bucketed. It is
+    // still counted in `noYear`, so the table's Total can say where the
+    // rest of the library is. A game with no year but a split is placed by
+    // its rows (`attributeHours`) and is not "no year".
+    if (row.firstPlayedYear === null) {
+      if (splitGameIds.has(row.id)) continue;
+      if (!collections.has(row.id)) noYear.games += 1;
+      noYear.hoursTenths += row.hoursTenths ?? 0;
+      noYear.achievements += row.achievementsUnlocked ?? 0;
+      continue;
+    }
     const target = bucket(row.firstPlayedYear);
     if (!collections.has(row.id)) target.startedCount += 1;
   }
@@ -230,7 +263,7 @@ export function buildYearlyBreakdown(
     const target = bucket(row.year);
     target.hoursTenths += row.hoursTenths ?? 0;
     target.achievements += row.achievementsUnlocked ?? 0;
-    target.playedGames.add(row.gameId);
+    if ((row.hoursTenths ?? 0) > 0) target.playedGames.add(row.gameId);
   }
 
   const ascending = [...byYear.entries()].sort((a, b) => a[0] - b[0]);
@@ -249,7 +282,7 @@ export function buildYearlyBreakdown(
     })
     .sort((a, b) => b.year - a.year);
 
-  return { rows: built, unattributedTenths };
+  return { rows: built, unattributedTenths, noYear };
 }
 
 export function buildLibrarySummary(
